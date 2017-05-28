@@ -1,1 +1,10 @@
 update_BugBuilder_github.sh
+/src/
+./bin/cpan
+./bin/cpan-mirrors
+bin/cpan-mirrors
+bin/cpan
+lib
+packages
+install_logs
+man

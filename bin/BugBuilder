@@ -25,8 +25,8 @@ BugBuilder
 
 =head1 DESCRIPTION
 
-  Automated pipeline for assembly of draft quality bacterial genomes with reference guided scaffolding 
-  and annotation. 
+  Automated pipeline for assembly of draft quality bacterial genomes with reference guided scaffolding
+  and annotation.
 
   Please see accompanying userguide for full documentation
 
@@ -42,9 +42,9 @@ BugBuilder
 
 =over 4
 
-=item B<fastq1>: Path to first read of paired library, or fragment library 
+=item B<fastq1>: Path to first read of paired library, or fragment library
 
-=item B<fastq2>: Path to second read of paired library 
+=item B<fastq2>: Path to second read of paired library
 
 =item B<longfastq>: Path to fastq file from long-read sequencer
 
@@ -83,10 +83,10 @@ assembling paired-read sequences for which no reference genome is available.
 =item B<genome-size>: Approximate genome size. Required for PacBio/MinION assemblies using PBcR
 
 =item B<genus>: Genus of organism sequenced (i.e. Streptococcus). Included in resutling EMBL file,
-and passed to Prokka during annotation stage. 
+and passed to Prokka during annotation stage.
 
 =item B<species>: Specific name of species if known (i.e. pyogenes). Included in resutling EMBL
-file, and passed to Prokka during annotation stage.  
+file, and passed to Prokka during annotation stage.
 
 =item B<strain>: Name of strain used for inclusion in annotation results.
 
@@ -126,10 +126,10 @@ the results (default off)
 
 =item B<threads>: Number of threads to use for multi-threaded applications. Default: 1
 
-=item B<out-dir>: Path for the output directory. If not provided, will be generated under the current 
+=item B<out-dir>: Path for the output directory. If not provided, will be generated under the current
 working directory.
 
-=item B<tmp-dir>: Path for the temporary working directory. 
+=item B<tmp-dir>: Path for the temporary working directory.
 If not provided, unique temporary directory will be created under the temp_dir path set in
 a config file.
 
@@ -186,7 +186,7 @@ set_paths($config);
 
 {
     my (
-         $help,         $man,            $reference,  $fastq1,          $fastq2,   $long_fastq,
+         $help,         $man,            $reference,  $fastq1,          $fastq2,   $long_fastq, $de_fere_contigs,
          @assemblers,   @assembler_args, $scaffolder, $scaffolder_args, $platform, $insert_size,
          $stddev,       $downsample,     $locustag,   $centre,          $keepall,  $prefix,
          $cmd_gap_fill, $merge_method,   $finisher,   $varcall,
@@ -198,6 +198,8 @@ set_paths($config);
     my $strain       = 'unknown_strain';
     my $run_fastqc   = 1;
     my $trim_reads   = 1;
+    my $already_assembled = 0; # added args
+    my $scratchdir = 0; # added args
     my $trim_qv      = 20;
     my $trim_length  = 50;
     my $split_origin = 1;
@@ -222,7 +224,8 @@ set_paths($config);
                              'reference:s'       => \$reference,
                              'fastq1=s'          => \$fastq1,
                              'fastq2:s'          => \$fastq2,
-                             'longfastq:s'       => \$long_fastq,
+	                     'longfastq:s'       => \$long_fastq,
+                             'de_fere_contigs:s' => \$de_fere_contigs,
                              'platform=s'        => \$platform,
                              'prefix:s'          => \$prefix,
                              'assembler:s'       => \@assemblers,
@@ -252,7 +255,9 @@ set_paths($config);
                              'man'               => \$man,
                              'threads:i'         => \$threads,
                              'out-dir:s'         => \$out_dir,
-                             'tmp-dir:s'         => \$tmpdir
+	                     'tmp-dir:s'         => \$tmpdir,
+	                     'already_assembled:s' => \$already_assembled,
+	                     'scratchdir:s' => \$scratchdir # added args
                            );
     @assemblers = map { lc($_) } @assemblers;
     $scaffolder   = lc($scaffolder)   if ($scaffolder);
@@ -311,8 +316,7 @@ set_paths($config);
     print "\nPreparing to build your bug...\n\n";
 
     my $orig_dir = cwd();
-
-    $tmpdir = setup_tempdir( $fastq1, $fastq2, $long_fastq, $reference, $platform, $tmpdir );
+    my $tmpdir = setup_tempdir( $fastq1, $fastq2, $long_fastq, $de_fere_contigs, $reference, $platform, $tmpdir );
 
     #	$tmpdir = "/scratch/BugBuilder/FXF6dPu5x7";
 
@@ -320,17 +324,17 @@ set_paths($config);
 
     #  need to know a bit about the provided reads so we can act appropriately
     my (
-         $type,               $encoding,              $mean_read_length,
-         $read_length_stddev, $mean_long_read_length, $long_read_length_stddev,
-         $coverage,           $long_read_coverage,    $read_bases
-       ) = assess_reads( $tmpdir, $platform, $genome_size );
+	$type,               $encoding,              $mean_read_length,
+	$read_length_stddev, $mean_long_read_length, $long_read_length_stddev,
+	$coverage,           $long_read_coverage,    $read_bases
+	) = assess_reads( $tmpdir, $platform, $genome_size );
 
     die "\nPlease supply a genome size or reference sequence when running a long-read assembly"
-      if ( $type eq 'long' && ( !$genome_size && !$reference ) );
+	if ( $type eq 'long' && ( !$genome_size && !$reference ) );
 
     my ( $sel_assemblers, $sel_scaffolder, $scaffold_type, $sel_merge_method, $sel_finisher, $sel_varcall ) =
-      select_tools( $config, \@assemblers, $scaffolder, $merge_method,     $finisher, $varcall,
-                    $paired, $reference,   $type,       $mean_read_length, $insert_size );
+	select_tools( $config, \@assemblers, $scaffolder, $merge_method,     $finisher, $varcall,
+		      $paired, $reference,   $type,       $mean_read_length, $insert_size );
     @assemblers   = @$sel_assemblers;
     $scaffolder   = $sel_scaffolder;
     $merge_method = $sel_merge_method;
@@ -341,32 +345,32 @@ set_paths($config);
     my $assembler_conf_downsample = 0;
     my $assembler_conf            = $config->{'assemblers'};
     foreach my $conf_assembler (@$assembler_conf) {
-        if ( $conf_assembler->{'name'} eq $assemblers[0] ) {
-            $assembler_conf_downsample = $conf_assembler->{'downsample_reads'};
-        }
+	if ( $conf_assembler->{'name'} eq $assemblers[0] ) {
+	    $assembler_conf_downsample = $conf_assembler->{'downsample_reads'};
+	}
     }
 
     run_fastqc( $tmpdir, $type ) if ($run_fastqc);
 
     if ( $mean_read_length && ( $mean_read_length < 50 || $mean_read_length < $trim_length ) ) {
-        $trim_length = 25;
-        print "\ntrim-length reset to $trim_length due to mean read length ($mean_read_length)\n";
+	$trim_length = 25;
+	print "\ntrim-length reset to $trim_length due to mean read length ($mean_read_length)\n";
     }
 
     quality_trim_reads( $tmpdir, $encoding, $trim_qv, $trim_length )
-      unless ( $type eq 'long' || !$trim_reads );
+	unless ( $type eq 'long' || !$trim_reads );
 
     my $downsampled_coverage;
 
     if ( ( $coverage && $coverage > 100 ) && ( $assembler_conf_downsample || $downsample ) ) {
-        $downsampled_coverage =
-          downsample_reads( $tmpdir, $config, $downsample, $coverage, $read_bases, $mean_read_length );
+	$downsampled_coverage =
+	    downsample_reads( $tmpdir, $config, $downsample, $coverage, $read_bases, $mean_read_length );
     }
 
     if ( $fastq2 && $reference ) {
-        ## final arg to align_reads is flag to indicate downsamping required...
-        align_reads( $tmpdir, $reference, $mean_read_length, 1 );
-        ( $insert_size, $stddev ) = get_insert_stats( "$tmpdir", $reference );
+	## final arg to align_reads is flag to indicate downsamping required...
+	align_reads( $tmpdir, $reference, $mean_read_length, 1 );
+	( $insert_size, $stddev ) = get_insert_stats( "$tmpdir", $reference );
     }
     my $paired_str;
     ($paired) ? ( $paired_str = "Paired" ) : ( $paired_str = "Fragment" );
@@ -405,30 +409,35 @@ set_paths($config);
     $tb->addRow( "Split Origin",             $split_origin );
     print "$tb\n";
 
-    print "Running in $mode mode\n";
     my $pm = new Parallel::ForkManager(2);
-    my $ret;
-    my $link = 0;
-
-    #if we are running a single assembler we need to symlink its contig output
-    # into $tmpdir - pass a $link flag to run_assembler
-    $link = 1 if ( $#assemblers == 0 );
-    for ( my $i = 0 ; $i <= $#assemblers ; $i++ ) {
-
-        my $assembler = $assemblers[$i];
-        my $args      = $assembler_args[$i];
-
-        run_assembler(
-                       $tmpdir,      $assembler, $reference,   $args,     $link,
-                       $type,        $encoding,  $genome_size, $platform, $mean_read_length,
-                       $insert_size, $stddev,    $threads
-                     );
-    }
-
-    merge_assemblies( $tmpdir, \@assemblers, $merge_method ) if ( $#assemblers == 1 );
     my $id_ok = 1;
-    if ( $scaffolder && $reference ) {
-        $id_ok = check_id($tmpdir);
+    if ( !$already_assembled ){
+	print "Running in $mode mode\n";
+	my $ret;
+	my $link = 0;
+
+	#if we are running a single assembler we need to symlink its contig output
+	# into $tmpdir - pass a $link flag to run_assembler
+	$link = 1 if ( $#assemblers == 0 );
+	for ( my $i = 0 ; $i <= $#assemblers ; $i++ ) {
+
+	    my $assembler = $assemblers[$i];
+	    my $args      = $assembler_args[$i];
+
+	    run_assembler(
+		$tmpdir,      $assembler, $reference,   $args,     $link,
+		$type,        $encoding,  $genome_size, $platform, $mean_read_length,
+		$insert_size, $stddev,    $threads
+		);
+	}
+	merge_assemblies( $tmpdir, \@assemblers, $merge_method ) if ( $#assemblers == 1 );
+	if ( $scaffolder && $reference ) {
+	    $id_ok = check_id($tmpdir);
+	}
+    } else { # end if already assembled
+    	print "using assemblies from another directory\n";
+    	$id_ok = 0;  # it better be, that is
+    	print "idok: $id_ok\n";
     }
 
     run_scaffolder( $tmpdir, "$tmpdir/reference_parsed_ids.fasta",
@@ -459,7 +468,7 @@ set_paths($config);
 
     # sequence stable from this point, only annotations altered
     for my $i (qw(1 2)) {
-
+	print "pm: $i \n";
         $pm->start and next();
         if ( $i == 1 ) {
 
@@ -769,7 +778,7 @@ sub select_tools {
             }
         }
     }
-
+    print "linkage: $linkage_evidence";
     return ( \@assemblers, $scaffolder, $linkage_evidence, $merger, $finisher, $varcall );
 
 }
@@ -796,6 +805,7 @@ sub setup_tempdir {
     my $fastq1     = shift;
     my $fastq2     = shift;
     my $long_fastq = shift;
+    my $de_fere_contigs = shift;
     my $fasta      = shift;
     my $platform   = shift;
     my $tmpdir     = shift;
@@ -848,6 +858,10 @@ sub setup_tempdir {
         my $basename = basename($long_fastq);
         copy( $long_fastq, $tmpdir ) or die "Error copying $basename: $!";
     }
+    if ($de_fere_contigs) {
+        my $basename = basename($de_fere_contigs);
+        copy( $de_fere_contigs, $tmpdir ) or die "Error copying $basename: $!";
+    }
 
     if ($fasta) {
         my $basename = basename($fasta);
@@ -885,6 +899,9 @@ sub setup_tempdir {
     symlink( basename($fastq2), "$tmpdir/orig_read2.fastq" )
       or die "Error  symlinking $fastq2: $!"
       if ($fastq2);
+    symlink( basename($de_fere_contigs), "$tmpdir/de_fere_contigs.fasta" )
+      or die "Error  symlinking $de_fere_contigs: $!"
+      if ($de_fere_contigs);
     symlink( basename($long_fastq), "$tmpdir/long.fastq" )
       or die "Error  symlinking $long_fastq: $!"
       if ($long_fastq);
@@ -1043,6 +1060,7 @@ sub run_fastqc {
     my $fastq1     = readlink("$tmpdir/read1.fastq");
     my $fastq2     = readlink("$tmpdir/read2.fastq");
     my $long_fastq = readlink("$tmpdir/long.fastq");
+    # my $de_fere_contigs = readlink("$tmpdir/de_fere_contigs.fasta");
 
     my $cmd = $config->{'fastqc_dir'} . "fastqc -t 4 -o $tmpdir/fastqc ";
     $cmd .= " $tmpdir/$fastq1"     if ($fastq1);
@@ -1081,7 +1099,7 @@ sub run_fastqc {
     }
 
     if ($fail) {
-        if ( $type eq 'long' || $type eq 'hybrid' ) {
+        if ( $type eq 'long' || $type eq 'hybrid' || $type eq 'de_fere' ) {
             print "NB: Reported quality issues with Per base sequence quality etc.\n";
             print "are normal when analysing PacBio sequence with FastQC...\n\n";
         }
@@ -1129,6 +1147,7 @@ sub assess_reads {
 
     my ( @mean, @stddev, $long_mean, $long_stddev, $tot_length, $long_tot_length );
     foreach my $read (qw(read1.fastq read2.fastq long.fastq)) {
+    # foreach my $read (qw(read1.fastq read2.fastq long.fasta)) {
         if ( -e "$tmpdir/$read" ) {
             my ( @lengths, $reads );
             my $target = readlink("$tmpdir/$read");
@@ -1142,6 +1161,7 @@ sub assess_reads {
                 $line = <FASTQ>;
                 if ($line) {    #suppress undefined warnings for 0 length reads
                     push @lengths, length($line);
+		    #<#
                     $tot_length += length($line) if ( $read ne 'long.fastq' );
                     $long_tot_length += length($line) if ( $read eq 'long.fastq' );
                     $reads++;
@@ -1160,8 +1180,8 @@ sub assess_reads {
                 push @tmp, $_ if ( $_ < 3 * $mean );
             }
             @lengths = @tmp;
-
-            if ( $read eq 'long.fastq' ) {
+	    #>#
+            if ( $read eq 'long.fasta' ) {
                 $long_mean   = sprintf( "%d", mean(@lengths) );
                 $long_stddev = sprintf( "%d", stddev(@lengths) );
             }
@@ -1431,7 +1451,8 @@ sub downsample_reads {
         if ( -e "$tmpdir/$fastq" ) {
             my $frac = ( $coverage / $orig_coverage );
             my $required_reads = ( ( $frac * $read_bases ) / $mean_read_length );
-            my $cmd = "$seqtk_dir/seqtk sample -s100 $tmpdir/$fastq $required_reads > $tmpdir/downsampling/$fastq";
+            # my $cmd = "$seqtk_dir/seqtk sample -s100 $tmpdir/$fastq $required_reads > $tmpdir/downsampling/$fastq";
+            my $cmd = "$seqtk_dir/seqtk sample -s 100 $tmpdir/$fastq $required_reads > $tmpdir/downsampling/$fastq";
             system($cmd) == 0 or die " Error running $cmd: $! ";
         }
     }
@@ -1495,6 +1516,9 @@ sub run_assembler {
             if ( $category eq 'hybrid' ) {
                 $cmd = $conf_assembler->{'command_hybrid'};
             }
+            elsif ( $category eq 'de_fere' ) {
+                $cmd = $conf_assembler->{'command_de_fere'};
+            }
             elsif ( -e "$tmpdir/read2.fastq" ) {
                 $cmd = $conf_assembler->{'command_pe'};
             }
@@ -1537,8 +1561,9 @@ sub run_assembler {
         s/__FASTQ2__/$tmpdir\/read2.fastq/;
         s/__ORIG_FASTQ1__/$tmpdir\/orig_read1.fastq/;
         s/__ORIG_FASTQ2__/$tmpdir\/orig_read2.fastq/;
+        s/__DE_FERE_CONTIGS__/$tmpdir\/de_fere_contigs.fasta/;
         s/__LONGFASTQ__/$tmpdir\/long.fastq/;
-        s/__REFERENCE__/$reference/ if ($reference);
+        s/__REFERENCE__/$reference/ if ($reference); #
         s/__CATEGORY__/$category/;
         s/__ENCODING__/$encoding/;
         s/__GENOME_SIZE__/$genome_size/ if defined($genome_size);
@@ -1721,7 +1746,7 @@ sub finish_assembly {
     $cmd =~ s/__ENCODING__/$encoding/;
     $cmd =~ s/__THREADS__/$threads/;
 
-    system($cmd) == 0 or die "Error running $cmd: $!";
+    system("perl $cmd") == 0 or die "Error running $cmd: $!";
     chdir $tmpdir     or die " Error chdiring to $tmpdir: $! ";
 
     print "Finished assembly statistics : \n============================\n";
@@ -1823,7 +1848,8 @@ sub align_reads {
     }
 
     $cmd = "$samtools_dir/samtools view -q 10 -Sb $tmpdir/bwa/$reference.sam 2>$tmpdir/bwa/samtoolsview.log"
-      . "|$samtools_dir/samtools sort - $tmpdir/bwa/$reference";
+      # . "|$samtools_dir/samtools sort - $tmpdir/bwa/$reference";
+      . "|$samtools_dir/samtools sort - > $tmpdir/bwa/$reference.bam";
     system($cmd) == 0 or die "Error running $cmd";
 
     $cmd = "$samtools_dir/samtools index $tmpdir/bwa/$reference.bam 2>$tmpdir/bwa/samtools_index.log";
@@ -2160,7 +2186,7 @@ sub run_scaffolder {
             #symlink( "$run_dir/reference_${ref_ids[0]}_contigs", "$run_dir/${scaffolder}_${ref_id}/$contigs" )
             #or die "Error linking $contigs:$! ";
 
-            system("$exec_cmd") == 0 or die "Error executing $exec_cmd:$!";
+            system("perl $exec_cmd") == 0 or die "Error executing $exec_cmd: ";
             my $scaffIO =
               Bio::SeqIO->new( -format => 'fasta', -file => "$run_dir/${scaffolder}_${ref_id}/scaffolds.fasta" )
               or die "Error opening $run_dir/${scaffolder}_${ref_id}/scaffolds.fasta: $!";
@@ -2222,7 +2248,7 @@ sub run_scaffolder {
 
         $exec_cmd .= " 2>&1 >$tmpdir/${scaffolder}_${run_id}.log";
 
-        system($exec_cmd) == 0 or die "Error executing $exec_cmd:$!";
+        system("perl $exec_cmd") == 0 or die "Error executing $exec_cmd:$!";
 
         #mkdir("$run_dir/${scaffolder}") or die "Error creating $run_dir/${scaffolder}: $! ";
         #chdir("$run_dir/${scaffolder}") or die "Error in chdir $run_dir/{scaffolder}: $! ";
@@ -2556,7 +2582,8 @@ sub run_prokka {
     system($cmd);
     if ( $? != 0 ) { print "prokka exited with $?...\n" }
 
-    my $inIO        = Bio::SeqIO->new( -file => "$tmpdir/prokka/prokka.gbf",     -format => 'genbank' );
+    # my $inIO        = Bio::SeqIO->new( -file => "$tmpdir/prokka/prokka.gbf",     -format => 'genbank' );
+    my $inIO        = Bio::SeqIO->new( -file => "$tmpdir/prokka/prokka.gbk",     -format => 'genbank' );
     my $embl_outIO  = Bio::SeqIO->new( -file => ">$tmpdir/prokka/prokka.embl",   -format => 'embl' );
     my $fasta_outIO = Bio::SeqIO->new( -file => ">$tmpdir/prokka/${type}.fasta", -format => 'fasta' );
 
