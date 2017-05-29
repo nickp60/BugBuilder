@@ -437,6 +437,21 @@ set_paths($config);
     } else { # end if already assembled
     	print "using assemblies from another directory\n";
     	$id_ok = 0;  # it better be, that is
+	$tmpdir = $scratchdir;
+	my $oridir = $tmpdir . "/origin";
+	rmtree "$tmpdir/origin" or print "Unable to remove origin dir: $!\n";
+	rmtree "$tmpdir/agp" or print "Unable to remove agp dir: $!\n";
+	unlink "$tmpdir/scaffolds.agp" or print "unable to delete scaffolds.agp\n";
+	unlink "$tmpdir/contigs.embl" or print "unable to delete contigs.embl\n";
+	unlink "$tmpdir/scaffolds.embl" or print "unable to delete scaffolds.embl\n";
+	# unlink "$tmpdir/scaffolds.fasta" or print "unable to delete scaffolds.fasta\n";
+	# unlink "$tmpdir/contigs.fasta" or print "unable to delete scaffolds.contigs\n";
+	rmtree "$tmpdir/annotation_merge" or print "unable to delete merge\n";
+	rmtree "$tmpdir/cgview" or print "unable to delete cgview\n";
+	rmtree "$tmpdir/comparisons" or print "unable to delete comparisons\n";
+	unlink "$tmpdir/contigs_cgview.png" or print "unable to delete contigs_cgview.png\n";
+	unlink "$tmpdir/scaffolds_cgview.png" or print "unable to delete scaffolds_cgview.png\n";
+	unlink glob "$tmpdir/comparison_vs*" or print "unable to delete comparisons";
     	print "idok: $id_ok\n";
     }
 
