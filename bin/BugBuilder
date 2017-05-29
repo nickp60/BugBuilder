@@ -436,7 +436,7 @@ set_paths($config);
 	}
     } else { # end if already assembled
     	print "using assemblies from another directory\n";
-    	$id_ok = 0;  # it better be, that is
+    	$id_ok = 1;  # it better be, that is
 	$tmpdir = $scratchdir;
 	my $oridir = $tmpdir . "/origin";
 	rmtree "$tmpdir/origin" or print "Unable to remove origin dir: $!\n";
@@ -454,12 +454,13 @@ set_paths($config);
 	unlink glob "$tmpdir/comparison_vs*" or print "unable to delete comparisons";
     	print "idok: $id_ok\n";
     }
-
     run_scaffolder( $tmpdir, "$tmpdir/reference_parsed_ids.fasta",
                     $scaffolder, $scaffolder_args, $insert_size, $stddev, 1, "$tmpdir/contigs.fasta", $mean_read_length,
                     $threads )
       if ( $scaffolder && ( $id_ok && $scaffold_type eq 'align_genus' )
-           || ( !$id_ok && $scaffold_type eq 'paired_ends' ) );
+           || ( $id_ok && $scaffold_type eq 'paired-ends' )
+           # why is that id_ok negated?
+           || ( !$id_ok && $scaffold_type eq 'paired-ends' ) );
 
     if ( -e "$tmpdir/scaffolds.fasta" && $reference ) {
 
