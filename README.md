@@ -1,4 +1,13 @@
-BugBuilder
+BugBuilder NRW
+
+----------
+Updates to the BugBuilder pipeline incorporating two major chanages:
+1. Ability to submit --trusted-contigs to SPAdes
+2. Ability to restart an analaysis after the (timeconsuming) assembly step
+
+Additionally, various bug fixes were incorportated to make it work with more
+recent versions of some of the programs.
+
 ==========
 
 Hands-free microbial genome assembly
