@@ -206,7 +206,7 @@ set_paths($config);
     my $threads      = $config->{'threads'};
     my $genome_size  = 0;
     my $out_dir      = undef;
-    my $tmpdir       = undef;
+    my $tmpdir       = $config->{'tmp_dir'};
 
     my $fastq_error = 0;
 
@@ -316,7 +316,7 @@ set_paths($config);
     print "\nPreparing to build your bug...\n\n";
 
     my $orig_dir = cwd();
-    my $tmpdir = setup_tempdir( $fastq1, $fastq2, $long_fastq, $de_fere_contigs, $reference, $platform, $tmpdir );
+    $tmpdir = setup_tempdir( $fastq1, $fastq2, $long_fastq, $de_fere_contigs, $reference, $platform, $tmpdir );
 
     #	$tmpdir = "/scratch/BugBuilder/FXF6dPu5x7";
 

@@ -682,6 +682,19 @@ assembler_categories:
       - spades
     scaffolders:
       - mauve
+  - name: 'de_fere'
+    min_length: 75
+    max_length: 50000
+    platforms:
+      - de_fere
+    paired_fastq: 'required'
+    de_fere_contigs: 'required'
+    assemblers:
+      - masurca
+      - spades
+    scaffolders:
+      - SIS
+      - mauve
 
 #Assembler configuration
 assemblers:
@@ -694,10 +707,11 @@ assemblers:
      downsample_reads: 1
    - name: spades
      create_dir: 0
-     max_length: 300
+     max_length: 303
      command_se: __ASMDIR__/spades.py -s __FASTQ1__ -o __TMPDIR__/spades
      command_pe: __ASMDIR__/spades.py -1 __FASTQ1__ -2 __FASTQ2__ -o __TMPDIR__/spades
      command_hybrid: __ASMDIR__/spades.py -1 __FASTQ1__ -2 __FASTQ2__ --pacbio __LONGFASTQ__ -o __TMPDIR__/spades
+     command_de_fere: __ASMDIR__/spades.py -1 __FASTQ1__ -2 __FASTQ2__ --trusted-contigs __DE_FERE_CONTIGS__ -o __TMPDIR__/spades
      contig_output: __TMPDIR__/spades/contigs.fasta
      scaffold_output: __TMPDIR__/spades/scaffolds.fasta
      default_args: -t __THREADS__ --careful
