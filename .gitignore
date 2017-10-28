@@ -12,3 +12,5 @@ man
 #*#
 *.DS_Store
 *.egg-info/
+/tests/tmp_tests/
+*__pycache__*
