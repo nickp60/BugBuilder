@@ -496,7 +496,7 @@ def get_args():  # pragma: no cover
                           help="args to pass to the scaffolder, in single quotes",
                           nargs="*",
                           type=str)
-    optional.add_argument("--merge-method", dest='merge-method', action="store",
+    optional.add_argument("--merge-method", dest='merge_method', action="store",
                           help="merge method to use",
                           choices=parse_available_mergers,
                           type=str)
@@ -777,7 +777,7 @@ def assess_reads(args, conf, platform, tempdir, logger=None):
 
     optional params: $ (platform)
 
-    returns: $ (assembler type)
+    returns: $ (assembler libtype)
          $ (quality encoding)
          $ (mean length)
          $ (stddev of read length)
@@ -823,18 +823,18 @@ def assess_reads(args, conf, platform, tempdir, logger=None):
     stddev = statistics.mean(stddevs)
     # set type of library
     # TODO type is a bad variable name in python
-    type = None
+    lib_type = None
     for category in config.assembler_categories:
         if platform is not None:
             if platform == category.platform:
-                type = category.name
-        if type == None:  # if that failed, try setting according to read length
+                lib_type = category.name
+        if lib_type == None:  # if that failed, try setting according to read length
             if mean > category.min_length and mean <= category.max_length:
-                type = category.name
+                lib_type = category.name
             elif long_mean != 0:
                 if long_mean > category.min_length and long_mean <= category.max_length:
-                    type = category.name
-    if type is None:
+                    lib_type = category.name
+    if lib_type is None:
         raise ValueError(
             "Cound not find appropriate platform based on read length!")
 
@@ -853,7 +853,7 @@ def assess_reads(args, conf, platform, tempdir, logger=None):
         logger.error("error calculating coverage!")
         sys.exit(1)
     encoding = id_fastq_encoding(tmpdir)
-    return Namespace(type=type, encoding=encoding, mean_read_length=mean,
+    return Namespace(lib_type=lib_type, encoding=encoding, mean_read_length=mean,
                      read_length_stddev=stddev,
                      mean_long_read_length=long_mean,
                      long_read_length_stddev=long_stddev,
@@ -861,8 +861,8 @@ def assess_reads(args, conf, platform, tempdir, logger=None):
                      read_bases=tot_length)
 
 
-def check_ref_needed(args, type):
-    if type == "long" :
+def check_ref_needed(args, lib_type):
+    if lib_type == "long" :
         if (args.genome_size is 0 and args.reference):
             raise ValueError("Please supply a genome size or reference " +
                              "sequence when running a long-read assembly")
@@ -890,6 +890,100 @@ def parse_config(config_file, logger=None):
     return(newns)
 
 
+def get_assemblers(args, config, paired):
+    if len(args.assemblers) > 2:
+        raise ValueError("A maximum of 2 assemblers can be requested")
+    # sanity check assemblers where these have been manually requested...
+    for assembler in args.assemblers:
+        assembler_name = os.path.basename(assembler)
+        if shutil.which(assembler) is None:
+            raise ValueError("%s is nt in PATH! exiting" % assembler)
+    # If no assembler is requested, we need to select one based on the
+    # 'assembly_type' from the configuration file....
+    if len(args.assemblers) > 1:
+        for category in config.assembler_categories:
+            if category.name == reads_namespace.lib_type:
+                args.assemblers.append(category.assemblers)
+    # then check the requested assemblers are appropriate for
+    # the sequence characteristics...
+    for assembler in args.assemblers:
+        assemblers = config.assemblers
+        for conf_assembler in assemblers:
+            if conf_assembler.name != assembler:
+                continue
+            if paired and conf_assembler.command_se:
+                raise ValueError("%s requires paired reads, but you only " +
+                                 "specified one fastq file..." % assembler)
+            if conf_assembler.min_length and reads_namespace.read_length < conf_assembler.min_length:
+                raise ValueError("%s does not support reads less than %d" % \
+                                 (assembler, conf_assembler.min_length))
+            if conf_assembler.max_length and reads_namespace.read_length > conf_assembler.max_length:
+                raise ValueError("%s does not support reads greather than %d" % \
+                                 (assembler, conf_assembler.max_length))
+            if conf_assembler.max_length and reads_namespace.read_length > conf_assembler.max_length:
+                raise ValueError("%s requires the library insert size and " +
+                                 "stddev to be provided. Please add the " +
+                                 "--insert-size and --insert-stddev " +
+                                 "parameters, or provide a reference " +
+                                 "sequence" % assembler)
+
+
+def get_scaffolder_and_linkage(args, config, paired):
+    if args.scaffolder is None:
+        return None
+    if args.scaffolder not in [x.name for x in config.scaffolders]:
+        raise ValueError("%s not an available scaffolder!" %args.scaffolder)
+    linkage_evidence = None
+    for conf_scaffolder in config.scaffolders:
+        if conf_scaffolder.name == args.scaffolder:
+            if conf_scaffolder.linkage_evidence == "paired-ends" and not paired:
+                    raise ValueError("%s requires paired reads, but you " +
+                                     "only specified one fastq file." % \
+                                     args.scaffolder)
+            elif "align" in conf_scaffolder.linkage_evidence and args.reference is None:
+                raise ValueError("%s requires a reference for alignment, " +
+                                 "but none is specified." % args.scaffolder)
+
+            return conf_scaffolder.linkage_evidence
+
+
+def get_merger_and_linkage(args, config, paired):
+    if args.merge_method is None:
+        return None
+    if args.merge_method not in [x.name for x in config.merge_tools]:
+        raise ValueError("%s not an available merge_method!" % args.merge_method)
+    linkage_evidence = None
+    for merger_methods in config.merge_methods:
+        if merger_methods.name == args.merge_method:
+            if merge_methods.allow_scaffolding:
+                args.scaffolder = None
+
+def get_finisher(args, config, paired):
+    if args.finisher is None:
+        return None
+    if args.finisher not in [x.name for x in config.finishers]:
+        raise ValueError("%s not an available finisher!" %args.finisher)
+    for conf_finisher in config.finishers:
+        if conf_finisher.name == args.finisher:
+            if args.reference is None and conf_finisher.ref_required:
+                raise ValueError("%s requires a reference." % \
+                                     args.finisher)
+            elif not paired and conf_finisher.paired_reads:
+                raise ValueError("%s requires paired reads" % args.finisher)
+
+def get_varcaller(args, config, paired):
+    if args.varcaller is None:
+        return None
+    if args.varcaller not in [x.name for x in config.varcallers]:
+        raise ValueError("%s not an available varcaller!" %args.varcaller)
+    for conf_varcallers in config.varcallers:
+        if conf_varcallers.name == args.varcaller:
+            if args.reference is None and conf_varcallers.ref_required:
+                raise ValueError("%s requires reference, but you " +
+                                 "only specified one fastq file." % \
+                                 args.varcaller)
+
+
 def select_tools(args, paired, config):
     """
     select_tools
@@ -903,147 +997,28 @@ def select_tools(args, paired, config):
                  $ (name of requested variant caller)
                  $ (paired - flag to indicate we are using paired reads
                  $ (reference - indicates a reference has been provided)
-                 $ (type - category of sequence i.e. short_illumina)
+                 $ (lib_type - category of sequence i.e. short_illumina)
                  $ (mean read length)
 
     returns          $ (arrayref of assemblers to use)
                  $ (name of scaffolder to use)
 
     """
-    my $config      = shift;
-    my $assemblers  = shift;
-    my $scaffolder  = shift;
-    my $merger      = shift;
-    my $finisher    = shift;
-    my $varcall     = shift;
-    my $paired      = shift;
-    my $reference   = shift;
-    my $type        = shift;
-    my $read_length = shift;
-    my $insert_size = shift;
-    if len(args.assemblers) > 2:
-        raise ValueError("A maximum of 2 assemblers can be requested")
-    # sanity check assemblers where these have been manually requested...
-    for assembler in args.assemblers:
-        assembler_name = os.path.basename(assembler)
-        if shutil.which(assembler) is None:
-            raise ValueError("%s is nt in PATH! exiting" % assembler)
-    # If no assembler is requested, we need to select one based on the
-    # 'assembly_type' from the configuration file....
-    if len(args.assemblers) > 1:
-        for category in config.assembler_categories:
-            if category.name == reads_namespace.type:
-                args.assemblers.append(category.assemblers)
-    # then check the requested assemblers are appropriate for
-    # the sequence characteristics...
-    for assembler in args.assemblers:
-        assemblers = config.assemblers
-        for conf_assembler in assemblers:
-            if conf_assembler.name != assembler:
-                continue
-            if paired and conf_assembler.command_se:
-                raise ValueError("%s requires paired reads, but you only " +
-                                 "specified one fastq file..." %assembler)
-            if conf_assembler.min_length and reads_namespace.read_length < conf_assembler.min_length:
-                raise ValueError("%s does not support reads less than %d" % \
-                                 (assembler, conf_assembler.min_length)
-            if conf_assembler.max_length and reads_namespace.read_length > conf_assembler.max_length:
-                raise ValueError("%s does not support reads greather than %d" % \
-                                 (assembler, conf_assembler.max_length)
-            if conf_assembler.max_length and reads_namespace.read_length > conf_assembler.max_length:
-                raise ValueError("%s requires the library insert size and " +
-                                 "stddev to be provided. Please add the " +
-                                 "--insert-size and --insert-stddev " +
-                                 "parameters, or provide a reference " +
-                                 "sequence" % assembler)
-    # the scaffolder...
-    # and the scaffolder...
-    my @available_scaffolders = map { $_->[0] }
-      sort { $a->[1] <=> $b->[1] }
-      map { [ $_->{'name'}, $_->{'priority'} ] } @{ $config->{'scaffolders'} };
-    my $linkage_evidence;
+    get_assemblers(args, config, paired)
+    args.scaffolder, linkage_evidence = get_scaffolder_and_linkage(
+        args=args, config=config, paired=paired)
 
-    if ($scaffolder) {
-        unless ( grep ( /^$scaffolder$/i, @available_scaffolders ) ) {
-            die "\nError: $scaffolder is not a valid scaffolder\n\n" . "The following scaffolders are configured: ",
-              join( ", ", @available_scaffolders ), "\n\n";
-        }
-        my $conf_scaffolders = $config->{'scaffolders'};
-        foreach my $conf_scaffolder (@$conf_scaffolders) {
-            my $name = lc( $conf_scaffolder->{'name'} );
-            if ( $name eq $scaffolder ) {
-                if ( $conf_scaffolder->{'linkage_evidence'} eq 'paired-ends' & !$paired ) {
-                    die "\nError: $scaffolder requires paired reads, but you only specified one fastq file...\n";
-                }
-                elsif ( $conf_scaffolder->{'linkage_evidence'} =~ /align/ & !$reference ) {
-                    die "\nError: $scaffolder requires a reference for alignment, but none is specified...\n";
-                }
-                $linkage_evidence = $conf_scaffolder->{'linkage_evidence'};
-            }
+    get_merger_and_linkage(args, config, paired)
+    get_finisher(args, config, paired)
+    get_varcaller(args, config, paired)
 
-        }
-    }
-
-    my @available_mergers = map { $_->[0] }
-      sort { $a->[1] <=> $b->[1] }
-      map { [ $_->{'name'}, $_->{'priority'} ] } @{ $config->{'merge_tools'} };
-
-    if ($merger) {
-        unless ( grep ( /^$merger$/i, @available_mergers ) ) {
-            die "\nError: $merger is not a valid merge-tool\n\n" . "The following tools are configured: ",
-              join( ", ", @available_mergers ), "\n\n";
-        }
-        my $conf_mergers = $config->{'merge_tools'};
-        foreach my $conf_merger (@$conf_mergers) {
-            my $name = lc( $conf_merger->{'name'} );
-            if ( $name eq $merger ) {
-                undef($scaffolder) if $conf_merger->{'allow_scaffolding'} == 0;
-            }
-        }
-    }
-
-    my @available_finishers = map { $_->[0] }
-      sort { $a->[1] <=> $b->[1] }
-      map { [ $_->{'name'}, $_->{'priority'} ] } @{ $config->{'finishers'} };
-
-    if ($finisher) {
-        unless ( grep ( /^$finisher$/i, @available_finishers ) ) {
-            die "\nError: $finisher is not a valid finishiing-tool\n\n" . "The following tools are configured: ",
-              join( ", ", @available_finishers ), "\n\n";
-        }
-        my $conf_finishers = $config->{'finishers'};
-        foreach my $conf_finisher (@$conf_finishers) {
-            my $name = lc( $conf_finisher->{'name'} );
-            if ( $name eq $finisher ) {
-                die "Error: $finisher requires a reference sequence" unless ($reference);
-                if ( $conf_finisher->{'paired_reads'} ) {
-                    die "Error: $finisher requires paired reads" unless ($paired);
-                }
-            }
-        }
-    }
-
-    my @available_varcallers = map { $_->[0] }
-      sort { $a->[1] <=> $b->[1] }
-      map { [ $_->{'name'}, $_->{'priority'} ] } @{ $config->{'varcallers'} };
-
-    if ($varcall) {
-        unless ( grep ( /^$varcall$/i, @available_varcallers ) ) {
-            die "\nError: $varcall is not a valid variant caller\n\n" . "The following tools are configured: ",
-              join( ", ", @available_varcallers ), "\n\n";
-        }
-        my $conf_varcallers = $config->{'varcallers'};
-        foreach my $conf_varcaller (@$conf_varcallers) {
-            my $name = lc( $conf_varcaller->{'name'} );
-            if ( $name eq $varcall ) {
-                die "Error: $varcall requires a reference sequence" unless ($reference);
-            }
-        }
-    }
-    print "linkage: $linkage_evidence";
-    return ( \@assemblers, $scaffolder, $linkage_evidence, $merger, $finisher, $varcall );
-
-}
+    print "linkage: %s" % linkage_evidence
+    return Namespace(assemblers=args.assemblers,
+                     scaffolder=args.scaffolder,
+                     scaffold_type=linkage_evidence,
+                     merge_method=args.merger,
+                     finisher=args.finisher,
+                     varcall=args.varcaller)
 
 
 def main(args):
@@ -1079,20 +1054,13 @@ def main(args):
 
     reference = os.path.basename(args.reference)
     #  need to know a bit about the provided reads so we can act appropriately
-    reads_namespace  = assess_reads(args=args, conf, platform, tempdir, logger=None)
-    check_ref_needed(args=args, type=reads_namespace.type)
+    reads_namespace  = assess_reads(args=args, conf, platform,
+                                    tempdir, logger=logger)
+    check_ref_needed(args=args, lib_type=reads_namespace.lib_type)
     config = get_config_path()
-################################################################
+    tools = select_tools(args, paired, config)
 
-    my ( $sel_assemblers, $sel_scaffolder, $scaffold_type, $sel_merge_method, $sel_finisher, $sel_varcall ) =
-	select_tools( $config, \@assemblers, $scaffolder, $merge_method,     $finisher, $varcall,
-		      $paired, $reference,   $type,       $mean_read_length, $insert_size );
-    @assemblers   = @$sel_assemblers;
-    $scaffolder   = $sel_scaffolder;
-    $merge_method = $sel_merge_method;
-    $finisher     = $sel_finisher;
-    $varcall      = $sel_varcall;
-
+    ################################################################
     # pull downsampling attribute from assembler configuration
     my $assembler_conf_downsample = 0;
     my $assembler_conf            = $config->{'assemblers'};
