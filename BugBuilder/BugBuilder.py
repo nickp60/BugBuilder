@@ -182,13 +182,16 @@ use YAML::XS qw(LoadFile);
 
 import argparse
 import os
+import yaml
 import sys
 import arrow
 import logging
+import statistics
+import pkg_resources
 
 from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
-    
+
 def parse_config():
     pass
 
@@ -216,6 +219,218 @@ def parse_available_finishing():
 def parse_available_varcaller():
     finishers = ["pilon"]
     return finishers
+
+def configure():
+    text = \
+        """STATUS: COMPLETE
+######################################################################
+#
+# BugBuilder configuration in YAML format
+#
+# This file defines the BugBuilder configuration. See the BugBuilder
+# User Guide for details of the dependencies which need to be installed.
+#
+######################################################################
+---
+# tmp_dir specifies the location on the machine where working directories will be created
+tmp_dir: <TMPL_VAR NAME=TMP_DIR>
+# java specifies the java binary
+java: <TMPL_VAR NAME=JAVA>
+# number of parallel threads to run
+threads: <TMPL_VAR NAME=THREADS>
+<TMPL_VAR NAME=INSTALL_PATHS>
+
+<TMPL_VAR NAME=APPEND_PATH>
+
+# Definition of assembly categories, and platforms
+# These are used for automated assembler selection based on assesment of the
+# provided reads. These should ideally not overlap or the choice of category
+# may become a bit random
+assembler_categories:
+  - name: 'short_illumina'
+    min_length: 25
+    max_length: 100
+    single_fastq: 'optional'
+    paired_fastq: 'optional'
+    platforms:
+      - 'illumina'
+    assemblers:
+      - spades
+      - abyss
+    scaffolders:
+      - mauve
+      - SIS
+      - sspace
+  - name: 'long_illumina'
+    min_length:  75
+    max_length: 250
+    single_fastq: 'optional'
+    paired_fastq: 'optional'
+    platforms:
+      - 'illumina'
+    assemblers:
+      - spades
+      - celera
+    scaffolders:
+      - mauve
+      - SIS
+      - sspace
+  - name: '454_IonTorrent'
+    min_length: 100
+    max_length: 1000
+    single_fastq: 'optional'
+    paired_fastq: 'optional'
+    platforms:
+      - '454'
+      - 'iontorrent'
+    assemblers:
+      - celera
+    scaffolders:
+      - mauve
+      - SIS
+  - name: 'long'
+    min_length: 500
+    max_length: 50000
+    long_fastq: 'required'
+    platforms:
+      - 'PacBio'
+      - 'MinION'
+    assemblers:
+      - PBcR
+  - name: 'hybrid'
+    min_length: 75
+    max_length: 50000
+    platforms:
+      - hybrid
+    paired_fastq: 'required'
+    long_fastq: 'required'
+    assemblers:
+      - masurca
+      - spades
+    scaffolders:
+      - mauve
+  - name: 'de_fere'
+    min_length: 75
+    max_length: 50000
+    platforms:
+      - de_fere
+    paired_fastq: 'required'
+    de_fere_contigs: 'required'
+    assemblers:
+      - masurca
+      - spades
+    scaffolders:
+      - SIS
+      - mauve
+
+#Assembler configuration
+assemblers:
+   - name: abyss
+     create_dir: 1
+     max_length: 200
+     command_pe: __BUGBUILDER_BIN__/run_abyss --tmpdir __TMPDIR__ --fastq1 __FASTQ1__ --fastq2 __FASTQ2__ --read_length __READ_LENGTH__
+     contig_output: __TMPDIR__/abyss/abyss-contigs.fa
+     scaffold_output: __TMPDIR__/abyss/abyss-scaffolds.fa
+     downsample_reads: 1
+   - name: spades
+     create_dir: 0
+     max_length: 303
+     command_se: __ASMDIR__/spades.py -s __FASTQ1__ -o __TMPDIR__/spades
+     command_pe: __ASMDIR__/spades.py -1 __FASTQ1__ -2 __FASTQ2__ -o __TMPDIR__/spades
+     command_hybrid: __ASMDIR__/spades.py -1 __FASTQ1__ -2 __FASTQ2__ --pacbio __LONGFASTQ__ -o __TMPDIR__/spades
+     command_de_fere: __ASMDIR__/spades.py -1 __FASTQ1__ -2 __FASTQ2__ --trusted-contigs __DE_FERE_CONTIGS__ -o __TMPDIR__/spades
+     contig_output: __TMPDIR__/spades/contigs.fasta
+     scaffold_output: __TMPDIR__/spades/scaffolds.fasta
+     default_args: -t __THREADS__ --careful
+     downsample_reads: 1
+   - name: celera
+     create_dir: 1
+     min_length: 75
+     command_se: __BUGBUILDER_BIN__/run_celera --fastq1 __FASTQ1__ --tmpdir __TMPDIR__ --category __CATEGORY__ --encoding __ENCODING__ --genome_size __GENOME_SIZE__
+     command_pe: __BUGBUILDER_BIN__/run_celera --fastq1 __FASTQ1__ --fastq2 --tmpdir __TMPDIR__ --category __CATEGORY__ --encoding __ENCODING__ --genome_size __GENOME_SIZE__
+     contig_output: __TMPDIR__/celera/output/9-terminator/BugBuilder.ctg.fasta
+     scaffold_output: __TMPDIR__/celera/output/9-terminator/BugBuilder.scf.fasta
+     downsample_reads: 0
+   - name: PBcR
+     create_dir: 1
+     min_length: 500
+     command_se: __BUGBUILDER_BIN__/run_PBcR --fastq __LONGFASTQ__ --tmpdir __TMPDIR__ --genome_size __GENOME_SIZE__ --platform __PLATFORM__
+     contig_output: __TMPDIR__/PBcR/BugBuilder/9-terminator/asm.ctg.fasta
+     scaffold_output: __TMPDIR__/PBcR/BugBuilder/9-terminator/asm.scf.fasta
+     downsample_reads: 0
+     # masurca works best with untrimmed reads, so use __ORIG_FASTQ1__ nad __ORIG_FASTQ2__
+   - name: masurca
+     create_dir: 1
+     command_pe: __BUGBUILDER_BIN__/run_masurca --fastq1 __ORIG_FASTQ1__ --fastq2 __ORIG_FASTQ2__ --tmpdir __TMPDIR__ --category __CATEGORY__ --insert_size __INSSIZE__ --insert_stddev __INSSD__
+     command_hybrid: __BUGBUILDER_BIN__/run_masurca --fastq1 __ORIG_FASTQ1__ --fastq2 __ORIG_FASTQ2__ --longfastq __LONGFASTQ__ --tmpdir __TMPDIR__ --category __CATEGORY__ --insert_size __INSSIZE__ --insert_stddev __INSSD__
+     contig_output: __TMPDIR__/masurca/contigs.fasta
+     scaffold_output: __TMPDIR__/masurca/scaffolds.fasta
+     default_args: --threads __THREADS__
+     downsample_reads: 0
+     insert_size_required: 1
+
+scaffolders:
+   - name: SIS
+     linkage_evidence: align_genus
+     command: __BUGBUILDER_BIN__/run_sis --reference __REFERENCE__ --contigs __CONTIGS__ --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__
+     scaffold_output: scaffolds.fasta
+     unscaffolded_output: unplaced_contigs.fasta
+     create_dir: 1
+     priority: 2
+   - name: mauve
+     linkage_evidence: align_genus
+     command: __BUGBUILDER_BIN__/run_mauve --reference __REFERENCE__ --run __RUN__ --contigs __CONTIGS__ --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__
+     create_dir: 1
+     priority: 1
+     scaffold_output: scaffolds.fasta
+   - name: sspace
+     linkage_evidence: paired-ends
+     command: __BUGBUILDER_BIN__/run_sspace --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__ --contigs __CONTIGS__ --insert_size __INSSIZE__ --insert_sd __INSSD__
+     scaffold_output: BugBuilder.scaffolds.fasta
+     create_dir: 1
+     priority: 3
+
+merge_tools:
+   - name: gfinisher
+     command: __BUGBUILDER_BIN__/run_gfinisher --tmpdir __TMPDIR__  --assembler __ASSEMB1__ --assembler __ASSEMB2__ --reference __REFERENCE__
+     contig_output: renamed.fasta
+     create_dir: 1
+     priority: 1
+     allow_scaffolding: 1
+   - name: minimus
+     command: __BUGBUILDER_BIN__/run_minimus --tmpdir __TMPDIR__  --assembler __ASSEMB1__ --assembler __ASSEMB2__
+     contig_output: renumbered.fasta
+     create_dir: 1
+     priority: 2
+     allow_scaffolding: 1
+
+finishers:
+   - name: gapfiller
+     command: __BUGBUILDER_BIN__/run_gapfiller --tmpdir __TMPDIR__ --insert_size __INSSIZE__ --insert_sd __INSSD__ --threads __THREADS__
+     create_dir: 1
+     ref_required: 0
+     paired_reads: 1
+     priority: 2
+   - name: abyss-sealer
+     command: __BUGBUILDER_BIN__/run_abyss-sealer --tmpdir __TMPDIR__ --encoding __ENCODING__ --threads __THREADS__
+     create_dir: 1
+     ref_required: 0
+     paired_reads: 1
+     priority: 3
+   - name: pilon
+     command: __BUGBUILDER_BIN__/run_pilon --tmpdir __TMPDIR__ --threads __THREADS__
+     create_dir: 1
+     ref_required: 0
+     paired_reads: 1
+     priority: 1
+
+varcallers:
+   - name: pilon
+     command: __BUGBUILDER_BIN__/run_pilon_var --tmpdir __TMPDIR__ --threads __THREADS__
+     ref_required: 1
+     create_dir: 1
+     priority: 1
+"""
 
 
 def get_args():  # pragma: no cover
@@ -295,15 +510,15 @@ def get_args():  # pragma: no cover
                           choices=parse_available_varcaller,
                           nargs="*",
                           type=str)
-    optional.add_argument("--insert-size", dest='insert-size', action="store",
+    optional.add_argument("--insert-size", dest='insert_size', action="store",
                           help="insert size (bp)",
                           type=int)
-    optional.add_argument("--insert-stddev", dest='insert-stddev', action="store",
+    optional.add_argument("--insert-stddev", dest='insert_stddev', action="store",
                           help="insert size standard deviation ",
                           type=int)
-    optional.add_argument("--genome-size", dest='genome-size', action="store",
+    optional.add_argument("--genome-size", dest='genome_size', action="store",
                           help="size of the genome ",
-                          type=int)
+                          type=int, default=0) # 0 is better than None for addition :)
     optional.add_argument("--downsample", dest='downsample', action="store_true",
                           help="size of the genome ", default=False)
      optional.add_argument("--species", dest='species', action="store",
@@ -401,20 +616,19 @@ def check_file_paths(args):
         raise ValueError("Must provide merge method if using multiple assemblers")
 
 def setup_tempdir(args, output_root):
-"""#  setup_tempdir creates a temporary directory and copies
-#  over the relevent files
-#
-#  requried params: $ (path to fastq1)
-#                   $ (path to fastq2)
-#                   $ (path to longread fastq file)
-#                   $ (path to fastafile)
-#  optional params: $ (platform)
-#                   $ (preset value for tempdir)
-#
-#
-#  returns        : $ (path to tempdir)
-#
-"""
+    """  setup_tempdir creates a temporary directory and copies
+    over the relevent files
+
+    requried params: $ (path to fastq1)
+                  $ (path to fastq2)
+                  $ (path to longread fastq file)
+                  $ (path to fastafile)
+    optional params: $ (platform)
+                  $ (preset value for tempdir)
+
+    returns        : $ (path to tempdir)
+
+    """
     if args.tmpdir is None:
         scratch_dir = os.path.join(output_root, "temp_dir")
     else:
@@ -467,15 +681,19 @@ def setup_tempdir(args, output_root):
         args.reference = new_reference
     return scratch_dir;
 
+def return_open_fun(f):
+    if os.path.splitext(f)[-1] in ['.gz', '.gzip']:
+        open_fun = gzip.open
+    else:
+        open_fun = open
+    return open_fun
+
 
 def get_read_len_from_fastq(fastq1, logger=None):
     """from LP; return total read length and count in fastq1 file from all reads
     """
     lengths = []
-    if os.path.splitext(fastq1)[-1] in ['.gz', '.gzip']:
-        open_fun = gzip.open
-    else:
-        open_fun = open
+    open_fun = return_open_fun(fastq1)
     with open_fun(fastq1, "rt") as file_handle:
         data = SeqIO.parse(file_handle, "fastq")
         for read in data:
@@ -489,147 +707,341 @@ def get_read_len_from_fastq(fastq1, logger=None):
     return (lengths)
 
 
-def  assess_reads(args, tempdir, logger=None):
-"""
-Determine some characteristics of the provided reads. Need to determine
-the mean read length, wheterh they are variable length or not, and the
-quality encoding.
+def id_fastq_encoding(tempdir):
+    """
+    Identifies fastq quality encoding type, based upon the information
+    at http://en.wikipedia.org/wiki/FASTQ_format:
 
-We'll also look at the predicted coverage if a reference genome is available
+    SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS.....................................................
+    ..........................XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX......................
+    ...............................IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII......................
+    .................................JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ......................
+    LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL....................................................
+    !"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~
+    |                         |    |        |                              |                     |
+    33                        59   64       73                            104                   126
 
-required params: $ (tmpdir)
+    S - Sanger        Phred+33,  raw reads typically (0, 40)
+    X - Solexa        Solexa+64, raw reads typically (-5, 40)
+    I - Illumina 1.3+ Phred+64,  raw reads typically (0, 40)
+    J - Illumina 1.5+ Phred+64,  raw reads typically (3, 40)
+    with 0=unused, 1=unused, 2=Read Segment Quality Control Indicator (bold)
+    L - Illumina 1.8+ Phred+33,  raw reads typically (0, 41)
 
-optional params: $ (platform)
+    required params: $ (tmpdir)
 
-returns: $ (assembler type)
+    returns:         $ (encoding)
+    """
+    min_val = 104;
+    max_val = 0;
+    if os.path.exists(args.long_fastq):
+        target = args.long_fastq
+    else:
+        target = args.fastq1
+    open_fun = return_open_fun(target)
+    with open_fun(target, "r") as inf:
+        counter = 3
+        for i, line in enumerate(inf):
+            if i =< 1000:
+                break
+            if counter == 0:
+                quals = [ord(x) for x in line.split()]
+                tmp_min =  min(quals)
+                tmp_max =  max(quals)
+                min_val = tmp_min if tmp_min < min_val
+                max_val = tmp_max if tmp_max > max_val
+            else:
+                counter = counter - 1
+                continue
+    if min_val <= 59 && max_val <= 74:
+        encoding = 'sanger'
+    elif min_val > 59 && min_val < 64 && max_val < 104:
+        encoding = 'solexa'
+    elif min_val > 64:
+        encoding = 'illumina'
+    else:
+        print("assumina illumina encoding")
+        encoding = 'illumina'
+    return encoding
+
+
+def assess_reads(args, conf, platform, tempdir, logger=None):
+    """
+    Determine some characteristics of the provided reads. Need to determine
+    the mean read length, wheterh they are variable length or not, and the
+    quality encoding.
+
+    We'll also look at the predicted coverage if a reference genome is available
+
+    required params: $ (tmpdir)
+
+    optional params: $ (platform)
+
+    returns: $ (assembler type)
          $ (quality encoding)
          $ (mean length)
          $ (stddev of read length)
          $ (projected genome coverage)
          $ (number of reads)
-"""
-    logger.info("Checking reads...");
-
     my ( @mean, @stddev, $long_mean, $long_stddev, $tot_length, $long_tot_length );
+    """
+    logger.info("Checking reads...");
+    means = []
+    stddevs = []
+    long_mean = 0
+    long_stddev = 0
+    tot_length = 0
+    long_tot_length = 0
     # get the lengths of all the short reads
-    short_read_lengths, short_tot_lengths, short_counts = [], [], []
-    for read in [args.fastq1, args.fastq2]:
+    type_list = ["short", "short", "long"]
+    for i, read in enumerate([args.fastq1, args.fastq2, args.long_fastq]):
         if not os.path.exists(read):
             next
-        lengths  = get_read_len_from_fastq(read, logger=logger)
-        short_lengths.append(lengths)
-        short_tot_length.append(sum(lengths))
-        short_count.append(len(lengths))
+        lengths = get_read_len_from_fastq(read, logger=logger)
+        if type_list[i] == "long":
+            tot_long_length = tot_long_length + sum(lengths)
+        else:
+            tot_length = tot_length + sum(lengths)
+        mean = statistics.mean(lengths)
+        # gid rid of superlong 454 reads that mess with stats
+        lengths = [x for x in lengths if x < (mean * 3)]
+        if type_list[i] == "long":
+            long_count = len(lengths)
+            long_mean = statistics.mean(lengths)
+            long_stddev = statistics.stddev(lengths)
+        else:
+            counts.append(len(lengths))
+            means.append(statistics.mean(lengths))
+            stddevs.append(statistics.stddev(lengths))
+
     # ensure paired reads have same numebr of reads
-    if len(short_counts) > 1:
-        if short_counts[0] != short_counts[1]:
+    if len(counts) > 1:
+        if counts[0] != counts[1]:
             raise ValueError("Paired reads must have same number of reads!")
-        
-    if os.path.exists(args.long_fastq):
-        long_lengths = get_read_lens_from_fastq(args.long_fastq, logger=logger)
-    else:
-        long_lengths, long_tot_length, long_count = [], 0, 0
-
-
-    lengths = (tot_length + tot_long_length)
-    mean = float((tot_length + tot_long_length) / (count + long_count)))
-    
-        my ( @lengths, $reads );
-        my $target = readlink("$tmpdir/$read");
-        if ( $target =~ /.gz$/ ) {
-                open FASTQ, "<:gzip", "$tmpdir/$read" or die "Error opening $tmpdir/$read: $!";
-        }
-        else {
-            open FASTQ, "$tmpdir/$read" or die "Error opening $tmpdir/$read: $!";
-        }
-        while ( my $line = <FASTQ> ) {
-            $line = <FASTQ>;
-            if ($line) {    #suppress undefined warnings for 0 length reads
-                push @lengths, length($line);
-		#<#
-                $tot_length += length($line) if ( $read ne 'long.fastq' );
-                    $long_tot_length += length($line) if ( $read eq 'long.fastq' );
-                    $reads++;
-                }
-
-                #discard the spare lines....
-                $line = <FASTQ>;
-                $line = <FASTQ>;
-            }
-            close FASTQ;
-
-            # remove any unusually long reads which mess up the statistics (yes, 454...were looking at you....);
-            my $mean = mean(@lengths);
-            my @tmp;
-            foreach (@lengths) {
-                push @tmp, $_ if ( $_ < 3 * $mean );
-            }
-            @lengths = @tmp;
-	    #>#
-            if ( $read eq 'long.fasta' ) {
-                $long_mean   = sprintf( "%d", mean(@lengths) );
-                $long_stddev = sprintf( "%d", stddev(@lengths) );
-            }
-            else {
-                push @mean,   mean(@lengths);
-                push @stddev, stddev(@lengths);
-
-            }
-        }
-    }
-
     #determin mean read length and stddev....
-    my ( $mean, $stddev );
+    mean = statistics.mean(means)
+    stddev = statistics.mean(stddevs)
+    # set type of library
+    # TODO type is a bad variable name in python
+    type = None
+    for category in config.assembler_categories:
+        if platform is not None:
+            if platform == category.platform:
+                type = category.name
+        if type == None:  # if that failed, try setting according to read length
+            if mean > category.min_length and mean <= category.max_length:
+                type = category.name
+            elif long_mean != 0:
+                if long_mean > category.min_length and long_mean <= category.max_length:
+                    type = category.name
+    if type is None:
+        raise ValueError(
+            "Cound not find appropriate platform based on read length!")
 
-    #  unless ( defined($long_mean) ) {
-    if ( $#mean == 1 ) {
-        $mean   = sprintf( "%d", ( ( $mean[0] + $mean[1] ) / 2 ) );
-        $stddev = sprintf( "%d", ( ( $stddev[0] + $stddev[1] ) / 2 ) );
-    }
-    else {
-        $mean   = sprintf( "%d", $mean[0] );
-        $stddev = sprintf( "%d", $stddev[0] );
+    coverage = 0
+    long_coverage = 0
 
-        #      }
-    }
+    # not making a new one here
+    if os.path.exists(args.reference):
+        with open(args.reference, "r") as inf:
+            for rec in SeqIO.parse(inf, "fasta"):
+                args.genome_size = args.genome_size + len(rec.seq)
+    try:
+        coverage = tot_length / args.genome_size
+        long_coverage = long_tot_length / args.genome_size
+    except:
+        logger.error("error calculating coverage!")
+        sys.exit(1)
+    encoding = id_fastq_encoding(tmpdir)
+    return Namespace(type=type, encoding=encoding, mean_read_length=mean,
+                     read_length_stddev=stddev,
+                     mean_long_read_length=long_mean,
+                     long_read_length_stddev=long_stddev,
+                     coverage=coverage, long_read_coverage=long_coverage,
+                     read_bases=tot_length)
 
-    my $type;
 
-  TYPE: foreach my $category ( @{ $config->{'assembler_categories'} } ) {
-        if ($platform) {
-            next TYPE unless ( grep ( /^$platform$/i, @{ $category->{'platforms'} } ) );
-            $type = $category->{'name'};
+def check_ref_needed(args, type):
+    if type == "long" :
+        if (args.genome_size is 0 and args.reference):
+            raise ValueError("Please supply a genome size or reference " +
+                             "sequence when running a long-read assembly")
+
+def get_config_path():
+    resource_package = pkg_resources.Requirement.parse("BugBuilder")
+    config_path = '/'.join(('BugBuilder','config_data', 'BugBuilder.yaml'))
+    config = pkg_resources.resource_filename(resource_package, config_path)
+    return config
+
+
+def parse_config(config_file, logger=None):
+    """ Read the config file, make a namespace object out of it
+    """
+    with open(config_file, 'r') as stream:
+        try:
+            yamldata = yaml.safe_load(stream)
+        except yaml.YAMLError as exc:
+            logger.error(exc)
+            logger.error("error parsing config file!")
+            sys.exit(1)
+    logger.debug(yamldata)
+    newns = argparse.Namespace()
+    newns.__dict__ = yamldata
+    return(newns)
+
+
+def select_tools(args, paired, config):
+    """
+    select_tools
+    options, while checking for validity of selections...
+
+    required params: $ ($config hash ref)
+                 $ (arrayref of requested assemblers)
+                 $ (name of requested scaffolder)
+                 $ (name of requested merge tool)
+                 $ (name of requested finishing tool)
+                 $ (name of requested variant caller)
+                 $ (paired - flag to indicate we are using paired reads
+                 $ (reference - indicates a reference has been provided)
+                 $ (type - category of sequence i.e. short_illumina)
+                 $ (mean read length)
+
+    returns          $ (arrayref of assemblers to use)
+                 $ (name of scaffolder to use)
+
+    """
+    my $config      = shift;
+    my $assemblers  = shift;
+    my $scaffolder  = shift;
+    my $merger      = shift;
+    my $finisher    = shift;
+    my $varcall     = shift;
+    my $paired      = shift;
+    my $reference   = shift;
+    my $type        = shift;
+    my $read_length = shift;
+    my $insert_size = shift;
+    if len(args.assemblers) > 2:
+        raise ValueError("A maximum of 2 assemblers can be requested")
+    # sanity check assemblers where these have been manually requested...
+    for assembler in args.assemblers:
+        assembler_name = os.path.basename(assembler)
+        if shutil.which(assembler) is None:
+            raise ValueError("%s is nt in PATH! exiting" % assembler)
+    # If no assembler is requested, we need to select one based on the
+    # 'assembly_type' from the configuration file....
+    if len(args.assemblers) > 1:
+        for category in config.assembler_categories:
+            if category.name == reads_namespace.type:
+                args.assemblers.append(category.assemblers)
+    # then check the requested assemblers are appropriate for
+    # the sequence characteristics...
+    for assembler in args.assemblers:
+        assemblers = config.assemblers
+        for conf_assembler in assemblers:
+            if conf_assembler.name != assembler:
+                continue
+            if paired and conf_assembler.command_se:
+                raise ValueError("%s requires paired reads, but you only " +
+                                 "specified one fastq file..." %assembler)
+            if conf_assembler.min_length and reads_namespace.read_length < conf_assembler.min_length:
+                raise ValueError("%s does not support reads less than %d" % \
+                                 (assembler, conf_assembler.min_length)
+            if conf_assembler.max_length and reads_namespace.read_length > conf_assembler.max_length:
+                raise ValueError("%s does not support reads greather than %d" % \
+                                 (assembler, conf_assembler.max_length)
+            if conf_assembler.max_length and reads_namespace.read_length > conf_assembler.max_length:
+                raise ValueError("%s requires the library insert size and " +
+                                 "stddev to be provided. Please add the " +
+                                 "--insert-size and --insert-stddev " +
+                                 "parameters, or provide a reference " +
+                                 "sequence" % assembler)
+    # the scaffolder...
+    # and the scaffolder...
+    my @available_scaffolders = map { $_->[0] }
+      sort { $a->[1] <=> $b->[1] }
+      map { [ $_->{'name'}, $_->{'priority'} ] } @{ $config->{'scaffolders'} };
+    my $linkage_evidence;
+
+    if ($scaffolder) {
+        unless ( grep ( /^$scaffolder$/i, @available_scaffolders ) ) {
+            die "\nError: $scaffolder is not a valid scaffolder\n\n" . "The following scaffolders are configured: ",
+              join( ", ", @available_scaffolders ), "\n\n";
         }
+        my $conf_scaffolders = $config->{'scaffolders'};
+        foreach my $conf_scaffolder (@$conf_scaffolders) {
+            my $name = lc( $conf_scaffolder->{'name'} );
+            if ( $name eq $scaffolder ) {
+                if ( $conf_scaffolder->{'linkage_evidence'} eq 'paired-ends' & !$paired ) {
+                    die "\nError: $scaffolder requires paired reads, but you only specified one fastq file...\n";
+                }
+                elsif ( $conf_scaffolder->{'linkage_evidence'} =~ /align/ & !$reference ) {
+                    die "\nError: $scaffolder requires a reference for alignment, but none is specified...\n";
+                }
+                $linkage_evidence = $conf_scaffolder->{'linkage_evidence'};
+            }
 
-        if ($mean) {
-            if ( ( $mean > $category->{'min_length'} ) && ( $mean <= $category->{'max_length'} ) ) {
-                $type = $category->{'name'};
-                last TYPE;
+        }
+    }
+
+    my @available_mergers = map { $_->[0] }
+      sort { $a->[1] <=> $b->[1] }
+      map { [ $_->{'name'}, $_->{'priority'} ] } @{ $config->{'merge_tools'} };
+
+    if ($merger) {
+        unless ( grep ( /^$merger$/i, @available_mergers ) ) {
+            die "\nError: $merger is not a valid merge-tool\n\n" . "The following tools are configured: ",
+              join( ", ", @available_mergers ), "\n\n";
+        }
+        my $conf_mergers = $config->{'merge_tools'};
+        foreach my $conf_merger (@$conf_mergers) {
+            my $name = lc( $conf_merger->{'name'} );
+            if ( $name eq $merger ) {
+                undef($scaffolder) if $conf_merger->{'allow_scaffolding'} == 0;
             }
         }
-        elsif ($long_mean) {
+    }
 
-            if ( ( $long_mean > $category->{'min_length'} ) && ( $long_mean <= $category->{'max_length'} ) ) {
-                $type = $category->{'name'};
-                last TYPE;
+    my @available_finishers = map { $_->[0] }
+      sort { $a->[1] <=> $b->[1] }
+      map { [ $_->{'name'}, $_->{'priority'} ] } @{ $config->{'finishers'} };
+
+    if ($finisher) {
+        unless ( grep ( /^$finisher$/i, @available_finishers ) ) {
+            die "\nError: $finisher is not a valid finishiing-tool\n\n" . "The following tools are configured: ",
+              join( ", ", @available_finishers ), "\n\n";
+        }
+        my $conf_finishers = $config->{'finishers'};
+        foreach my $conf_finisher (@$conf_finishers) {
+            my $name = lc( $conf_finisher->{'name'} );
+            if ( $name eq $finisher ) {
+                die "Error: $finisher requires a reference sequence" unless ($reference);
+                if ( $conf_finisher->{'paired_reads'} ) {
+                    die "Error: $finisher requires paired reads" unless ($paired);
+                }
             }
         }
     }
 
-    my ( $coverage, $long_coverage );
+    my @available_varcallers = map { $_->[0] }
+      sort { $a->[1] <=> $b->[1] }
+      map { [ $_->{'name'}, $_->{'priority'} ] } @{ $config->{'varcallers'} };
 
-    if ( -e "$tmpdir/reference.fasta" ) {
-        my $inIO = Bio::SeqIO->new( -file => "$tmpdir/reference.fasta", -format => 'fasta' );
-        while ( my $ref = $inIO->next_seq() ) {
-            $genome_size = $genome_size + $ref->length();
+    if ($varcall) {
+        unless ( grep ( /^$varcall$/i, @available_varcallers ) ) {
+            die "\nError: $varcall is not a valid variant caller\n\n" . "The following tools are configured: ",
+              join( ", ", @available_varcallers ), "\n\n";
+        }
+        my $conf_varcallers = $config->{'varcallers'};
+        foreach my $conf_varcaller (@$conf_varcallers) {
+            my $name = lc( $conf_varcaller->{'name'} );
+            if ( $name eq $varcall ) {
+                die "Error: $varcall requires a reference sequence" unless ($reference);
+            }
         }
     }
-    $coverage      = sprintf( "%d", $tot_length / $genome_size )      if ( $genome_size && $tot_length );
-    $long_coverage = sprintf( "%d", $long_tot_length / $genome_size ) if ( $genome_size && $long_tot_length );
-
-    my $encoding = id_fastq_encoding($tmpdir);
-
-    return ( $type, $encoding, $mean, $stddev, $long_mean, $long_stddev, $coverage, $long_coverage, $tot_length );
+    print "linkage: $linkage_evidence";
+    return ( \@assemblers, $scaffolder, $linkage_evidence, $merger, $finisher, $varcall );
 
 }
 
@@ -641,7 +1053,7 @@ def main(args):
         assembler=args.assembler,
         assembler_args=args.assembler_args))
     check_file_paths(args)
-        
+
     seq_ids = [x.id for x in  list(SeqIO.parse(args.reference, "fasta"))]
 
     organism = "{0}{1}{2}".format(args.genus, " " + args.species, " sp. " + args.strain)
@@ -666,16 +1078,11 @@ def main(args):
     tmpdir = setup_tempdir(args, output_root)
 
     reference = os.path.basename(args.reference)
-
     #  need to know a bit about the provided reads so we can act appropriately
-    my (
-	$type,               $encoding,              $mean_read_length,
-	$read_length_stddev, $mean_long_read_length, $long_read_length_stddev,
-	$coverage,           $long_read_coverage,    $read_bases
-	) = assess_reads( $tmpdir, $platform, $genome_size );
-
-    die "\nPlease supply a genome size or reference sequence when running a long-read assembly"
-	if ( $type eq 'long' && ( !$genome_size && !$reference ) );
+    reads_namespace  = assess_reads(args=args, conf, platform, tempdir, logger=None)
+    check_ref_needed(args=args, type=reads_namespace.type)
+    config = get_config_path()
+################################################################
 
     my ( $sel_assemblers, $sel_scaffolder, $scaffold_type, $sel_merge_method, $sel_finisher, $sel_varcall ) =
 	select_tools( $config, \@assemblers, $scaffolder, $merge_method,     $finisher, $varcall,
@@ -860,7 +1267,7 @@ def main(args):
 
     run_varcaller( $tmpdir, $varcall, $threads, $mean_read_length ) if ($varcall);
     merge_annotations( $tmpdir, $amosvalidate_results, $gaps, $genus, $species, $strain );
-    #  This kept throwing an error about Bio::SeqIO 
+    #  This kept throwing an error about Bio::SeqIO
     # run_cgview($tmpdir);
 
     build_comparisons( $tmpdir, basename($reference), $organism ) if ($reference);
@@ -969,181 +1376,6 @@ sub set_paths {
     return;
 }
 
-######################################################################
-#
-# select_tools
-# options, while checking for validity of selections...
-#
-# required params: $ ($config hash ref)
-#                  $ (arrayref of requested assemblers)
-#                  $ (name of requested scaffolder)
-#                  $ (name of requested merge tool)
-#                  $ (name of requested finishing tool)
-#                  $ (name of requested variant caller)
-#                  $ (paired - flag to indicate we are using paired reads
-#                  $ (reference - indicates a reference has been provided)
-#                  $ (type - category of sequence i.e. short_illumina)
-#                  $ (mean read length)
-#
-# returns          $ (arrayref of assemblers to use)
-#                  $ (name of scaffolder to use)
-#
-######################################################################
-
-sub select_tools {
-
-    my $config      = shift;
-    my $assemblers  = shift;
-    my $scaffolder  = shift;
-    my $merger      = shift;
-    my $finisher    = shift;
-    my $varcall     = shift;
-    my $paired      = shift;
-    my $reference   = shift;
-    my $type        = shift;
-    my $read_length = shift;
-    my $insert_size = shift;
-
-    my @assemblers = @$assemblers;
-    die "\nA maximum of 2 assemblers can be requested\n" if ( $#assemblers > 1 );
-
-    # sanity check assemblers where these have been manually requested...
-    if ( $#assemblers > -1 ) {
-        my @available_assemblers = map { $_->{'name'} } @{ $config->{'assemblers'} };
-
-        # first off, are the requested assemblers available
-        foreach my $assembler (@assemblers) {
-            unless ( grep ( /^$assembler$/i, @available_assemblers ) ) {
-                die "\nError: $assembler is not a valid assembler\n\n" . "The following assemblers are configured: ",
-                  join( ", ", @available_assemblers ), "\n\n";
-            }
-        }
-
-        # then check the requested assemblers are appropriate for the sequence characteristics...
-        foreach my $assembler (@assemblers) {
-            my $assemblers = $config->{'assemblers'};
-            foreach my $conf_assembler (@$assemblers) {
-                my $name = lc( $conf_assembler->{'name'} );
-                if ( $name eq $assembler ) {
-                    if ( !$paired & !$conf_assembler->{'command_se'} ) {
-                        die "\nError: $assembler requires paired reads, but you only specified one fastq file...";
-                    }
-                    if ( $conf_assembler->{'min_length'} && $read_length < $conf_assembler->{'min_length'} ) {
-                        die "\nError: $assembler does not support reads less than "
-                          . $conf_assembler->{'min_length'} . " bp";
-                    }
-                    if ( $conf_assembler->{'max_length'} && $read_length > $conf_assembler->{'max_length'} ) {
-                        die "\nError: $assembler does not support reads longer than "
-                          . $conf_assembler->{'max_length'} . " bp";
-                    }
-                    if ( $conf_assembler->{'insert_size_required'} && ( !$reference && !$insert_size ) ) {
-                        die "\nError: $assembler requires the library insert size and stddev to be provided."
-                          . "\nPlease add the --insert-size and --insert-stddev parameters, or provide a reference sequence";
-                    }
-                }
-            }
-        }
-    }
-    else {
-
-        # If no assembler is requested, we need to select one based on the 'assembly_type' from the
-        # configuration file....
-        foreach my $category ( @{ $config->{'assembler_categories'} } ) {
-            if ( $category->{'name'} eq $type ) {
-                push @assemblers, $category->{'assemblers'}->[0];
-            }
-        }
-        die "No valid assembler could be found" if ( $#assemblers == -1 );
-    }
-
-    # the scaffolder...
-    # and the scaffolder...
-    my @available_scaffolders = map { $_->[0] }
-      sort { $a->[1] <=> $b->[1] }
-      map { [ $_->{'name'}, $_->{'priority'} ] } @{ $config->{'scaffolders'} };
-    my $linkage_evidence;
-
-    if ($scaffolder) {
-        unless ( grep ( /^$scaffolder$/i, @available_scaffolders ) ) {
-            die "\nError: $scaffolder is not a valid scaffolder\n\n" . "The following scaffolders are configured: ",
-              join( ", ", @available_scaffolders ), "\n\n";
-        }
-        my $conf_scaffolders = $config->{'scaffolders'};
-        foreach my $conf_scaffolder (@$conf_scaffolders) {
-            my $name = lc( $conf_scaffolder->{'name'} );
-            if ( $name eq $scaffolder ) {
-                if ( $conf_scaffolder->{'linkage_evidence'} eq 'paired-ends' & !$paired ) {
-                    die "\nError: $scaffolder requires paired reads, but you only specified one fastq file...\n";
-                }
-                elsif ( $conf_scaffolder->{'linkage_evidence'} =~ /align/ & !$reference ) {
-                    die "\nError: $scaffolder requires a reference for alignment, but none is specified...\n";
-                }
-                $linkage_evidence = $conf_scaffolder->{'linkage_evidence'};
-            }
-
-        }
-    }
-
-    my @available_mergers = map { $_->[0] }
-      sort { $a->[1] <=> $b->[1] }
-      map { [ $_->{'name'}, $_->{'priority'} ] } @{ $config->{'merge_tools'} };
-
-    if ($merger) {
-        unless ( grep ( /^$merger$/i, @available_mergers ) ) {
-            die "\nError: $merger is not a valid merge-tool\n\n" . "The following tools are configured: ",
-              join( ", ", @available_mergers ), "\n\n";
-        }
-        my $conf_mergers = $config->{'merge_tools'};
-        foreach my $conf_merger (@$conf_mergers) {
-            my $name = lc( $conf_merger->{'name'} );
-            if ( $name eq $merger ) {
-                undef($scaffolder) if $conf_merger->{'allow_scaffolding'} == 0;
-            }
-        }
-    }
-
-    my @available_finishers = map { $_->[0] }
-      sort { $a->[1] <=> $b->[1] }
-      map { [ $_->{'name'}, $_->{'priority'} ] } @{ $config->{'finishers'} };
-
-    if ($finisher) {
-        unless ( grep ( /^$finisher$/i, @available_finishers ) ) {
-            die "\nError: $finisher is not a valid finishiing-tool\n\n" . "The following tools are configured: ",
-              join( ", ", @available_finishers ), "\n\n";
-        }
-        my $conf_finishers = $config->{'finishers'};
-        foreach my $conf_finisher (@$conf_finishers) {
-            my $name = lc( $conf_finisher->{'name'} );
-            if ( $name eq $finisher ) {
-                die "Error: $finisher requires a reference sequence" unless ($reference);
-                if ( $conf_finisher->{'paired_reads'} ) {
-                    die "Error: $finisher requires paired reads" unless ($paired);
-                }
-            }
-        }
-    }
-
-    my @available_varcallers = map { $_->[0] }
-      sort { $a->[1] <=> $b->[1] }
-      map { [ $_->{'name'}, $_->{'priority'} ] } @{ $config->{'varcallers'} };
-
-    if ($varcall) {
-        unless ( grep ( /^$varcall$/i, @available_varcallers ) ) {
-            die "\nError: $varcall is not a valid variant caller\n\n" . "The following tools are configured: ",
-              join( ", ", @available_varcallers ), "\n\n";
-        }
-        my $conf_varcallers = $config->{'varcallers'};
-        foreach my $conf_varcaller (@$conf_varcallers) {
-            my $name = lc( $conf_varcaller->{'name'} );
-            if ( $name eq $varcall ) {
-                die "Error: $varcall requires a reference sequence" unless ($reference);
-            }
-        }
-    }
-    print "linkage: $linkage_evidence";
-    return ( \@assemblers, $scaffolder, $linkage_evidence, $merger, $finisher, $varcall );
-
-}
 
 #######################################################################
 #
@@ -1307,92 +1539,6 @@ sub run_fastqc {
     chdir $tmpdir or die "Error chdiring to $tmpdir: $!";
 
     return (0);
-}
-
-
-######################################################################
-#
-# id_fastq_encoding
-#
-# Identifies fastq quality encoding type, based upon the information
-# at http://en.wikipedia.org/wiki/FASTQ_format:
-#
-#  SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS.....................................................
-#  ..........................XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX......................
-#  ...............................IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII......................
-#  .................................JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ......................
-#  LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL....................................................
-#  !"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~
-#  |                         |    |        |                              |                     |
-# 33                        59   64       73                            104                   126
-#
-# S - Sanger        Phred+33,  raw reads typically (0, 40)
-# X - Solexa        Solexa+64, raw reads typically (-5, 40)
-# I - Illumina 1.3+ Phred+64,  raw reads typically (0, 40)
-# J - Illumina 1.5+ Phred+64,  raw reads typically (3, 40)
-#    with 0=unused, 1=unused, 2=Read Segment Quality Control Indicator (bold)
-# L - Illumina 1.8+ Phred+33,  raw reads typically (0, 41)
-#
-# required params: $ (tmpdir)
-#
-# returns:         $ (encoding)
-#
-######################################################################
-
-sub id_fastq_encoding {
-
-    my $tmpdir = shift;
-
-    my $min = 104;
-    my $max = 0;
-    my $encoding;
-
-    my $target;
-    if ( -e "$tmpdir/long.fastq" ) {
-        $target = readlink("$tmpdir/long.fastq");
-    }
-    else {
-        $target = readlink("$tmpdir/read1.fastq");
-    }
-
-    if ( $target =~ /.gz$/ ) {
-        open FASTQ, "<:gzip", "$tmpdir/$target" or die "Error opening $tmpdir/$target";
-    }
-    else {
-        open FASTQ, "$tmpdir/$target" or die "Error opening $tmpdir/$target";
-    }
-
-    # looking at 1000 sequences should be plenty to work out the encoding
-    for ( my $i = 0 ; $i <= 1000 ; $i++ ) {
-        my $line;
-        for ( my $j = 0 ; $j <= 3 ; $j++ ) {
-            $line = <FASTQ>;
-            if ( $j == 3 ) {
-                if ($line) {
-                    my @quals = split( //, $line );
-                    foreach (@quals) {
-                        my $value = ord($_);
-                        $min = $value if ( $value < $min );
-                        $max = $value if ( $value > $max );
-                    }
-                }
-            }
-        }
-    }
-    close FASTQ;
-
-    if ( $min <= 59 && $max <= 74 ) {
-        $encoding = 'sanger';
-    }
-    elsif ( $min > 59 && $min < 64 && $max < 104 ) {
-        $encoding = 'solexa';
-    }
-    elsif ( $min > 64 ) {
-        $encoding = 'illumina';
-    }
-
-    return ($encoding);
-
 }
 
 #######################################################################

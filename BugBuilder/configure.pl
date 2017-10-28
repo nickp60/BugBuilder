@@ -600,7 +600,7 @@ __DATA__
 #
 # BugBuilder configuration in YAML format
 #
-# This file defines the BugBuilder configuration. See the BugBuilder 
+# This file defines the BugBuilder configuration. See the BugBuilder
 # User Guide for details of the dependencies which need to be installed.
 #
 ######################################################################
@@ -616,14 +616,14 @@ threads: <TMPL_VAR NAME=THREADS>
 <TMPL_VAR NAME=APPEND_PATH>
 
 # Definition of assembly categories, and platforms
-# These are used for automated assembler selection based on assesment of the 
+# These are used for automated assembler selection based on assesment of the
 # provided reads. These should ideally not overlap or the choice of category
 # may become a bit random
 assembler_categories:
   - name: 'short_illumina'
     min_length: 25
     max_length: 100
-    single_fastq: 'optional' 
+    single_fastq: 'optional'
     paired_fastq: 'optional'
     platforms:
       - 'illumina'
@@ -668,12 +668,12 @@ assembler_categories:
     platforms:
       - 'PacBio'
       - 'MinION'
-    assemblers: 
+    assemblers:
       - PBcR
   - name: 'hybrid'
     min_length: 75
     max_length: 50000
-    platforms: 
+    platforms:
       - hybrid
     paired_fastq: 'required'
     long_fastq: 'required'
@@ -698,7 +698,7 @@ assembler_categories:
 
 #Assembler configuration
 assemblers:
-   - name: abyss 
+   - name: abyss
      create_dir: 1
      max_length: 200
      command_pe: __BUGBUILDER_BIN__/run_abyss --tmpdir __TMPDIR__ --fastq1 __FASTQ1__ --fastq2 __FASTQ2__ --read_length __READ_LENGTH__
@@ -737,9 +737,9 @@ assemblers:
      command_pe: __BUGBUILDER_BIN__/run_masurca --fastq1 __ORIG_FASTQ1__ --fastq2 __ORIG_FASTQ2__ --tmpdir __TMPDIR__ --category __CATEGORY__ --insert_size __INSSIZE__ --insert_stddev __INSSD__
      command_hybrid: __BUGBUILDER_BIN__/run_masurca --fastq1 __ORIG_FASTQ1__ --fastq2 __ORIG_FASTQ2__ --longfastq __LONGFASTQ__ --tmpdir __TMPDIR__ --category __CATEGORY__ --insert_size __INSSIZE__ --insert_stddev __INSSD__
      contig_output: __TMPDIR__/masurca/contigs.fasta
-     scaffold_output: __TMPDIR__/masurca/scaffolds.fasta 
-     default_args: --threads __THREADS__ 
-     downsample_reads: 0 
+     scaffold_output: __TMPDIR__/masurca/scaffolds.fasta
+     default_args: --threads __THREADS__
+     downsample_reads: 0
      insert_size_required: 1
 
 scaffolders:
@@ -758,7 +758,7 @@ scaffolders:
      scaffold_output: scaffolds.fasta
    - name: sspace
      linkage_evidence: paired-ends
-     command: __BUGBUILDER_BIN__/run_sspace --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__ --contigs __CONTIGS__ --insert_size __INSSIZE__ --insert_sd __INSSD__ 
+     command: __BUGBUILDER_BIN__/run_sspace --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__ --contigs __CONTIGS__ --insert_size __INSSIZE__ --insert_sd __INSSD__
      scaffold_output: BugBuilder.scaffolds.fasta
      create_dir: 1
      priority: 3

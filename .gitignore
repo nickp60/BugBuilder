@@ -8,3 +8,5 @@ lib
 packages
 install_logs
 man
+*~
+#*#
