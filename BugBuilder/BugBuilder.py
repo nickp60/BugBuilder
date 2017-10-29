@@ -1157,7 +1157,54 @@ def downsample_reads(args, reads_ns, config, new_cov=100):
     return new_cov
 
 
-def align_reads():
+def make_bwa_cmds(args, config, outdir, ref, reads_ns, fastq1, fastq2):
+    """ map with bwa
+    returns a list of cmds and the path to the mapping file, as a tuple
+    """
+    cmd_list = []
+    index_cmd = "{0} index {1}  > {2} bwa_index.log 2>&1".format(
+        config.bwa, ref, outdir)
+    cmd_list.append(index_cmd)
+    # Use bwa-bwt for 'short' reads less than 100 bp, and bwa-mem for longer reads
+    if reads_ns.read_length <= 100:
+        cmdF = "{0} aln -t {1} {2} {3} > {4}read1.sai".format(
+            config.bwa, args.threads, ref, fastq1, outdir)
+        cmd_list.append(cmdF)
+        if fastq2 is not None:
+            cmdR = "{0} aln -t {1} {2} {3} > {4}read2.sai".format(
+                config.bwa, args.threads, ref, fastq2, outdir)
+            cmd_list.append(cmdR)
+            sampe_cmd = str("{0} sampe {1} {2}read1.sai {2}read2.sai {3} {4}" +
+                            " 2> {2}sampe.log > {2}mapping.sam").format(
+                                config.bwa, ref, outdir, fastq1, fastq2)
+        else:
+            sampe_cmd = str("{0} samse {1} {2}read1.sai {3} " +
+                            "2> {2}sampe.log > {2}mapping.sam").format(
+                                config.bwa, ref, outdir, fastq1)
+        cmd_list.append(sampe_cmd)
+
+    else: # if long reads
+        if fastq2 is None:
+            mem_cmd = "{0} mem -t {1} -M {2} {3} >{4}mapping.sam 2>{4}bwa_mem.log".format(
+                config.bwa, args.threads, ref, fastq1, outdir)
+        else:
+            mem_cmd = "{0} mem -t {1} -M {2} {3} {5} >{4}mapping.sam 2>{4}bwa_mem.log".format(
+                config.bwa, args.threads, ref, fastq1, outdir, fastq2)
+        cmd_list.append(mem_cmd)
+
+    return (cmd_list, os.path.join(outdir, "mapping.sam"))
+
+
+def make_samtools_cmds(config, mapping, outdir, sorted_bam):
+    convert = str("{0} view -q 10 -Sb {1} 2>{2}samtoolsview.log | {0} sort - >" +
+                  "{3}",).format(
+                      config.samtools, mapping, outdir, sorted_bam)
+    index = str("{0} index {1} 2>{2}samtools_index.log").format(
+                      config.samtools, sorted_bam, outdir)
+    return [convert, index]
+
+
+def align_reads(dirname, downsample, logger):
     """
     Maps reads to reference using bwa
 
@@ -1168,100 +1215,40 @@ def align_reads():
 
                : $ (0)
     """
-
-
-# sub align_reads {
-
-#     my $tmpdir      = shift;
-#     my $reference   = shift;
-#     my $read_length = shift;
-#     my $downsample  = shift;
-
-#     my $bwa_dir      = $config->{'bwa_dir'};
-#     my $samtools_dir = $config->{'samtools_dir'};
-#     my $seqtk_dir    = $config->{'seqtk_dir'};
-
-#     mkdir "$tmpdir/bwa"
-#       or die "Error creating $tmpdir/bwa: $!"
-#       if ( !-d "$tmpdir/bwa" );
-#     chdir "$tmpdir/bwa" or die "Error chdiring to $tmpdir/bwa: $!";
-#     copy( "$tmpdir/$reference", "$tmpdir/bwa/$reference" )
-#       or die "Error copying $tmpdir/$reference: $! ";
-
-#     if ($downsample) {
-
-#         message("Downsampling reads for insert-size estimation...");
-#         my $cmd = "$seqtk_dir/seqtk sample -s100 $tmpdir/read1.fastq 10000 > $tmpdir/bwa/read1.fastq";
-#         system($cmd) == 0 or die " Error running $cmd: $! ";
-#         if ( -e "$tmpdir/read2.fastq" ) {
-#             $cmd = "$seqtk_dir/seqtk sample -s100 $tmpdir/read2.fastq 10000 > $tmpdir/bwa/read2.fastq";
-#             system($cmd) == 0 or die " Error running $cmd: $!";
-
-#         }
-#     }
-#     else {
-#         symlink( "$tmpdir/read1.fastq", "$tmpdir/bwa/read1.fastq" ) or die "Error creating symlink: $! ";
-#         symlink( "$tmpdir/read2.fastq", "$tmpdir/bwa/read2.fastq" ) or die "Error creating symlink: $! ";
-#     }
-
-#     message("BWA aligning reads vs $reference...");
-
-#     my $cmd = "$bwa_dir/bwa index $tmpdir/bwa/$reference >$tmpdir/bwa/bwa_index.log 2>&1";
-#     system($cmd) == 0 or die " Error running $cmd";
-
-#     # Use bwa-bwt for 'short' reads less than 100 bp, and bwa-mem for longer reads
-#     if ( $read_length <= 100 ) {
-#         $cmd = "$bwa_dir/bwa aln -t 4 $tmpdir/bwa/$reference $tmpdir/bwa/read1.fastq > $tmpdir/bwa/read1.sai"
-#           . " 2> $tmpdir/bwa/bwa_sai1.log";
-#         system($cmd) == 0 or die "Error running $cmd";
-#         if ( -e "$tmpdir/read2.fastq" ) {
-#             $cmd = "$bwa_dir/bwa aln -t 4 $tmpdir/bwa/$reference $tmpdir/bwa/read2.fastq > $tmpdir/bwa/read2.sai"
-#               . " 2> $tmpdir/bwa/bwa_sai2.log";
-#             system($cmd) == 0 or die "Error running $cmd";
-#             $cmd = "$bwa_dir/bwa sampe $tmpdir/bwa/$reference $tmpdir/bwa/read1.sai $tmpdir/bwa/read2.sai "
-#               . "$tmpdir/bwa/read1.fastq $tmpdir/bwa/read2.fastq";
-#             $cmd .= " 2> $tmpdir/bwa/sampe.log > $tmpdir/bwa/$reference.sam";
-#             system($cmd) == 0 or die "Error running $cmd";
-#         }
-#         else {
-#             $cmd = "$bwa_dir/bwa samse $tmpdir/bwa/$reference $tmpdir/bwa/read1.sai $tmpdir/read1.fastq";
-#             $cmd .= "2> $tmpdir/bwa/samse.log > $tmpdir/bwa/$reference.sam";
-#             system($cmd) == 0 or die "Error running $cmd";
-#         }
-#     }
-#     else {
-#         if ( !-e "$tmpdir/read2.fastq" ) {
-
-#             # single-ended long reads
-#             $cmd = "$bwa_dir/bwa mem -t 4 -M $tmpdir/bwa/$reference $tmpdir/bwa/read1.fastq > $reference.sam "
-#               . "2>$tmpdir/bwa/bwa_mem.log";
-#             system($cmd) == 0 or die "Error running $cmd: $!";
-#         }
-#         else {
-
-#             # paired-end long reads
-#             $cmd =
-# "$bwa_dir/bwa mem -t 4 -M $tmpdir/bwa/$reference $tmpdir/bwa/read1.fastq $tmpdir/bwa/read2.fastq >$reference.sam "
-#               . "2>$tmpdir/bwa/bwa_mem.log";
-#             system($cmd) == 0 or die "Error running $cmd: $!";
-#         }
-#     }
-
-#     $cmd = "$samtools_dir/samtools view -q 10 -Sb $tmpdir/bwa/$reference.sam 2>$tmpdir/bwa/samtoolsview.log"
-#       # . "|$samtools_dir/samtools sort - $tmpdir/bwa/$reference";
-#       . "|$samtools_dir/samtools sort - > $tmpdir/bwa/$reference.bam";
-#     system($cmd) == 0 or die "Error running $cmd";
-
-#     $cmd = "$samtools_dir/samtools index $tmpdir/bwa/$reference.bam 2>$tmpdir/bwa/samtools_index.log";
-#     system($cmd) == 0                 or die "Error running $cmd";
-#     unlink("$tmpdir/bwa/read1.fastq") or die " Error unlinking $tmpdir/bwa/read1.fastq: $! ";
-#     unlink("$tmpdir/bwa/read2.fastq")
-#       or die " Error unlinking $tmpdir/bwa/read1.fastq : $! "
-#       if ( -e "$tmpdir/bwa/read2.fastq" );
-
-#     chdir($tmpdir) or die "Error changing to $tmpdir: $! ";
-
-# }
+    align_dir = os.path_join(tmpdir, "align_" + dirname, "")
+    bwa_dir = os.path_join(align_dir, "bwa", "")
+    samtools_dir = os.path_join(tmpdir, "samtools" + dirname, "")
+    seqtk_dir = os.path_join(tmpdir, "seqtk" + dirname, "")
+    for d in [align_dir, bwa_dir, samtools_dir, seqtk_dir]:
+        os.makedirs(d)
+    bwa_reference = os.path.join(bwa_dir, os.path.basename(args.reference))
+    shutil.copyfile(args.reference, bwa_reference)
+    if downsample:
+        logger.info("Downsampling reads for insert-size estimation...")
+        ds_cmds = make_seqtk_ds_cmd(args, reads_ns, 10, outdir=seqtk_dir, logger=logger)
+        for cmd in ds_cmds:
+            subprocess.run(cmd,
+                           shell=sys.platform != "win32",
+                           stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE,
+                           check=True)
+        fastq1 = os.path.join(seqtk_dir, os.path.basename(args.fastq1))
+        fastq2 = os.path.join(seqtk_dir, os.path.basename(args.fastq2))
+    else:
+        fastq1 = args.fastq1
+        fastq2 = args.fastq2
+    logger.info("BWA aligning reads vs $reference...")
+    bwa_cmds, mapping = make_bwa_cmds(args, config, outdir, ref=bwa_reference,
+                                      reads_ns=reads_ns, fastq1=fastq1,
+                                      fastq2=fastq2)
+    samtools_cmds =  make_samtools_cmds(config, mapping, outdir, sorted_bam)
+    for cmd in bwa_cmds + samtools_cmds:
+        subprocess.run(cmd,
+                       shell=sys.platform != "win32",
+                       stdout=subprocess.PIPE,
+                       stderr=subprocess.PIPE,
+                       check=True)
+    return sorted_bam
 
 
 def main(args):
@@ -1319,9 +1306,7 @@ def main(args):
          downsampled_coverage = downsample_reads(args, reads_ns, config, new_cov=100)
 
     if args.fastq2 and args.reference:
-#     if ( $fastq2 && $reference ) {
-# 	## final arg to align_reads is flag to indicate downsamping required...
-# 	align_reads( $tmpdir, $reference, $mean_read_length, 1 );
+        sorted_bam = align_reads(dirname, downsample=True, logger=logger)
 # 	( $insert_size, $stddev ) = get_insert_stats( "$tmpdir", $reference );
 #     }
 #     my $paired_str;
