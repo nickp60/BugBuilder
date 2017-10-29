@@ -869,7 +869,7 @@ def get_assemblers(args, config, paired):
     # 'assembly_type' from the configuration file....
     if len(args.assemblers) > 1:
         for category in config.assembler_categories:
-            if category.name == reads_namespace.lib_type:
+            if category.name == reads_ns.lib_type:
                 args.assemblers.append(category.assemblers)
     # then check the requested assemblers are appropriate for
     # the sequence characteristics...
@@ -881,13 +881,13 @@ def get_assemblers(args, config, paired):
             if paired and conf_assembler.command_se:
                 raise ValueError("%s requires paired reads, but you only " +
                                  "specified one fastq file..." % assembler)
-            if conf_assembler.min_length and reads_namespace.read_length < conf_assembler.min_length:
+            if conf_assembler.min_length and reads_ns.read_length < conf_assembler.min_length:
                 raise ValueError("%s does not support reads less than %d" % \
                                  (assembler, conf_assembler.min_length))
-            if conf_assembler.max_length and reads_namespace.read_length > conf_assembler.max_length:
+            if conf_assembler.max_length and reads_ns.read_length > conf_assembler.max_length:
                 raise ValueError("%s does not support reads greather than %d" % \
                                  (assembler, conf_assembler.max_length))
-            if conf_assembler.max_length and reads_namespace.read_length > conf_assembler.max_length:
+            if conf_assembler.max_length and reads_ns.read_length > conf_assembler.max_length:
                 raise ValueError("%s requires the library insert size and " +
                                  "stddev to be provided. Please add the " +
                                  "--insert-size and --insert-stddev " +
@@ -1006,7 +1006,7 @@ def make_fastqc_cmd(args, fastqc_dir):
             args.threads)
     return cmd
 
-def run_fastqc(reads_namespace, tmpdir, logger=None):
+def run_fastqc(reads_ns, tmpdir, logger=None):
     """
     Carries out QC analysis using fastqc...
 
@@ -1043,13 +1043,226 @@ def run_fastqc(reads_namespace, tmpdir, logger=None):
     for line in report:
         logger.info(line)
     if fails > 0:
-        if reads_namespace.type in ["long", "hybrid", "de_fere"]:
+        if reads_ns.type in ["long", "hybrid", "de_fere"]:
             logger.info("NB: Reported quality issues from_fastq are normal " +
                         "when analysing PacBio sequence with FastQC...");
         else:
             logger.warning("Some QC tests indicate quality issues with this " +
                            "data.Please examine the fastqc outputs for " +
                            "these reads")
+
+def make_sickle_cmd(args, tmpdir):
+    if args.fastq2:
+        cmd = str("sickle pe -f {0} -r {1} -t {2} -q {3} -l {4} -o " +
+                  "{5}read1.fastq -p {5}read2.fastq -s {5}singles.fastq" +
+                  "> {5}sickle.log").format(
+                      args.fastq1,  # 0
+                      args.fastq2,  # 1
+                      reads_ns.encoding,  # 2
+                      args.trim_qv,  #3
+                      args.min_length,  #4
+                      tmpdir)
+    else:
+        cmd = str("sickle se -f {0} -t {1} -q {2} -l {3} -o {4}read1.fastq " +
+                  "> {4}sickle.log").format(
+                      args.fastq1,  # 0
+                      reads_ns.encoding,  # 1
+                      args.trim_qv,  #2
+                      args.min_length,  #3
+                      tmpdir)
+    return cmd
+
+def quality_trim_reads(args, tmpdir, config, reads_ns):
+    """
+    Quality trims reads using sickle
+
+    required params: $ (tmpdir)
+                 $ (encoding)
+
+    returns          $ (0)
+    """
+    if encoding is None:
+        logger.warning("Sequence quality encoding could not be determined;" +
+                       "Sequence quality trimming will be skipped...")
+    trim_dir = os.path_join(tmpdir, "qc_trim", "")
+    os.makedirs(trim_dir)
+    trim_cmd = make_sickle_cmd(args, tmpdir)
+    trim_res = subprocess.run(trim_cmd,
+                                shell=sys.platform != "win32",
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                check=False)
+    if trim_res.returncode != 0:
+        logger.warning("Error running trimmer with command %s", trim_cmd)
+        sys.exit(1)
+    else:
+        # reasign the reads with the trimmed treads
+        args.fastq1 = os.path.join(trim_dir, "read1.fastq")
+        args.fastq2 = os.path.join(trim_dir, "read2.fastq")
+    kept = 0
+    disc = 0
+    logger.info("Quality Trimming result:s")
+    with open(os.path.join(trim_dir, "sickle.log"), "r") as inf:
+        for line in inf:
+            logger.info(line)
+            if "kept" in line:
+                kept = kept + int(line.split(": ")[1].split("(")[0].strip())
+            elif "discarded" in line:
+                disc = desc + int(line.split(": ")[1].split("(")[0].strip())
+            else:
+                pass
+    if float(disc / kept) * 100 > 10:
+        logger.warning(">10\% of reads discarded during read trimming. "+
+                       "Please examine the FastQC outputs...")
+
+
+def make_seqtk_ds_cmd(args, reads_ns, new_coverage, outdir, logger):
+    assert is_instance(new_coverage, int), "new_coverage must be an int")
+    frac = float(new_coverage / reads_ns.coverage)
+    cmd_list = []
+    logger.info("downsampleing to %f X  to %f X (%f)",
+                reads_ns.coverage, new_coverage , frac )
+    for reads in [args.fastq1, args.fastq2]:
+        if os.path.exists(reads):
+            cmd_list.append("{0} sample -s 100 {1} {2} > {3}".format(
+                config.seqtk,  reads, frac,
+                os.path.join(outdir, os.path.basename(reads))))
+    return cmd_list
+
+
+def downsample_reads(args, reads_ns, config, new_cov=100):
+    """
+    Downsamples reads by default to a maximum of 100x if higher
+    coverages are present, or to specified coverage
+
+    required params: $ (tmpdir)
+                 $ (config data)
+                 $ (coverage required)
+                 $ (original coverage)
+                 $ (number of bases in original reds)
+                 $ (mean read length)
+    """
+    ds_dir = os.path_join(tmpdir, "seqtk_dir", "")
+    os.makedirs(ds_dir)
+    ds_cmds = make_seqtk_ds_cmd(args, reads_ns, new_coverage=new_cov,
+                                outdir=ds_dir, logger=logger,)
+    for cmd in ds_cmds:
+        subprocess.run(cmd,
+                       shell=sys.platform != "win32",
+                       stdout=subprocess.PIPE,
+                       stderr=subprocess.PIPE,
+                       check=True)
+    args.fastq1 = os.path.join(ds_dir, os.path.basename(args.fastq1))
+    args.fastq2 = os.path.join(ds_dir, os.path.basename(args.fastq2))
+    return new_cov
+
+
+def align_reads():
+    """
+    Maps reads to reference using bwa
+
+    required params: $ (tmp directory);
+                 $ (reference);
+                 $ (read length)
+                 $ (flag to indicate downsampling required...)
+
+               : $ (0)
+    """
+
+
+# sub align_reads {
+
+#     my $tmpdir      = shift;
+#     my $reference   = shift;
+#     my $read_length = shift;
+#     my $downsample  = shift;
+
+#     my $bwa_dir      = $config->{'bwa_dir'};
+#     my $samtools_dir = $config->{'samtools_dir'};
+#     my $seqtk_dir    = $config->{'seqtk_dir'};
+
+#     mkdir "$tmpdir/bwa"
+#       or die "Error creating $tmpdir/bwa: $!"
+#       if ( !-d "$tmpdir/bwa" );
+#     chdir "$tmpdir/bwa" or die "Error chdiring to $tmpdir/bwa: $!";
+#     copy( "$tmpdir/$reference", "$tmpdir/bwa/$reference" )
+#       or die "Error copying $tmpdir/$reference: $! ";
+
+#     if ($downsample) {
+
+#         message("Downsampling reads for insert-size estimation...");
+#         my $cmd = "$seqtk_dir/seqtk sample -s100 $tmpdir/read1.fastq 10000 > $tmpdir/bwa/read1.fastq";
+#         system($cmd) == 0 or die " Error running $cmd: $! ";
+#         if ( -e "$tmpdir/read2.fastq" ) {
+#             $cmd = "$seqtk_dir/seqtk sample -s100 $tmpdir/read2.fastq 10000 > $tmpdir/bwa/read2.fastq";
+#             system($cmd) == 0 or die " Error running $cmd: $!";
+
+#         }
+#     }
+#     else {
+#         symlink( "$tmpdir/read1.fastq", "$tmpdir/bwa/read1.fastq" ) or die "Error creating symlink: $! ";
+#         symlink( "$tmpdir/read2.fastq", "$tmpdir/bwa/read2.fastq" ) or die "Error creating symlink: $! ";
+#     }
+
+#     message("BWA aligning reads vs $reference...");
+
+#     my $cmd = "$bwa_dir/bwa index $tmpdir/bwa/$reference >$tmpdir/bwa/bwa_index.log 2>&1";
+#     system($cmd) == 0 or die " Error running $cmd";
+
+#     # Use bwa-bwt for 'short' reads less than 100 bp, and bwa-mem for longer reads
+#     if ( $read_length <= 100 ) {
+#         $cmd = "$bwa_dir/bwa aln -t 4 $tmpdir/bwa/$reference $tmpdir/bwa/read1.fastq > $tmpdir/bwa/read1.sai"
+#           . " 2> $tmpdir/bwa/bwa_sai1.log";
+#         system($cmd) == 0 or die "Error running $cmd";
+#         if ( -e "$tmpdir/read2.fastq" ) {
+#             $cmd = "$bwa_dir/bwa aln -t 4 $tmpdir/bwa/$reference $tmpdir/bwa/read2.fastq > $tmpdir/bwa/read2.sai"
+#               . " 2> $tmpdir/bwa/bwa_sai2.log";
+#             system($cmd) == 0 or die "Error running $cmd";
+#             $cmd = "$bwa_dir/bwa sampe $tmpdir/bwa/$reference $tmpdir/bwa/read1.sai $tmpdir/bwa/read2.sai "
+#               . "$tmpdir/bwa/read1.fastq $tmpdir/bwa/read2.fastq";
+#             $cmd .= " 2> $tmpdir/bwa/sampe.log > $tmpdir/bwa/$reference.sam";
+#             system($cmd) == 0 or die "Error running $cmd";
+#         }
+#         else {
+#             $cmd = "$bwa_dir/bwa samse $tmpdir/bwa/$reference $tmpdir/bwa/read1.sai $tmpdir/read1.fastq";
+#             $cmd .= "2> $tmpdir/bwa/samse.log > $tmpdir/bwa/$reference.sam";
+#             system($cmd) == 0 or die "Error running $cmd";
+#         }
+#     }
+#     else {
+#         if ( !-e "$tmpdir/read2.fastq" ) {
+
+#             # single-ended long reads
+#             $cmd = "$bwa_dir/bwa mem -t 4 -M $tmpdir/bwa/$reference $tmpdir/bwa/read1.fastq > $reference.sam "
+#               . "2>$tmpdir/bwa/bwa_mem.log";
+#             system($cmd) == 0 or die "Error running $cmd: $!";
+#         }
+#         else {
+
+#             # paired-end long reads
+#             $cmd =
+# "$bwa_dir/bwa mem -t 4 -M $tmpdir/bwa/$reference $tmpdir/bwa/read1.fastq $tmpdir/bwa/read2.fastq >$reference.sam "
+#               . "2>$tmpdir/bwa/bwa_mem.log";
+#             system($cmd) == 0 or die "Error running $cmd: $!";
+#         }
+#     }
+
+#     $cmd = "$samtools_dir/samtools view -q 10 -Sb $tmpdir/bwa/$reference.sam 2>$tmpdir/bwa/samtoolsview.log"
+#       # . "|$samtools_dir/samtools sort - $tmpdir/bwa/$reference";
+#       . "|$samtools_dir/samtools sort - > $tmpdir/bwa/$reference.bam";
+#     system($cmd) == 0 or die "Error running $cmd";
+
+#     $cmd = "$samtools_dir/samtools index $tmpdir/bwa/$reference.bam 2>$tmpdir/bwa/samtools_index.log";
+#     system($cmd) == 0                 or die "Error running $cmd";
+#     unlink("$tmpdir/bwa/read1.fastq") or die " Error unlinking $tmpdir/bwa/read1.fastq: $! ";
+#     unlink("$tmpdir/bwa/read2.fastq")
+#       or die " Error unlinking $tmpdir/bwa/read1.fastq : $! "
+#       if ( -e "$tmpdir/bwa/read2.fastq" );
+
+#     chdir($tmpdir) or die "Error changing to $tmpdir: $! ";
+
+# }
+
 
 def main(args):
     if args is None:
@@ -1084,33 +1297,28 @@ def main(args):
 
     reference = os.path.basename(args.reference)
     #  need to know a bit about the provided reads so we can act appropriately
-    reads_namespace  = assess_reads(args=args, conf=conf, platform=platform,
+    reads_ns  = assess_reads(args=args, conf=conf, platform=platform,
                                     tempdir=tmpdir, logger=logger)
-    check_ref_needed(args=args, lib_type=reads_namespace.lib_type)
+    check_ref_needed(args=args, lib_type=reads_ns.lib_type)
     config = get_config_path()
     tools = select_tools(args, paired, config)
 
     ################################################################
     downsample_reads = get_downsampling(args, config)
     if not args.skip_fastqc and config.fastqc is not None:
-       run_fastqc(reads_namespace, tmpdir, logger=None)
-#     run_fastqc( $tmpdir, $type ) if ($run_fastqc);
+       run_fastqc(reads_ns, tmpdir, logger=None)
+    if reads_ns.mean_read_length is not None:
+        if reads_ns.mean_read_length < 50 and reads_ns.mean_read_length < args.trim_length:
+            logger.info("trim-length reset to 25 due to mean read length: %i",
+                        reads_ns.mean_read_length)
+            args.trim_length = 25
+    if reads_ns.lib_type == "long" or args.skip_trim_reads:
+        quality_trim_reads(args, tmpdir, config, reads_ns)
+    if (reads_ns.coverage is not None and reads_ns.coverage > 100) and \
+       (downsample_reads or args.downsample):
+         downsampled_coverage = downsample_reads(args, reads_ns, config, new_cov=100)
 
-#     if ( $mean_read_length && ( $mean_read_length < 50 || $mean_read_length < $trim_length ) ) {
-# 	$trim_length = 25;
-# 	print "\ntrim-length reset to $trim_length due to mean read length ($mean_read_length)\n";
-#     }
-
-#     quality_trim_reads( $tmpdir, $encoding, $trim_qv, $trim_length )
-# 	unless ( $type eq 'long' || !$trim_reads );
-
-#     my $downsampled_coverage;
-
-#     if ( ( $coverage && $coverage > 100 ) && ( $assembler_conf_downsample || $downsample ) ) {
-# 	$downsampled_coverage =
-# 	    downsample_reads( $tmpdir, $config, $downsample, $coverage, $read_bases, $mean_read_length );
-#     }
-
+    if args.fastq2 and args.reference:
 #     if ( $fastq2 && $reference ) {
 # 	## final arg to align_reads is flag to indicate downsamping required...
 # 	align_reads( $tmpdir, $reference, $mean_read_length, 1 );
@@ -1457,141 +1665,11 @@ def main(args):
 
 
 
-# #######################################################################
-# #
-# # quality_trim_reads
-# #
-# # Quality trims reads using sickle
-# #
-# # required params: $ (tmpdir)
-# #                  $ (encoding)
-# #
-# # returns          $ (0)
-# #
-# #######################################################################
 
-# sub quality_trim_reads {
 
-#     my $tmpdir     = shift;
-#     my $encoding   = shift;
-#     my $qv         = shift;
-#     my $min_length = shift;
 
-#     if ( !$encoding ) {
-#         print "\n\nWARNING: Sequence quality encoding could not be determined\n";
-#         print "Sequence quality trimming will be skipped...\n\n";
-#     }
-#     else {
-#         mkdir "$tmpdir/qc_trim" or die "Error creating $tmpdir/qc_trim: $!";
-#         chdir "$tmpdir/qc_trim" or die "Error running chdir $tmpdir/qc_trim: $!";
 
-#         my $cmd = $config->{'sickle_dir'};
-#         if ( -e "$tmpdir/read2.fastq" ) {
-#             $cmd .=
-#                 "sickle pe -f $tmpdir/read1.fastq "
-#               . "-r $tmpdir/read2.fastq -t $encoding -q $qv -l $min_length -o read1.fastq -p read2.fastq "
-#               . "-s singles.fastq > sickle.log";
-#         }
-#         else {
-#             $cmd .=
-#               "sickle se -f $tmpdir/read1.fastq " . "-t $encoding -q $qv -l $min_length -o read1.fastq > sickle.log";
-#         }
 
-#         system($cmd) == 0 or die "Error executing $cmd: $!";
-
-#         open LOG, "sickle.log" or die "Could not open sickle.log: $!";
-#         my $res;
-#         while ( my $line = <LOG> ) {
-#             $res .= $line;
-#         }
-#         close LOG;
-
-#         chdir $tmpdir or die "Error chdiring to $tmpdir: $!";
-
-#         unlink("$tmpdir/read1.fastq")
-#           or die "Error unlinking $tmpdir/read1.fastq: $!";
-#         symlink( "qc_trim/read1.fastq", "read1.fastq" )
-#           or die "Error creating read1.fastq symlink: $!";
-#         if ( -e "$tmpdir/read2.fastq" ) {
-#             unlink("$tmpdir/read2.fastq")
-#               or die "Error unlinking $tmpdir/read2.fastq: $!";
-#             symlink( "qc_trim/read2.fastq", "read2.fastq" )
-#               or die "Error creating read2.fastq symlink: $!";
-#         }
-
-#         print "\nQuality Trimming\n================\n";
-#         print $res;
-
-#         my ( $kept, $discarded );
-
-#         if ( -e "$tmpdir/read2.fastq" ) {
-#             $kept      = $1 if ( $res =~ /FastQ paired records kept: ([0-9]+)/ );
-#             $discarded = $1 if ( $res =~ /FastQ paired records discarded: ([0-9]+)/ );
-#         }
-#         else {
-#             $kept      = $1 if ( $res =~ /FastQ records kept: ([0-9]+)/ );
-#             $discarded = $1 if ( $res =~ /FastQ records discarded: ([0-9]+)/ );
-#         }
-
-#         print "\nWarning: >10% of reads discarded during read trimming.\nPlease examine the FastQC outputs... \n\n"
-#           if ( ( $discarded / $kept * 100 ) > 10 );
-#     }
-
-#     return ();
-# }
-
-# ######################################################################
-# #
-# # downsample reads
-# #
-# # Downsamples reads by default to a maximum of 100x if higher
-# # coverages are present, or to specified coverage
-# #
-# # required params: $ (tmpdir)
-# #                  $ (config data)
-# #                  $ (coverage required)
-# #                  $ (original coverage)
-# #                  $ (number of bases in original reds)
-# #                  $ (mean read length)
-# #
-# # returns: 0
-# #
-# ######################################################################
-
-# sub downsample_reads {
-
-#     my $tmpdir           = shift;
-#     my $config           = shift;
-#     my $coverage         = shift || 100;
-#     my $orig_coverage    = shift;
-#     my $read_bases       = shift;
-#     my $mean_read_length = shift;
-
-#     my $seqtk_dir = $config->{'seqtk_dir'};
-#     mkdir "$tmpdir/downsampling" or die "Error creating  $tmpdir/downsampling: $!";
-#     chdir "$tmpdir/"             or die "Error chdiring to $tmpdir/ downsampling : $! ";
-#     print "Projected Coverage: ${orig_coverage}x: Downsampling reads to ${coverage}x...\n";
-#     foreach my $fastq (qw(read1.fastq read2.fastq)) {
-#         if ( -e "$tmpdir/$fastq" ) {
-#             my $frac = ( $coverage / $orig_coverage );
-#             my $required_reads = ( ( $frac * $read_bases ) / $mean_read_length );
-#             # my $cmd = "$seqtk_dir/seqtk sample -s100 $tmpdir/$fastq $required_reads > $tmpdir/downsampling/$fastq";
-#             my $cmd = "$seqtk_dir/seqtk sample -s 100 $tmpdir/$fastq $required_reads > $tmpdir/downsampling/$fastq";
-#             system($cmd) == 0 or die " Error running $cmd: $! ";
-#         }
-#     }
-#     unlink("$tmpdir/read1.fastq")
-#       or die " Error unlinking $tmpdir/read1.fastq : $! ";
-#     symlink( "downsampling/read1.fastq", "read1.fastq" )
-#       or die " Error creating read1.fastq symlink : $! ";
-#     if ( -e "$tmpdir/read2.fastq" ) {
-#         unlink("$tmpdir/read2.fastq")
-#           or die "Error unlinking $tmpdir/read2.fastq: $! ";
-#         symlink( "downsampling/read2.fastq", "read2.fastq" )
-#           or die " Error creating read2.fastq symlink: $! ";
-#     }
-#     return ($coverage);
-# }
 
 # #######################################################################
 # #
@@ -1879,113 +1957,8 @@ def main(args):
 #     return (0);
 # }
 
-# ######################################################################
-# #
-# # align_reads
-# #
-# # Maps reads to reference using bwa
-# #
-# # required params: $ (tmp directory);
-# #                  $ (reference);
-# #                  $ (read length)
-# #                  $ (flag to indicate downsampling required...)
-# #
-# #                : $ (0)
-# #
-# ######################################################################
 
-# sub align_reads {
 
-#     my $tmpdir      = shift;
-#     my $reference   = shift;
-#     my $read_length = shift;
-#     my $downsample  = shift;
-
-#     my $bwa_dir      = $config->{'bwa_dir'};
-#     my $samtools_dir = $config->{'samtools_dir'};
-#     my $seqtk_dir    = $config->{'seqtk_dir'};
-
-#     mkdir "$tmpdir/bwa"
-#       or die "Error creating $tmpdir/bwa: $!"
-#       if ( !-d "$tmpdir/bwa" );
-#     chdir "$tmpdir/bwa" or die "Error chdiring to $tmpdir/bwa: $!";
-#     copy( "$tmpdir/$reference", "$tmpdir/bwa/$reference" )
-#       or die "Error copying $tmpdir/$reference: $! ";
-
-#     if ($downsample) {
-
-#         message("Downsampling reads for insert-size estimation...");
-#         my $cmd = "$seqtk_dir/seqtk sample -s100 $tmpdir/read1.fastq 10000 > $tmpdir/bwa/read1.fastq";
-#         system($cmd) == 0 or die " Error running $cmd: $! ";
-#         if ( -e "$tmpdir/read2.fastq" ) {
-#             $cmd = "$seqtk_dir/seqtk sample -s100 $tmpdir/read2.fastq 10000 > $tmpdir/bwa/read2.fastq";
-#             system($cmd) == 0 or die " Error running $cmd: $!";
-
-#         }
-#     }
-#     else {
-#         symlink( "$tmpdir/read1.fastq", "$tmpdir/bwa/read1.fastq" ) or die "Error creating symlink: $! ";
-#         symlink( "$tmpdir/read2.fastq", "$tmpdir/bwa/read2.fastq" ) or die "Error creating symlink: $! ";
-#     }
-
-#     message("BWA aligning reads vs $reference...");
-
-#     my $cmd = "$bwa_dir/bwa index $tmpdir/bwa/$reference >$tmpdir/bwa/bwa_index.log 2>&1";
-#     system($cmd) == 0 or die " Error running $cmd";
-
-#     # Use bwa-bwt for 'short' reads less than 100 bp, and bwa-mem for longer reads
-#     if ( $read_length <= 100 ) {
-#         $cmd = "$bwa_dir/bwa aln -t 4 $tmpdir/bwa/$reference $tmpdir/bwa/read1.fastq > $tmpdir/bwa/read1.sai"
-#           . " 2> $tmpdir/bwa/bwa_sai1.log";
-#         system($cmd) == 0 or die "Error running $cmd";
-#         if ( -e "$tmpdir/read2.fastq" ) {
-#             $cmd = "$bwa_dir/bwa aln -t 4 $tmpdir/bwa/$reference $tmpdir/bwa/read2.fastq > $tmpdir/bwa/read2.sai"
-#               . " 2> $tmpdir/bwa/bwa_sai2.log";
-#             system($cmd) == 0 or die "Error running $cmd";
-#             $cmd = "$bwa_dir/bwa sampe $tmpdir/bwa/$reference $tmpdir/bwa/read1.sai $tmpdir/bwa/read2.sai "
-#               . "$tmpdir/bwa/read1.fastq $tmpdir/bwa/read2.fastq";
-#             $cmd .= " 2> $tmpdir/bwa/sampe.log > $tmpdir/bwa/$reference.sam";
-#             system($cmd) == 0 or die "Error running $cmd";
-#         }
-#         else {
-#             $cmd = "$bwa_dir/bwa samse $tmpdir/bwa/$reference $tmpdir/bwa/read1.sai $tmpdir/read1.fastq";
-#             $cmd .= "2> $tmpdir/bwa/samse.log > $tmpdir/bwa/$reference.sam";
-#             system($cmd) == 0 or die "Error running $cmd";
-#         }
-#     }
-#     else {
-#         if ( !-e "$tmpdir/read2.fastq" ) {
-
-#             # single-ended long reads
-#             $cmd = "$bwa_dir/bwa mem -t 4 -M $tmpdir/bwa/$reference $tmpdir/bwa/read1.fastq > $reference.sam "
-#               . "2>$tmpdir/bwa/bwa_mem.log";
-#             system($cmd) == 0 or die "Error running $cmd: $!";
-#         }
-#         else {
-
-#             # paired-end long reads
-#             $cmd =
-# "$bwa_dir/bwa mem -t 4 -M $tmpdir/bwa/$reference $tmpdir/bwa/read1.fastq $tmpdir/bwa/read2.fastq >$reference.sam "
-#               . "2>$tmpdir/bwa/bwa_mem.log";
-#             system($cmd) == 0 or die "Error running $cmd: $!";
-#         }
-#     }
-
-#     $cmd = "$samtools_dir/samtools view -q 10 -Sb $tmpdir/bwa/$reference.sam 2>$tmpdir/bwa/samtoolsview.log"
-#       # . "|$samtools_dir/samtools sort - $tmpdir/bwa/$reference";
-#       . "|$samtools_dir/samtools sort - > $tmpdir/bwa/$reference.bam";
-#     system($cmd) == 0 or die "Error running $cmd";
-
-#     $cmd = "$samtools_dir/samtools index $tmpdir/bwa/$reference.bam 2>$tmpdir/bwa/samtools_index.log";
-#     system($cmd) == 0                 or die "Error running $cmd";
-#     unlink("$tmpdir/bwa/read1.fastq") or die " Error unlinking $tmpdir/bwa/read1.fastq: $! ";
-#     unlink("$tmpdir/bwa/read2.fastq")
-#       or die " Error unlinking $tmpdir/bwa/read1.fastq : $! "
-#       if ( -e "$tmpdir/bwa/read2.fastq" );
-
-#     chdir($tmpdir) or die "Error changing to $tmpdir: $! ";
-
-# }
 
 # ######################################################################
 # #
