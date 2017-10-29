@@ -25,6 +25,9 @@ class test_BugBuilder(unittest.TestCase):
         self.ref_dir = os.path.join(os.path.dirname(__file__), "references")
         self.test_dir = os.path.join(os.path.dirname(__file__), "tmp_tests")
         self.empty_config = os.path.join(self.ref_dir, "empty_config.yaml")
+        self.ref_fasta = os.path.join(self.ref_dir, "AP017923.1.fasta")
+        self.fastq1 = os.path.join(self.ref_dir, "AP017923.1_reads1.fastq")
+        self.fastq2 = os.path.join(self.ref_dir, "AP017923.1_reads2.fastq")
         self.args = Namespace()
         os.makedirs(self.test_dir, exist_ok=True)
 
@@ -45,6 +48,16 @@ class test_BugBuilder(unittest.TestCase):
         shutil.copyfile(self.empty_config, newpath_config)
         config = bb.return_config(newpath_config)
         self.assertEqual(config.STATUS, "COMPLETE")
+
+    def test_make_fastqc_cmd(self):
+        test_args = Namespace(fastq1="reads1.fastq", fastq2="reads2.fastq",
+                              long_fastq=None, threads=7)
+        ref_cmd = "fastqc -t 7 -o ./outdir/ reads1.fastq reads2.fastq > " + \
+                  "./outdir/fastqc.log 2>&1"
+        cmd = bb.make_fastqc_cmd(args=test_args, fastqc_dir="./outdir/")
+        self.assertEqual(ref_cmd, cmd)
+
+
 
     def tearDown(self):
         pass

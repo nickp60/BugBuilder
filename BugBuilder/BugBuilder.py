@@ -511,17 +511,17 @@ def get_args():  # pragma: no cover
                           help="Mode to run in",
                           choices=["submission", "draft"], default="submission",
                           type=str)
-    optional.add_argument("--skip-fastqc", dest='skip-fastqc', action="store_true",
+    optional.add_argument("--skip-fastqc", dest='skip_fastqc', action="store_true",
                           help="size of the genome ", default=False)
-    optional.add_argument("--skip-trim", dest='skip-time', action="store_true",
+    optional.add_argument("--skip-trim", dest='skip_time', action="store_true",
                           help="Quality threshold for trimming reads ", default=False)
-    optional.add_argument("--trim-qv", dest='trim-qv', action="store",
+    optional.add_argument("--trim-qv", dest='trim_qv', action="store",
                           help="quality threshold to trim  ", default=20,
                           type=int)
-    optional.add_argument("--trim-length", dest='trim-length', action="store",
+    optional.add_argument("--trim-length", dest='trim_length', action="store",
                           help="min read klength to retain", default=50,
                           type=int)
-    optional.add_argument("--skip-split-origin", dest='skip-split-origin',
+    optional.add_argument("--skip-split-origin", dest='skip_split_origin',
                           action="store_true",
                           help="split at origin ", default=False)
     optional.add_argument("--keepall", dest='keepall',
@@ -530,10 +530,10 @@ def get_args():  # pragma: no cover
     optional.add_argument("--threads", dest='threads', action="store",
                           help="threads  ",
                           type=int)
-    optional.add_argument("--out-dir", dest='out-dir', action="store",
+    optional.add_argument("--out-dir", dest='out_dir', action="store",
                           help="dir for results",
                           type=str)
-    optional.add_argument("--tmp-dir", dest='tmp-dir', action="store",
+    optional.add_argument("--tmp-dir", dest='tmp_dir', action="store",
                           help="dir for results",
                           type=str)
     optional.add_argument("--already_assembled", dest='already_assembled',
@@ -988,6 +988,69 @@ def select_tools(args, paired, config):
                      varcall=args.varcaller)
 
 
+def get_downsampling(args, config):
+    assembler_conf = config.assemblers
+    for conf_assembler in config.assemblers:
+        if conf_assembler.name in args.assemblers:
+            return True
+    return False
+
+
+def make_fastqc_cmd(args, fastqc_dir):
+    cmd = \
+        "fastqc -t {4} --extract -o {0}{1}{2}{3} > {0}fastqc.log 2>&1".format(
+            fastqc_dir,
+            " " + args.fastq1 if args.fastq1 is not None else "",
+            " " + args.fastq2 if args.fastq2 is not None else "",
+            " " + args.long_fastq if args.long_fastq is not None else "",
+            args.threads)
+    return cmd
+
+def run_fastqc(reads_namespace, tmpdir, logger=None):
+    """
+    Carries out QC analysis using fastqc...
+
+    required params: $ (tmpdir)
+                 $ (type)
+
+    returns: $ (0)
+    """
+    logger.info("Running FastQC...")
+    fastqc_dir = os.path.join(tmpdir, "fastqc", "")
+    os.makedirs(fastqc_dir)
+    fastqc_cmd = make_fastqc_cmd(args, tmpdir)
+    fastqc_res = subprocess.run(fastqc_cmd,
+                                shell=sys.platform != "win32",
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                check=False)
+    if result.returncode != 0:
+        logger.warning("Error running fastqc with command %s", fastqc_cmd)
+        sys.exit(1)
+    report = []
+    fails = 0
+    for f in [args.fastq1, args.fastq2, args.long_fastq]:
+        name = os.path.splitext(os.path.basename(fastqc))[0] + "_fastqc"
+        report.append(name + "\n----------------------------------")
+        with open(os.path.join(
+                fastqc_dir, name + "_fastqc", "summary.txt"), "r") as s:
+            for line in s:
+                if "FAIL" in line:
+                    fails = fails + 1
+                report.append(s.split("\t")[:2])
+        shutil.copyfile(os.path.join(fastqc_dir, name + "_fastqc.html"),
+                        os.path.join(tmpdir, name + "_fastqc.html"))
+    for line in report:
+        logger.info(line)
+    if fails > 0:
+        if reads_namespace.type in ["long", "hybrid", "de_fere"]:
+            logger.info("NB: Reported quality issues from_fastq are normal " +
+                        "when analysing PacBio sequence with FastQC...");
+        else:
+            logger.warning("Some QC tests indicate quality issues with this " +
+                           "data.Please examine the fastqc outputs for " +
+                           "these reads")
+
 def main(args):
     if args is None:
         args = get_args()
@@ -1027,16 +1090,10 @@ def main(args):
     config = get_config_path()
     tools = select_tools(args, paired, config)
 
-#     ################################################################
-#     # pull downsampling attribute from assembler configuration
-#     my $assembler_conf_downsample = 0;
-#     my $assembler_conf            = $config->{'assemblers'};
-#     foreach my $conf_assembler (@$assembler_conf) {
-# 	if ( $conf_assembler->{'name'} eq $assemblers[0] ) {
-# 	    $assembler_conf_downsample = $conf_assembler->{'downsample_reads'};
-# 	}
-#     }
-
+    ################################################################
+    downsample_reads = get_downsampling(args, config)
+    if not args.skip_fastqc and config.fastqc is not None:
+       run_fastqc(reads_namespace, tmpdir, logger=None)
 #     run_fastqc( $tmpdir, $type ) if ($run_fastqc);
 
 #     if ( $mean_read_length && ( $mean_read_length < 50 || $mean_read_length < $trim_length ) ) {
@@ -1397,84 +1454,8 @@ def main(args):
 
 # }
 
-# ######################################################################
-# #
-# # run_fastqc
-# #
-# # Carries out QC analysis using fastqc...
-# #
-# # required params: $ (tmpdir)
-# #                  $ (type)
-# #
-# # returns: $ (0)
-# #
-# ######################################################################
 
-# sub run_fastqc {
 
-#     my $tmpdir = shift;
-#     my $type   = shift;
-
-#     message("Running FastQC...");
-#     chdir $tmpdir          or die "Error chdiring to $tmpdir: $!";
-#     mkdir "$tmpdir/fastqc" or die "Error creating $tmpdir/fastqc: $!";
-
-#     my $fastq1     = readlink("$tmpdir/read1.fastq");
-#     my $fastq2     = readlink("$tmpdir/read2.fastq");
-#     my $long_fastq = readlink("$tmpdir/long.fastq");
-#     # my $de_fere_contigs = readlink("$tmpdir/de_fere_contigs.fasta");
-
-#     my $cmd = $config->{'fastqc_dir'} . "fastqc -t 4 -o $tmpdir/fastqc ";
-#     $cmd .= " $tmpdir/$fastq1"     if ($fastq1);
-#     $cmd .= " $tmpdir/$fastq2"     if ($fastq2);
-#     $cmd .= " $tmpdir/$long_fastq" if ($long_fastq);
-#     $cmd .= " >$tmpdir/fastqc/fastqc.log 2>&1";
-
-#     system($cmd) == 0      or die "Error running command $cmd: $!";
-#     chdir "$tmpdir/fastqc" or die "Error chdiring to $tmpdir/fastqc: $!";
-
-#     my $fail = 0;
-#     foreach my $file ( $fastq1, $fastq2, $long_fastq ) {
-#         if ($file) {
-#             $file =~ s/\.fastq(\.gz)?//;
-#             if ( -e "${file}_fastqc.zip" ) {
-#                 my $archive = Archive::Zip->new("${file}_fastqc.zip");
-#                 foreach my $member ( $archive->members ) {
-#                     next unless ( $member->fileName eq "${file}_fastqc/summary.txt" );
-#                     $member->extractToFileNamed("$tmpdir/${file}_fastqc.summary.txt");
-#                 }
-#                 open SUMMARY, "$tmpdir/${file}_fastqc.summary.txt" or die "Error opening $file.summary.txt: $!";
-#                 print "\n\n$file FastQC report:\n";
-#                 my $tb = Text::ASCIITable->new();
-#                 $tb->setCols( "Result", "Metric" );
-#                 while ( my $line = <SUMMARY> ) {
-#                     my @fields = split( /\t/, $line );
-#                     $tb->addRow( $fields[0], $fields[1] );
-#                     $fail++ if ( $line =~ /^FAIL/ );
-#                 }
-#                 close SUMMARY;
-#                 print "$tb";
-#                 copy( "$tmpdir/fastqc/${file}_fastqc.html", "$tmpdir/${file}_fastqc.html" )
-#                   or die "Error copying ${file}_fastqc.html: $!";
-#             }
-#         }
-#     }
-
-#     if ($fail) {
-#         if ( $type eq 'long' || $type eq 'hybrid' || $type eq 'de_fere' ) {
-#             print "NB: Reported quality issues with Per base sequence quality etc.\n";
-#             print "are normal when analysing PacBio sequence with FastQC...\n\n";
-#         }
-#         else {
-#             print "WARNING: some QC tests indicate quality issues with this data.\n";
-#             print "Please examine the fastqc outputs for these reads\n\n";
-#         }
-#     }
-
-#     chdir $tmpdir or die "Error chdiring to $tmpdir: $!";
-
-#     return (0);
-# }
 
 # #######################################################################
 # #
