@@ -44,3 +44,4 @@ locally:
 
 
 
+conda create -n bug python==3.5 spades==3.9 fastqc sickle-trim

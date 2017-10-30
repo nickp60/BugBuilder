@@ -58,7 +58,7 @@ setup(
        ],
     },
     scripts=[
-        # 'scripts/seedRand.py',
-        # "scripts/runme.py"
+        "scripts/sis/multifasta.py",
+        "scripts/sis/sis.py"
     ],
 )

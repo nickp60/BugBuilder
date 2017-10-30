@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+#-*- coding: utf-8 -*-
 
 ################################################################################
 #
@@ -122,10 +123,10 @@ assemblers:
    - name: spades
      create_dir: 0
      max_length: 303
-     command_se: __ASMDIR__/spades.py -s __FASTQ1__ -o __TMPDIR__/spades
-     command_pe: __ASMDIR__/spades.py -1 __FASTQ1__ -2 __FASTQ2__ -o __TMPDIR__/spades
-     command_hybrid: __ASMDIR__/spades.py -1 __FASTQ1__ -2 __FASTQ2__ --pacbio __LONGFASTQ__ -o __TMPDIR__/spades
-     command_de_fere: __ASMDIR__/spades.py -1 __FASTQ1__ -2 __FASTQ2__ --trusted-contigs __DE_FERE_CONTIGS__ -o __TMPDIR__/spades
+     command_se: spades.py -s __FASTQ1__ -o __TMPDIR__/spades
+     command_pe: spades.py -1 __FASTQ1__ -2 __FASTQ2__ -o __TMPDIR__/spades
+     command_hybrid: spades.py -1 __FASTQ1__ -2 __FASTQ2__ --pacbio __LONGFASTQ__ -o __TMPDIR__/spades
+     command_de_fere: spades.py -1 __FASTQ1__ -2 __FASTQ2__ --trusted-contigs __DE_FERE_CONTIGS__ -o __TMPDIR__/spades
      contig_output: __TMPDIR__/spades/contigs.fasta
      scaffold_output: __TMPDIR__/spades/scaffolds.fasta
      default_args: -t __THREADS__ --careful
@@ -322,6 +323,7 @@ import arrow
 import shutil
 import logging
 import statistics
+import subprocess
 import pkg_resources
 import tabulate
 
@@ -422,18 +424,26 @@ def get_args():  # pragma: no cover
 
     optional = parser.add_argument_group('optional arguments')
     optional.add_argument("--fastq1", dest='fastq1', action="store",
-                               help="Path to first read of paired library, or fragment library",
-                               type=str, required="--long-fastq" not in sys.argv)
+                          help="Path to first read of paired library, or fragment library",
+                          type=str, required="--long-fastq" not in sys.argv)
     optional.add_argument("--fastq2", dest='fastq2', action="store",
-                               help="Path to second read of paired library",
-                               type=str)
+                          help="Path to second read of paired library",
+                          type=str)
+    optional.add_argument("--untrimmed_fastq1", dest='untrimmed_fastq1', action="store",
+                          # help="used to hold path of raw F reads for use " +
+                          # "with mascura; dont set from command line",
+                          type=str, help=argparse.SUPPRESS)
+    optional.add_argument("--untrimmed_fastq2", dest='untrimmed_fastq2', action="store",
+                          # help="used to hold path of raw R reads for use " +
+                          # "with mascura; dont use from command line",
+                          type=str, help=argparse.SUPPRESS)
     optional.add_argument("--de_fere_contigs", dest='de_fere_contigs',
-                               action="store",
-                               help="contigs to be used in de fere novo assembly!",
-                               type=str)
+                          action="store",
+                          help="contigs to be used in de fere novo assembly!",
+                          type=str)
     optional.add_argument("--long_fastq", dest='long_fastq', action="store",
-                               help="Path to fastq file from long-read sequencer",
-                               type=str, required="--fastq1" not in sys.argv)
+                          help="Path to fastq file from long-read sequencer",
+                          type=str, required="--fastq1" not in sys.argv)
     optional.add_argument("--reference", dest='reference',
                           action="store",
                           help="Path to fasta formatted reference sequence",
@@ -449,6 +459,16 @@ def get_args():  # pragma: no cover
                           "'default_args' attribute of the configuration " +
                           "file. If running multiple assemblers, " +
                           "assembler_args should be specified twice, once " +
+                          "for each assemler, in the same order than the " +
+                          "assemblers are specified.",
+                          nargs="*",
+                          type=str)
+    optional.add_argument("--assemblies", dest='assemblies',
+                          action="store",
+                          help="path to output directory(s) if assembler(s) " +
+                          "have already been run; this helps save time when " +
+                          "rerunning analyses. If running multiple assemble" +
+                          "rs, assemblies should be specified twice, once " +
                           "for each assemler, in the same order than the " +
                           "assemblers are specified.",
                           nargs="*",
@@ -509,7 +529,7 @@ def get_args():  # pragma: no cover
                           type=str)
     optional.add_argument("--skip-fastqc", dest='skip_fastqc', action="store_true",
                           help="size of the genome ", default=False)
-    optional.add_argument("--skip-trim", dest='skip_time', action="store_true",
+    optional.add_argument("--skip-trim", dest='skip_trim', action="store_true",
                           help="Quality threshold for trimming reads ", default=False)
     optional.add_argument("--trim-qv", dest='trim_qv', action="store",
                           help="quality threshold to trim  ", default=20,
@@ -525,7 +545,7 @@ def get_args():  # pragma: no cover
                           help="keep all intermediate files ", default=False)
     optional.add_argument("--threads", dest='threads', action="store",
                           help="threads  ",
-                          type=int)
+                          type=int, default=4)
     optional.add_argument("--out-dir", dest='out_dir', action="store",
                           help="dir for results",
                           type=str)
@@ -626,8 +646,8 @@ def check_file_paths(args):
     if args.merge_method is None and len(args.assemblers) > 1:
         raise ValueError("Must provide merge method if using multiple assemblers")
 
-def setup_tmpdir(args, output_root):
-    """  setup_tmpdir creates a temporary directory and copies
+def setup_tmp_dir(args, output_root):
+    """  setup_tmp_dir creates a temporary directory and copies
     over the relevent files
 
     requried params: $ (path to fastq1)
@@ -635,27 +655,24 @@ def setup_tmpdir(args, output_root):
                   $ (path to longread fastq file)
                   $ (path to fastafile)
     optional params: $ (platform)
-                  $ (preset value for tmpdir)
+                  $ (preset value for tmp_dir)
 
-    returns        : $ (path to tmpdir)
+    returns        : $ (path to tmp_dir)
 
     """
     if args.tmp_dir is None:
-        scratch_dir = os.path.join(output_root, "temp_dir")
-    else:
-        scratch_dir = args.tmp_dir;
-
-    print("Created working directory: %s" % scratch_dir)
+        args.tmp_dir = os.path.join(output_root, "temp_dir")
+    print("Created working directory: %s" % args.tmp_dir)
     try:
-        os.makedirs(scratch_dir, exist_ok=False)
+        os.makedirs(args.tmp_dir, exist_ok=False)
     except OSError:
         print("Temp directory already exists; exiting...")
         sys.exit(1)
     # copy to tmp dir
     for f in [args.fastq1, args.fastq2, args.long_fastq,
-              args.de_fere_contigs, args.reference]:
+              args.de_fere_contigs]:
         if f is not None and os.path.exists(f):
-            newpath = os.path.join(scratch_dir, os.path.basename(f))
+            newpath = os.path.join(args.tmp_dir, os.path.basename(f))
             shutil.copyfile(f, newpath)
             # does this even work?
             f = newpath
@@ -666,17 +683,17 @@ def setup_tmpdir(args, output_root):
     # my @fastqs = ( basename($fastq1) ) if ($fastq1);
     # push @fastqs, basename($fastq2) if ($fastq2);
     # foreach my $file (@fastqs) {
-    #     open FASTQ, "$tmpdir/$file" or die "Error opening $tmpdir/$file:$!";
-    #     open NEW, ">$tmpdir/$file.new"
-    #       or die "Error opening $tmpdir/$file.new: $!";
+    #     open FASTQ, "$tmp_dir/$file" or die "Error opening $tmp_dir/$file:$!";
+    #     open NEW, ">$tmp_dir/$file.new"
+    #       or die "Error opening $tmp_dir/$file.new: $!";
     #     while ( my $line = <FASTQ> ) {
     #         $line =~ s/^([@\+][0-9A-Z\:\-]+)-([12])$/$1\/$2/;
     #         print NEW $line;
     #     }
     #     close NEW;
     #     close FASTQ;
-    #     move( "$tmpdir/$file.new", "$tmpdir/$file" )
-    #       or die "Error copying $tmpdir/$file.new -> $tmpdir/$file: $!";
+    #     move( "$tmp_dir/$file.new", "$tmp_dir/$file" )
+    #       or die "Error copying $tmp_dir/$file.new -> $tmp_dir/$file: $!";
     # }
 
 
@@ -684,13 +701,13 @@ def setup_tmpdir(args, output_root):
     # so, rewrite the reference fasta file to ensure these just contain the id.
     # accepted formats are for ENA and Genbank format fasta headers, as well as plain IDs
     if args.reference:
-        new_reference = os.path.join(scratch_dir, os.path.basename(args.reference))
+        new_reference = os.path.join(args.tmp_dir, os.path.basename(args.reference))
         with open(args.reference, "r") as inf:
             for rec in SeqIO.parse(inf, "fasta"):
-                with open(new_reference, "a") as outd:
-                    SeqIO.write(rec, writepath, 'fasta')
+                print(rec)
+                with open(new_reference, "a") as outf:
+                    SeqIO.write(rec, outf, 'fasta')
         args.reference = new_reference
-    return scratch_dir;
 
 def return_open_fun(f):
     if os.path.splitext(f)[-1] in ['.gz', '.gzip']:
@@ -700,7 +717,7 @@ def return_open_fun(f):
     return open_fun
 
 
-def get_read_len_from_fastq(fastq1, logger=None):
+def get_read_lens_from_fastq(fastq1, logger=None):
     """from LP; return total read length and count in fastq1 file from all reads
     """
     lengths = []
@@ -718,7 +735,7 @@ def get_read_len_from_fastq(fastq1, logger=None):
     return (lengths)
 
 
-def id_fastq_encoding(args, tmpdir):
+def id_fastq_encoding(args):
     """
     Identifies fastq quality encoding type, based upon the information
     at http://en.wikipedia.org/wiki/FASTQ_format:
@@ -739,7 +756,7 @@ def id_fastq_encoding(args, tmpdir):
     with 0=unused, 1=unused, 2=Read Segment Quality Control Indicator (bold)
     L - Illumina 1.8+ Phred+33,  raw reads typically (0, 41)
 
-    required params: $ (tmpdir)
+    required params: $ (tmp_dir)
 
     returns:         $ (encoding)
     """
@@ -776,7 +793,7 @@ def id_fastq_encoding(args, tmpdir):
     return encoding
 
 
-def assess_reads(args, config, platform, tmpdir, logger=None):
+def assess_reads(args, config, platform, logger=None):
     """
     Determine some characteristics of the provided reads. Need to determine
     the mean read length, wheterh they are variable length or not, and the
@@ -784,7 +801,7 @@ def assess_reads(args, config, platform, tmpdir, logger=None):
 
     We'll also look at the predicted coverage if a reference genome is available
 
-    required params: $ (tmpdir)
+    required params: $ (tmp_dir)
 
     optional params: $ (platform)
 
@@ -809,7 +826,7 @@ def assess_reads(args, config, platform, tmpdir, logger=None):
     for i, read in enumerate([args.fastq1, args.fastq2, args.long_fastq]):
         if  read is None or not os.path.exists(read):
             continue
-        lengths = get_read_len_from_fastq(read, logger=logger)
+        lengths = get_read_lens_from_fastq(read, logger=logger)
         if type_list[i] == "long":
             tot_long_length = tot_long_length + sum(lengths)
         else:
@@ -853,27 +870,27 @@ def assess_reads(args, config, platform, tmpdir, logger=None):
     coverage = 0
     long_coverage = 0
 
-    # not making a new one here
-
-    if args.genome_size is None:
-        args.genome_size = 0
+    if args.genome_size == 0:
+        print(args.reference)
         if args.reference is not None and os.path.exists(args.reference):
             with open(args.reference, "r") as inf:
                 for rec in SeqIO.parse(inf, "fasta"):
-                    print(rec)
                     args.genome_size = args.genome_size + len(rec.seq)
     print(args.genome_size)
-    coverage, long_coverage = 0, 0
+    print(tot_length)
+    coverage, long_coverage = None, None
     try:
-        coverage = tot_length / args.genome_size
-        long_coverage = long_tot_length / args.genome_size
+        coverage = float(tot_length / args.genome_size)
+        long_coverage = float(long_tot_length / args.genome_size)
     except:
         logger.warning("error calculating coverage!")
-    encoding = id_fastq_encoding(args, tmpdir)
+    encoding = id_fastq_encoding(args)
     return Namespace(lib_type=lib_type, encoding=encoding, mean_read_length=mean,
                      read_length_stddev=stddev,
                      mean_long_read_length=long_mean,
                      long_read_length_stddev=long_stddev,
+                     # set these later
+                     insert_mean=None, insert_stddev=None,
                      coverage=coverage, long_read_coverage=long_coverage,
                      read_bases=tot_length)
 
@@ -946,20 +963,20 @@ def get_assemblers(args, config, paired, reads_ns):
 def get_scaffolder_and_linkage(args, config, paired):
     if args.scaffolder is None:
         return None
-    if args.scaffolder not in [x.name for x in config.scaffolders]:
+    print(config.scaffolders)
+    if args.scaffolder not in [k['name'].lower() for k in config.scaffolders]:
         raise ValueError("%s not an available scaffolder!" %args.scaffolder)
     linkage_evidence = None
     for conf_scaffolder in config.scaffolders:
-        if conf_scaffolder.name == args.scaffolder:
-            if conf_scaffolder.linkage_evidence == "paired-ends" and not paired:
-                    raise ValueError("%s requires paired reads, but you " +
-                                     "only specified one fastq file." % \
-                                     args.scaffolder)
-            elif "align" in conf_scaffolder.linkage_evidence and args.reference is None:
-                raise ValueError("%s requires a reference for alignment, " +
-                                 "but none is specified." % args.scaffolder)
-
-            return conf_scaffolder.linkage_evidence
+        if conf_scaffolder['name'].lower() == args.scaffolder:
+            if conf_scaffolder['linkage_evidence'] == "paired-ends" and not paired:
+                    raise ValueError(str(
+                        "%s requires paired reads, but you only specified " +
+                        "one fastq file.") % args.scaffolder)
+            elif "align" in conf_scaffolder['linkage_evidence'] and args.reference is None:
+                raise ValueError(str("%s requires a reference for alignment, " +
+                                     "but none is specified.") % args.scaffolder)
+            return conf_scaffolder['linkage_evidence']
 
 
 def get_merger_and_linkage(args, config, paired):
@@ -1019,9 +1036,10 @@ def select_tools(args, paired, config, reads_ns):
 
     """
     get_assemblers(args=args, config=config, paired=paired, reads_ns=reads_ns)
-    args.scaffolder, linkage_evidence = get_scaffolder_and_linkage(
+    print("get scaffolder")
+    linkage_evidence = get_scaffolder_and_linkage(
         args=args, config=config, paired=paired)
-
+    print("getting merger")
     get_merger_and_linkage(args, config, paired)
     get_finisher(args, config, paired)
     get_varcaller(args, config, paired)
@@ -1030,7 +1048,7 @@ def select_tools(args, paired, config, reads_ns):
     return Namespace(assemblers=args.assemblers,
                      scaffolder=args.scaffolder,
                      scaffold_type=linkage_evidence,
-                     merge_method=args.merger,
+                     merge_method=args.merge_method,
                      finisher=args.finisher,
                      varcall=args.varcaller)
 
@@ -1043,17 +1061,17 @@ def get_downsampling(args, config):
     return False
 
 
-def make_fastqc_cmd(args, fastqc_dir):
+def make_fastqc_cmd(args, outdir):
     cmd = \
         "fastqc -t {4} --extract -o {0}{1}{2}{3} > {0}fastqc.log 2>&1".format(
-            fastqc_dir,
+            outdir,
             " " + args.fastq1 if args.fastq1 is not None else "",
             " " + args.fastq2 if args.fastq2 is not None else "",
             " " + args.long_fastq if args.long_fastq is not None else "",
             args.threads)
     return cmd
 
-def run_fastqc(reads_ns, tmpdir, logger=None):
+def run_fastqc(reads_ns, args, logger=None):
     """
     Carries out QC analysis using fastqc...
 
@@ -1063,34 +1081,37 @@ def run_fastqc(reads_ns, tmpdir, logger=None):
     returns: $ (0)
     """
     logger.info("Running FastQC...")
-    fastqc_dir = os.path.join(tmpdir, "fastqc", "")
+    fastqc_dir = os.path.join(args.tmp_dir, "fastqc", "")
     os.makedirs(fastqc_dir)
-    fastqc_cmd = make_fastqc_cmd(args, tmpdir)
+    fastqc_cmd = make_fastqc_cmd(args, outdir=fastqc_dir)
+    logger.debug(fastqc_cmd)
     fastqc_res = subprocess.run(fastqc_cmd,
                                 shell=sys.platform != "win32",
                                 stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE,
                                 check=False)
-    if result.returncode != 0:
+    if fastqc_res.returncode != 0:
         logger.warning("Error running fastqc with command %s", fastqc_cmd)
         sys.exit(1)
     report = []
     fails = 0
     for f in [args.fastq1, args.fastq2, args.long_fastq]:
-        name = os.path.splitext(os.path.basename(fastqc))[0] + "_fastqc"
+        if f is None:
+            continue
+        name = os.path.splitext(os.path.basename(f))[0] + "_fastqc"
         report.append(name + "\n----------------------------------")
         with open(os.path.join(
-                fastqc_dir, name + "_fastqc", "summary.txt"), "r") as s:
+                fastqc_dir, name, "summary.txt"), "r") as s:
             for line in s:
                 if "FAIL" in line:
                     fails = fails + 1
-                report.append(s.split("\t")[:2])
-        shutil.copyfile(os.path.join(fastqc_dir, name + "_fastqc.html"),
-                        os.path.join(tmpdir, name + "_fastqc.html"))
+                report.append(line.split("\t")[:2])
+        shutil.copyfile(os.path.join(fastqc_dir, name + ".html"),
+                        os.path.join(args.tmp_dir, name + ".html"))
     for line in report:
         logger.info(line)
     if fails > 0:
-        if reads_ns.type in ["long", "hybrid", "de_fere"]:
+        if reads_ns.lib_type in ["long", "hybrid", "de_fere"]:
             logger.info("NB: Reported quality issues from_fastq are normal " +
                         "when analysing PacBio sequence with FastQC...");
         else:
@@ -1098,7 +1119,7 @@ def run_fastqc(reads_ns, tmpdir, logger=None):
                            "data.Please examine the fastqc outputs for " +
                            "these reads")
 
-def make_sickle_cmd(args, tmpdir):
+def make_sickle_cmd(args):
     if args.fastq2:
         cmd = str("sickle pe -f {0} -r {1} -t {2} -q {3} -l {4} -o " +
                   "{5}read1.fastq -p {5}read2.fastq -s {5}singles.fastq" +
@@ -1108,7 +1129,7 @@ def make_sickle_cmd(args, tmpdir):
                       reads_ns.encoding,  # 2
                       args.trim_qv,  #3
                       args.min_length,  #4
-                      tmpdir)
+                      args.tmp_dir)
     else:
         cmd = str("sickle se -f {0} -t {1} -q {2} -l {3} -o {4}read1.fastq " +
                   "> {4}sickle.log").format(
@@ -1116,10 +1137,10 @@ def make_sickle_cmd(args, tmpdir):
                       reads_ns.encoding,  # 1
                       args.trim_qv,  #2
                       args.min_length,  #3
-                      tmpdir)
+                      args.tmp_dir)
     return cmd
 
-def quality_trim_reads(args, tmpdir, config, reads_ns):
+def quality_trim_reads(args, config, reads_ns):
     """
     Quality trims reads using sickle
 
@@ -1131,9 +1152,9 @@ def quality_trim_reads(args, tmpdir, config, reads_ns):
     if encoding is None:
         logger.warning("Sequence quality encoding could not be determined;" +
                        "Sequence quality trimming will be skipped...")
-    trim_dir = os.path_join(tmpdir, "qc_trim", "")
+    trim_dir = os.path.join(args.tmp_dir, "qc_trim", "")
     os.makedirs(trim_dir)
-    trim_cmd = make_sickle_cmd(args, tmpdir)
+    trim_cmd = make_sickle_cmd(args)
     trim_res = subprocess.run(trim_cmd,
                                 shell=sys.platform != "win32",
                                 stdout=subprocess.PIPE,
@@ -1163,8 +1184,8 @@ def quality_trim_reads(args, tmpdir, config, reads_ns):
                        "Please examine the FastQC outputs...")
 
 
-def make_seqtk_ds_cmd(args, reads_ns, new_coverage, outdir, logger):
-    assert is_instance(new_coverage, int), "new_coverage must be an int"
+def make_seqtk_ds_cmd(args, reads_ns, new_coverage, outdir, config, logger):
+    assert isinstance(new_coverage, int), "new_coverage must be an int"
     frac = float(new_coverage / reads_ns.coverage)
     cmd_list = []
     logger.info("downsampleing to %f X  to %f X (%f)",
@@ -1189,10 +1210,10 @@ def downsample_reads(args, reads_ns, config, new_cov=100):
                  $ (number of bases in original reds)
                  $ (mean read length)
     """
-    ds_dir = os.path_join(tmpdir, "seqtk_dir", "")
+    ds_dir = os.path.join(tmp_dir, "seqtk_dir", "")
     os.makedirs(ds_dir)
-    ds_cmds = make_seqtk_ds_cmd(args, reads_ns, new_coverage=new_cov,
-                                outdir=ds_dir, logger=logger,)
+    ds_cmds = make_seqtk_ds_cmd(args=args, reads_ns=reads_ns, config=config,
+                                new_coverage=new_cov, outdir=ds_dir, logger=logger)
     for cmd in ds_cmds:
         subprocess.run(cmd,
                        shell=sys.platform != "win32",
@@ -1209,11 +1230,11 @@ def make_bwa_cmds(args, config, outdir, ref, reads_ns, fastq1, fastq2):
     returns a list of cmds and the path to the mapping file, as a tuple
     """
     cmd_list = []
-    index_cmd = "{0} index {1}  > {2} bwa_index.log 2>&1".format(
+    index_cmd = "{0} index {1}  > {2}bwa_index.log 2>&1".format(
         config.bwa, ref, outdir)
     cmd_list.append(index_cmd)
     # Use bwa-bwt for 'short' reads less than 100 bp, and bwa-mem for longer reads
-    if reads_ns.read_length <= 100:
+    if reads_ns.mean_read_length <= 100:
         cmdF = "{0} aln -t {1} {2} {3} > {4}read1.sai".format(
             config.bwa, args.threads, ref, fastq1, outdir)
         cmd_list.append(cmdF)
@@ -1242,16 +1263,17 @@ def make_bwa_cmds(args, config, outdir, ref, reads_ns, fastq1, fastq2):
     return (cmd_list, os.path.join(outdir, "mapping.sam"))
 
 
-def make_samtools_cmds(config, mapping, outdir, sorted_bam):
-    convert = str("{0} view -q 10 -Sb {1} 2>{2}samtoolsview.log | {0} sort - >" +
-                  "{3}",).format(
-                      config.samtools, mapping, outdir, sorted_bam)
+def make_samtools_cmds(config, sam, outdir, sorted_bam):
+    # removed the -q 10
+    convert = str("{0} view  -Shb {1} | {0} sort - >" +
+                  "{3}").format(
+                      config.samtools, sam, outdir, sorted_bam)
     index = str("{0} index {1} 2>{2}samtools_index.log").format(
                       config.samtools, sorted_bam, outdir)
     return [convert, index]
 
 
-def align_reads(dirname, downsample, logger):
+def align_reads(dirname, reads_ns,  downsample, args, config, logger):
     """
     Maps reads to reference using bwa
 
@@ -1262,17 +1284,18 @@ def align_reads(dirname, downsample, logger):
 
                : $ (0)
     """
-    align_dir = os.path_join(tmpdir, "align_" + dirname, "")
-    bwa_dir = os.path_join(align_dir, "bwa", "")
-    samtools_dir = os.path_join(tmpdir, "samtools" + dirname, "")
-    seqtk_dir = os.path_join(tmpdir, "seqtk" + dirname, "")
+    align_dir = os.path.join(args.tmp_dir, "align_" + dirname, "")
+    bwa_dir = os.path.join(align_dir, "bwa", "")
+    samtools_dir = os.path.join(args.tmp_dir, "samtools" + dirname, "")
+    seqtk_dir = os.path.join(args.tmp_dir, "seqtk" + dirname, "")
     for d in [align_dir, bwa_dir, samtools_dir, seqtk_dir]:
         os.makedirs(d)
     bwa_reference = os.path.join(bwa_dir, os.path.basename(args.reference))
     shutil.copyfile(args.reference, bwa_reference)
     if downsample:
         logger.info("Downsampling reads for insert-size estimation...")
-        ds_cmds = make_seqtk_ds_cmd(args, reads_ns, 10, outdir=seqtk_dir, logger=logger)
+        ds_cmds = make_seqtk_ds_cmd(args=args, reads_ns=reads_ns, config=config,
+                                new_coverage=10, outdir=seqtk_dir, logger=logger)
         for cmd in ds_cmds:
             subprocess.run(cmd,
                            shell=sys.platform != "win32",
@@ -1285,11 +1308,14 @@ def align_reads(dirname, downsample, logger):
         fastq1 = args.fastq1
         fastq2 = args.fastq2
     logger.info("BWA aligning reads vs $reference...")
-    bwa_cmds, mapping = make_bwa_cmds(args, config, outdir, ref=bwa_reference,
+    bwa_cmds, mapping_sam = make_bwa_cmds(args, config, outdir=bwa_dir, ref=bwa_reference,
                                       reads_ns=reads_ns, fastq1=fastq1,
                                       fastq2=fastq2)
-    samtools_cmds =  make_samtools_cmds(config, mapping, outdir, sorted_bam)
+    sorted_bam = os.path.splitext(mapping_sam)[0] + ".bam"
+    samtools_cmds =  make_samtools_cmds(config, sam=mapping_sam,
+                                        outdir=samtools_dir, sorted_bam=sorted_bam)
     for cmd in bwa_cmds + samtools_cmds:
+        logger.debug(cmd)
         subprocess.run(cmd,
                        shell=sys.platform != "win32",
                        stdout=subprocess.PIPE,
@@ -1298,17 +1324,17 @@ def align_reads(dirname, downsample, logger):
     return sorted_bam
 
 
-def make_picard_stats_command(bam, picard_outdir):
-    cmd = str("java -jar {0} . picard.jar CollectInsertSizeMetrics " +
+def make_picard_stats_command(bam, config, picard_outdir):
+    cmd = str("{0} CollectInsertSizeMetrics " +
               "INPUT={1} HISTOGRAM_FILE={2}insert_histogram.pdf " +
               "OUTPUT={2}insert_stats.txt QUIET=true VERBOSITY=ERROR " +
               "ASSUME_SORTED=true VALIDATION_STRINGENCY=LENIENT > " +
               "{2}CollectInsertMetrics.log 2>&1 ").format(
-                  config.picard_dir, bam, picard_outdir)
+                  config.picard, bam, picard_outdir)
     return(cmd, picard_outdir + "insert_stats.txt")
 
 
-def get_insert_stats(tmpdir, bam):
+def get_insert_stats(bam, reads_ns, args, config, logger):
     """
     converts contigs.sam -> bam, sorts, indexes and generates
     insert stats with Picard
@@ -1320,9 +1346,9 @@ def get_insert_stats(tmpdir, bam):
                    : $ (stddev)
     """
     logger.info("Collecting insert size statistics ")
-    stat_dir = os.path.join(tmpdir, "insert_stats")
+    stat_dir = os.path.join(args.tmp_dir, "insert_stats")
     os.makedirs(stat_dir)
-    pic_cmd, statfile = make_picard_stats_command(bam, picard_outdir=stat_dir)
+    pic_cmd, statfile = make_picard_stats_command(bam, config=config, picard_outdir=stat_dir)
     subprocess.run(pic_cmd,
                    shell=sys.platform != "win32",
                    stdout=subprocess.PIPE,
@@ -1342,10 +1368,36 @@ def get_insert_stats(tmpdir, bam):
     return (mean_insert, stddev_insert)
 
 
+def replace_placeholders(string, config, reads_ns, args, assembler):
+    replace_dict = {
+        "__BUGBUILDER_BIN__": "/$FindBin::Bin/g",
+        # "__ASMDIR__": os.path.dirname(config.assemblers[assembler['name']]),
+        "__TMPDIR__": args.tmp_dir,
+        "__FASTQ1__": args.fastq1,
+        "__FASTQ2__": args.fastq2,
+        "__ORIG_FASTQ1__": args.untrimmed_fastq1,
+        "__ORIG_FASTQ2__": args.untrimmed_fastq2,
+        "__DE_FERE_CONTIGS__": args.de_fere_contigs,
+        "__LONGFASTQ__": args.long_fastq,
+        "__REFERENCE__": args.reference,
+        "__CATEGORY__": reads_ns.lib_type,
+        "__ENCODING__": reads_ns.encoding,
+        "__GENOME_SIZE__": args.genome_size,
+        "__PLATFORM__": args.platform,
+        "__READ_LENGTH__": reads_ns.mean_read_length,
+        "__INSSIZE__": reads_ns.insert_mean,
+        "__INSSD__": reads_ns.insert_stddev,
+        "__THREADS__": args.threads
+    }
+    for k,v in replace_dict.items():
+        string = string.replace(k, str(v) if v is not None else "")
+    return string
+
+
 def main(args=None, logger=None):
     if args is None:
         args = get_args()
-    assembler_list = match_assembler_args(
+    assemblers_list = match_assembler_args(
         assembler=args.assemblers,
         assembler_args=args.assembler_args)
     check_file_paths(args)
@@ -1382,70 +1434,85 @@ def main(args=None, logger=None):
     config_path = get_config_path()
     logger.debug("config_path: %s", config_path)
     config = return_config(config_path, force=args.configure)
-    print(config)
-    tmpdir = setup_tmpdir(args, output_root=outdir)
+    logger.debug(config)
+    setup_tmp_dir(args, output_root=outdir)
     if args.reference is None:
         refernece = None
     else:
         reference = os.path.basename(args.reference)
     #  need to know a bit about the provided reads so we can act appropriately
+    # copy paths to raw reads in case we need them for mascura
+    args.untrimmed_fastq1 = args.fastq1
+    args.untrimmed_fastq2 = args.fastq2
     reads_ns  = assess_reads(args=args, config=config, platform=args.platform,
-                                    tmpdir=tmpdir, logger=logger)
-    print(reads_ns)
+                             logger=logger)
+    logger.debug(reads_ns)
     check_ref_needed(args=args, lib_type=reads_ns.lib_type)
     tools = select_tools(args, paired=PAIRED, config=config, reads_ns=reads_ns)
 
-    ################################################################
     downsample_reads = get_downsampling(args, config)
     if not args.skip_fastqc and config.fastqc is not None:
-       run_fastqc(reads_ns, tmpdir, logger=None)
+       run_fastqc(reads_ns, args, logger=logger)
     if reads_ns.mean_read_length is not None:
         if reads_ns.mean_read_length < 50 and reads_ns.mean_read_length < args.trim_length:
             logger.info("trim-length reset to 25 due to mean read length: %i",
                         reads_ns.mean_read_length)
             args.trim_length = 25
-    if reads_ns.lib_type == "long" or args.skip_trim_reads:
-        quality_trim_reads(args, tmpdir, config, reads_ns)
+    if reads_ns.lib_type == "long" or args.skip_trim:
+        quality_trim_reads(args, config, reads_ns)
     if (reads_ns.coverage is not None and reads_ns.coverage > 100) and \
        (downsample_reads or args.downsample):
-        downsampled_coverage = downsample_reads(args, reads_ns, config, new_cov=100)
-
+        downsampled_coverage = downsample_reads(args=args, reads_ns=reads_ns,
+                                                config=config, new_cov=100)
+    else:
+        downsampled_coverage = None
     if args.fastq2 and args.reference:
-        sorted_bam = align_reads(dirname, downsample=True, logger=logger)
-        insert_size, stddev  = get_insert_stats(tmpdir, bam=sorted_bam)
-    paired_str = "Paired" if paired else "Fragment"
+        sorted_bam = align_reads(dirname="align", reads_ns=reads_ns,
+                                 config=config, downsample=True, args=args, logger=logger)
+        reads_ns.insert_mean, reads_ns.insert_stddev = get_insert_stats(
+            bam=sorted_bam, config=config, args=args, reads_ns=reads_ns, logger=logger)
+    paired_str = "Paired" if PAIRED else "Fragment"
     read_table=[
         ["Mean Read Length", reads_ns.mean_read_length],
         ["Read Length Standard Deviation", reads_ns.read_length_stddev ],
-        ["Insert size", reads_ns.insert_size],
-        ["Insert size Standard Deviation", reads_ns.stddev],
+        ["Insert size", reads_ns.insert_mean],
+        ["Insert size Standard Deviation", reads_ns.insert_stddev],
         ["Mean Long Read Length", reads_ns.mean_long_read_length],
         ["Mean Long Read Standard Deviation", reads_ns.long_read_length_stddev],
-        ["Library type", reads_ns.paired_str],
-        ["Platform", platform],
+        ["Library type", paired_str],
+        ["Platform", args.platform],
         ["Quality Encoding", reads_ns.encoding],
         ["Projected Coverage", str(reads_ns.coverage) + "x"],
         ["Projected Coverage (Downsampled)", str(downsampled_coverage) + "x"],
         ["Projected Long Read Coverage", str(reads_ns.long_read_coverage) + "x"]
         ]
-    print (tabulate(read_table))
+    print("LIBRARY DETAILS")
+    print(tabulate.tabulate(read_table))
 
+    ################################################################
     # $tb = Text::ASCIITable->new( { 'headingText' => 'Assembly Information' } );
     # $tb->setCols( 'Aaaaaaaaargh', 'Phwwwwwwweb' );
     # $tb->setOptions( { 'hide_HeadRow' => 1 } );
     # $tb->alignCol( 'Aaaaaaaaargh', 'left' );
     # $tb->alignCol( 'Phwwwwwwweb',  'left' );
-    #  "Assembly category",        reads_nstype );
-    #  "Selected assemblers",      join( ",", @assemblers ) );
-    #  "Selected assembly merger", reads_nsmerge_method ) if (reads_nsmerge_method);
-    #  "Selected scaffolder",      reads_nsscaffolder ) if (reads_nsscaffolder);
-    #  "Selected finisher",        reads_nsfinisher ) if (reads_nsfinisher);
-    #  "Selected variant caller",  reads_nsvarcall ) if (reads_nsvarcall);
-    #  "Trim QV",                  reads_nstrim_qv ) if (reads_nstrim_reads);
-    #  "Trim length",              reads_nstrim_length ) if (reads_nstrim_reads);
-    #  "Split Origin",             $split_origin );
-#     print "$tb\n";
-
+    run_table = [
+        ["Assembly category",        reads_ns.lib_type],
+        ["Selected assemblers",      " ".join(args.assemblers)],
+        ["Selected assembly merger", args.merge_method],
+        ["Selected scaffolder",      args.scaffolder],
+        ["Selected finisher",        args.finisher],
+        ["Selected variant caller",  args.varcaller],
+        ["Trim QV",                  args.trim_qv],
+        ["Trim length",              args.trim_length],
+        ["Split Origin",             not args.skip_split_origin]
+    ]
+    print("ASSEMBLER DETAILS")
+    print(tabulate.tabulate(run_table))
+    if args.assemblies is None:
+        for assembler, assembler_args in assemblers_list:
+            run_assembler(
+                assembler=assembler, assembler_args=assembler_args,
+                args=args, reads_ns=reads_ns, config=config, logger=logger)
 #     my $pm = new Parallel::ForkManager(2);
 #     my $id_ok = 1;
 #     if ( !$already_assembled ){
@@ -1755,114 +1822,64 @@ def main(args=None, logger=None):
 
 
 
+def get_assembler_cmds(assembler, assembler_args, args, config, reads_ns):
+    # get the proper running command
+    if reads_ns.lib_type == "hybrid":
+        cmd = assembler['command_hybrid']
+    elif reads_ns.lib_type == "de_fere":
+        cmd = assembler['command_hybrid']
+    elif args.fastq2 is None:
+        cmd = assembler['command_pe']
+    else:
+        cmd = assembler['command_se']
+    # add args
+    if assembler_args:
+        cmd = cmd + " " + assembler_args
+    elif assembler['default_args']:
+        cmd = cmd + " " + assembler['default_args']
+    # get output name
+    contig_output = assembler['contig_output']
+    scaffold_output = assembler['scaffold_output'] if assembler['scaffold_output'] else None
+    CREATE = assembler['create_dir']
+    if CREATE:
+        os.makedirs(os.path.join(args.tmp_dir, assembler['name']))
+    cmd = replace_placeholders(string=cmd, config=config, args=args,
+                               reads_ns=reads_ns, assembler=assembler)
+    cmd = cmd + " > {0}/{1}.log 2>&1".format(args.tmp_dir, assembler['name'])
+    return cmd
 
-# #######################################################################
-# #
-# # run_assembler
-# #
-# # Runs specified assembler on fastq files
-# #
-# # required params: $ (tmpdir)
-# #                  $ (assembler name)
-# #                  $ (reference fasta sequece - probably not needed)
-# #                  $ (arguments to pass to assembler)
-# #                  $ (link - flag to indicate contigs should be symlinked into tmpdir)
-# #                  $ (category - type of assembly to run, since an assembler may fall into more
-# #                  than one category)
-# #                  $ (encoding - some assemblers need explicitly telling)
-# #                  $ (genome size)
-# #                  $ (average read length)
-# #	           $ (insert size)
-# #                  $ (insert size stddev)
-# #
-# # returns          $ (0)
-# #
-# #######################################################################
 
-# sub run_assembler {
+def run_assembler(assembler, assembler_args, args, reads_ns,config, logger):
+    """
+    Runs specified assembler on fastq files
 
-#     my $tmpdir      = shift;
-#     my $assembler   = shift;
-#     my $reference   = shift;
-#     my $args        = shift;
-#     my $link        = shift;
-#     my $category    = shift;
-#     my $encoding    = shift;
-#     my $genome_size = shift;
-#     my $platform    = shift;
-#     my $read_length = shift;
-#     my $insert_size = shift;
-#     my $stddev      = shift;
-#     my $threads     = shift;
-
-#     my ( $cmd, $contig_output, $scaffold_output, $create );
-
-#     my $assemblers = $config->{'assemblers'};
-#     foreach my $conf_assembler (@$assemblers) {
-#         if ( $conf_assembler->{'name'} eq $assembler ) {
-#             if ( $category eq 'hybrid' ) {
-#                 $cmd = $conf_assembler->{'command_hybrid'};
-#             }
-#             elsif ( $category eq 'de_fere' ) {
-#                 $cmd = $conf_assembler->{'command_de_fere'};
-#             }
-#             elsif ( -e "$tmpdir/read2.fastq" ) {
-#                 $cmd = $conf_assembler->{'command_pe'};
-#             }
-#             else {
-#                 $cmd = $conf_assembler->{'command_se'};
-#             }
-#             if ($args) {
-#                 $cmd .= " $args";
-#             }
-#             elsif ( $conf_assembler->{'default_args'} ) {
-#                 $cmd .= " " . $conf_assembler->{'default_args'};
-#             }
-#             $contig_output   = $conf_assembler->{'contig_output'};
-#             $scaffold_output = $conf_assembler->{'scaffold_output'}
-#               if ( $conf_assembler->{'scaffold_output'} );
-#             $create = $conf_assembler->{'create_dir'};
-#         }
-#     }
-#     die "Assembler $assembler is not defined" unless ($cmd);
-
-#     if ($create) {
-#         mkdir "$tmpdir/$assembler"
-#           or die "could not create $tmpdir/$assembler: $! ";
-#         chdir "$tmpdir/$assembler"
-#           or die "could not chdir to $tmpdir/$assembler: $! ";
-#     }
-
-#     if ( $reference && !$genome_size ) {
-#         my $io = Bio::SeqIO->new( -file => "$tmpdir/$reference", -format => 'fasta' );
-#         while ( my $ref = $io->next_seq() ) {
-#             $genome_size += $ref->length();
-#         }
-#     }
-#     my $asm_dir = $config->{"${assembler}_dir"};
-#     foreach ( $cmd, $contig_output, $scaffold_output ) {
-#         s/__BUGBUILDER_BIN__/$FindBin::Bin/g;
-#         s/__ASMDIR__/$asm_dir/;
-#         s/__TMPDIR__/$tmpdir/g;
-#         s/__FASTQ1__/$tmpdir\/read1.fastq/;
-#         s/__FASTQ2__/$tmpdir\/read2.fastq/;
-#         s/__ORIG_FASTQ1__/$tmpdir\/orig_read1.fastq/;
-#         s/__ORIG_FASTQ2__/$tmpdir\/orig_read2.fastq/;
-#         s/__DE_FERE_CONTIGS__/$tmpdir\/de_fere_contigs.fasta/;
-#         s/__LONGFASTQ__/$tmpdir\/long.fastq/;
-#         s/__REFERENCE__/$reference/ if ($reference); #
-#         s/__CATEGORY__/$category/;
-#         s/__ENCODING__/$encoding/;
-#         s/__GENOME_SIZE__/$genome_size/ if defined($genome_size);
-#         s/__PLATFORM__/$platform/       if ($platform);
-#         s/__READ_LENGTH__/$read_length/ if ($read_length);
-#         s/__INSSIZE__/$insert_size/     if ($insert_size);
-#         s/__INSSD__/$stddev/            if ($stddev);
-#         s/__THREADS__/$threads/;
-#     }
-
-#     $cmd .= " > $tmpdir/$assembler.log 2>&1 ";
-
+    required params: $ (tmpdir)
+                 $ (assembler name)
+                 $ (reference fasta sequece - probably not needed)
+                 $ (arguments to pass to assembler)
+                 $ (link - flag to indicate contigs should be symlinked into tmpdir)
+                 $ (category - type of assembly to run, since an assembler may fall into more
+                 than one category)
+                 $ (encoding - some assemblers need explicitly telling)
+                 $ (genome size)
+                 $ (average read length)
+	           $ (insert size)
+                 $ (insert size stddev)
+    returns          $ (0)
+    """
+    assembler = [x for x in config.assemblers if x['name'] == assembler]
+    assert len(assembler) == 1, "multiple matches for assemblers"
+    assembler = assembler[0]
+    assembler_cmd = get_assembler_cmds(assembler=assembler,
+                                       assembler_args=assembler_args,
+                                       args=args,
+                                       config=config, reads_ns=reads_ns)
+    logger.debug(assembler_cmd)
+    subprocess.run(assembler_cmd,
+                   shell=sys.platform != "win32",
+                   stdout=subprocess.PIPE,
+                   stderr=subprocess.PIPE,
+                   check=True)
 #     message(" Starting $assembler assembly ... ");
 #     system($cmd) == 0 or die "Error running $cmd: $! ";
 
