@@ -52,7 +52,7 @@ class test_BugBuilder(unittest.TestCase):
     def test_make_fastqc_cmd(self):
         test_args = Namespace(fastq1="reads1.fastq", fastq2="reads2.fastq",
                               long_fastq=None, threads=7)
-        ref_cmd = "fastqc -t 7 -o ./outdir/ reads1.fastq reads2.fastq > " + \
+        ref_cmd = "fastqc -t 7 --extract -o ./outdir/ reads1.fastq reads2.fastq > " + \
                   "./outdir/fastqc.log 2>&1"
         cmd = bb.make_fastqc_cmd(args=test_args, fastqc_dir="./outdir/")
         self.assertEqual(ref_cmd, cmd)

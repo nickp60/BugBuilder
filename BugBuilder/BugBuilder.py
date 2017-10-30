@@ -22,16 +22,12 @@ __config_data__ = \
 # User Guide for details of the dependencies which need to be installed.
 #
 ######################################################################
----
 # tmp_dir specifies the location on the machine where working directories will be created
-tmp_dir: <TMPL_VAR NAME=TMP_DIR>
+tmp_dir: null
 # java specifies the java binary
-java: <TMPL_VAR NAME=JAVA>
+java: null
 # number of parallel threads to run
-threads: <TMPL_VAR NAME=THREADS>
-<TMPL_VAR NAME=INSTALL_PATHS>
-
-<TMPL_VAR NAME=APPEND_PATH>
+threads: 4
 
 # Definition of assembly categories, and platforms
 # These are used for automated assembler selection based on assesment of the
@@ -327,15 +323,16 @@ import shutil
 import logging
 import statistics
 import pkg_resources
+import tabulate
 
 from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
-
+from argparse import Namespace
 # def parse_config():
 #     pass
 
-def parse_available_platforms(config):
-    platform_list = ["short_illumina", "long_illumina", "de_fere"]
+def parse_available_platforms():
+    platform_list = ["illumina", "454", "iontorrent"]
     return platform_list
 
 
@@ -351,40 +348,44 @@ def parse_available_scaffolders():
 
 def parse_available_mergers():
     mergers_list = ["gfinisher"]
-    return mergers
+    return mergers_list
 
 
-def parse_available_finishing():
+def parse_available_finisher():
     finishers = ["gapfiller"]
     return finishers
 
 
 def parse_available_varcaller():
-    finishers = ["pilon"]
-    return finishers
+    varcallers = ["pilon"]
+    return varcallers
 
 
 def configure(config_path):
-    programs = [
-        'fastqc', 'sickle', 'seqtk', 'samtools', 'picard' , 'sis', 'mauve',
+    mand_programs = [
+        'fastqc', 'sickle', 'seqtk', 'samtools', 'picard',
         'R', 'barrnap', 'prokka', 'aragorn', 'prodigal', 'hmmer3', 'rnammer',
         'mummer', 'infernal', 'blast', 'bwa', 'tbl2asn', 'abyss', 'spades',
         'celera','gapfiller', 'sspace', 'asn2gb', 'amos' , 'masurca', 'gfinisher',
         'pilon', 'vcflib', 'cgview']
+    opt_programs = ['sis', 'mauve']
+    programs = mand_programs + opt_programs
     program_dict = dict((k, None) for k in programs)
     for prog in programs:
         if shutil.which(prog):
             program_dict[prog] = shutil.which(prog)
-    with open(config_path, 'w') as outfile:
-        outfile.write("STATUS: COMPLETE\n")
-    with open(config_path, 'a') as outfile:
+    with open(config_path, 'w') as outfile:  # write header and config params
+        for line in __config_data__:
+            outfile.write(line)
+    with open(config_path, 'a') as outfile:  # write paths to exes
         yaml.dump(program_dict, outfile, default_flow_style=False)
 
 
-def return_config(config_path):
+def return_config(config_path, force=False):
+    if force:
+        configure(config_path)
     config = parse_config(config_path)
     if config.STATUS != "COMPLETE":
-        configure(config_path)
         config = parse_config(config_path)
     return config
 
@@ -398,20 +399,25 @@ def get_args():  # pragma: no cover
         "bacterial genomes with reference guided scaffolding and annotation." +
         "Please see accompanying userguide for full documentation",
         add_help=False)  # to allow for custom help
-    parser.add_argument("contigs", action="store",
-                        help="either a (multi)fasta or a directory " +
-                        "containing one or more chromosomal " +
-                        "sequences in fasta format")
-
     # taking a hint from http://stackoverflow.com/questions/24180527
     requiredNamed = parser.add_argument_group('required named arguments')
     requiredNamed.add_argument("--platform", dest='platform', action="store",
                                help="Sequencing platform  used i.e. illumina, 454, iontorrent",
-                               choices=parse_available_platforms,
+                               choices=parse_available_platforms(),
                                type=str, required=True)
-    requiredNamed.add_argument("-o", "--output", dest='output', action="store",
+    requiredNamed.add_argument("-o", "--output", dest='outdir', action="store",
                                help="output directory; " +
                                "default: %(default)s", default=os.getcwd(),
+                               type=str, required=True)
+    requiredNamed.add_argument("--assemblers", dest='assemblers', action="store",
+                               help="Assembler(s) to run - may be specified twice" +
+                               ", in which case the two assemblers will be run " +
+                               "in parallel and the results merged using minimus." +
+                               " If no assembler is specified, BugBuilder will " +
+                               "try to select an appropriate assembler " +
+                               "automatically",
+                               choices=parse_available_assemblers(),
+                               nargs="*",
                                type=str, required=True)
 
     optional = parser.add_argument_group('optional arguments')
@@ -436,17 +442,7 @@ def get_args():  # pragma: no cover
                           action="store",
                           help="Prefix to use for output file naming",
                           type=str)
-    optional.add_argument("--assemblers", dest='assemblers', action="store",
-                          help="Assembler(s) to run - may be specified twice" +
-                          ", in which case the two assemblers will be run " +
-                          "in parallel and the results merged using minimus." +
-                          " If no assembler is specified, BugBuilder will " +
-                          "try to select an appropriate assembler " +
-                          "automatically",
-                          choices=parse_available_assemblers,
-                          nargs="*",
-                          type=str)
-    optional.add_argument("--assembler-args", dest='assembler-args',
+    optional.add_argument("--assembler-args", dest='assembler_args',
                           action="store",
                           help="Any additional arguments to pass to the " +
                           "assembler. Default values are set in the " +
@@ -459,7 +455,7 @@ def get_args():  # pragma: no cover
                           type=str)
     optional.add_argument("--scaffolder", dest='scaffolder', action="store",
                           help="scaffolder to use",
-                          choices=parse_available_scaffolders,
+                          choices=parse_available_scaffolders(),
                           type=str)
     optional.add_argument("--assemlber-args", dest='scaffolder-args',
                           action="store",
@@ -468,16 +464,16 @@ def get_args():  # pragma: no cover
                           type=str)
     optional.add_argument("--merge-method", dest='merge_method', action="store",
                           help="merge method to use",
-                          choices=parse_available_mergers,
+                          choices=parse_available_mergers(),
                           type=str)
     optional.add_argument("--finisher", dest='finisher', action="store",
                           help="finisher to use",
-                          choices=parse_available_finisher,
+                          choices=parse_available_finisher(),
                           nargs="*",
                           type=str)
     optional.add_argument("--varcaller", dest='varcaller', action="store",
                           help="varcaller to use",
-                          choices=parse_available_varcaller,
+                          choices=parse_available_varcaller(),
                           nargs="*",
                           type=str)
     optional.add_argument("--insert-size", dest='insert_size', action="store",
@@ -498,7 +494,7 @@ def get_args():  # pragma: no cover
                           help="genus of your bug", default="unknown_genus",
                           type=str)
     optional.add_argument("--strain", dest='strain', action="store",
-                          help="strain of your bug", defualt="unknown_strain",
+                          help="strain of your bug", default="unknown_strain",
                           type=str)
     optional.add_argument("--locustag", dest='locustag', action="store",
                           help="locus tag prefix for prokka",
@@ -543,6 +539,8 @@ def get_args():  # pragma: no cover
     optional.add_argument("--scratchdir", dest='scratchdir', action="store",
                           help="dir for results",
                           type=str)
+    optional.add_argument("--configure", dest='configure', action="store_true",
+                          help="whether to reconfigure ")
     optional.add_argument("-v", "--verbosity", dest='verbosity',
                           action="store",
                           default=2, type=int, choices=[1, 2, 3, 4, 5],
@@ -559,14 +557,57 @@ def get_args():  # pragma: no cover
     return args
 
 
+def set_up_logging(verbosity, outfile, name):
+    """
+    Set up logging a la pyani, with
+    a little help from:
+    https://aykutakin.wordpress.com/2013/08/06/
+        logging-to-console-and-file-in-python/
+    requires logging, os, sys, time
+    logs debug level to file, and [verbosity] level to stderr
+    return a logger object
+    """
+    logger = logging.getLogger('root')
+    if (verbosity * 10) not in range(10, 60, 10):
+        raise ValueError('Invalid log level: %s' % verbosity)
+    # logging.basicConfig(level=logging.DEBUG)
+    logger.setLevel(logging.DEBUG)
+    # create console handler and set level to given verbosity
+    console_err = logging.StreamHandler(sys.stderr)
+    console_err.setLevel(level=(verbosity * 10))
+    console_err_format = logging.Formatter(str("%(asctime)s - " +
+                                               "%(levelname)s - %(message)s"),
+                                           "%Y-%m-%d %H:%M:%S")
+    console_err.setFormatter(console_err_format)
+    logger.addHandler(console_err)
+    # create debug file handler and set level to debug
+    try:
+        logfile_handler = logging.FileHandler(outfile, "w")
+        logfile_handler.setLevel(logging.DEBUG)
+        logfile_handler_formatter = \
+            logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+        logfile_handler.setFormatter(logfile_handler_formatter)
+        logger.addHandler(logfile_handler)
+    except:
+        logger.error("Could not open {0} for logging".format(outfile))
+        sys.exit(1)
+    logger.debug("Initializing logger")
+    logger.debug("logging at level {0}".format(verbosity))
+    return logger
+
+
 def match_assembler_args(assembler, assembler_args):
     """these will both be lists coming off of argparse
     """
-    assert len(assembler) == len(assembler_args), \
-        "length of assemblers must equal length of assembler args"
     assembler_list = []
-    for i, v in enumerate(assembler):
-        assembler_list.append([v, assembler_args[i]])
+    if assembler is not None and assembler_args is not None:
+        assert len(assembler) == len(assembler_args), \
+            "length of assemblers must equal length of assembler args"
+        for i, v in enumerate(assembler):
+            assembler_list.append([v, assembler_args[i]])
+    else:
+        for i, v in enumerate(assembler):
+            assembler_list.append([v, None])
     return assembler_list
 
 
@@ -582,11 +623,11 @@ def check_file_paths(args):
          if not os.path.exists(args.reference):
              raise ValueError(
                  "reference sequence %s does not exist!" % args.reference )
-    if args.merge-method is None and len(args.assemblers) > 1:
+    if args.merge_method is None and len(args.assemblers) > 1:
         raise ValueError("Must provide merge method if using multiple assemblers")
 
-def setup_tempdir(args, output_root):
-    """  setup_tempdir creates a temporary directory and copies
+def setup_tmpdir(args, output_root):
+    """  setup_tmpdir creates a temporary directory and copies
     over the relevent files
 
     requried params: $ (path to fastq1)
@@ -594,15 +635,15 @@ def setup_tempdir(args, output_root):
                   $ (path to longread fastq file)
                   $ (path to fastafile)
     optional params: $ (platform)
-                  $ (preset value for tempdir)
+                  $ (preset value for tmpdir)
 
-    returns        : $ (path to tempdir)
+    returns        : $ (path to tmpdir)
 
     """
-    if args.tmpdir is None:
+    if args.tmp_dir is None:
         scratch_dir = os.path.join(output_root, "temp_dir")
     else:
-        scratch_dir = args.tmpdir;
+        scratch_dir = args.tmp_dir;
 
     print("Created working directory: %s" % scratch_dir)
     try:
@@ -610,10 +651,10 @@ def setup_tempdir(args, output_root):
     except OSError:
         print("Temp directory already exists; exiting...")
         sys.exit(1)
-    # copy to temp dir
+    # copy to tmp dir
     for f in [args.fastq1, args.fastq2, args.long_fastq,
               args.de_fere_contigs, args.reference]:
-        if os.path.exists(f):
+        if f is not None and os.path.exists(f):
             newpath = os.path.join(scratch_dir, os.path.basename(f))
             shutil.copyfile(f, newpath)
             # does this even work?
@@ -668,16 +709,16 @@ def get_read_len_from_fastq(fastq1, logger=None):
         data = SeqIO.parse(file_handle, "fastq")
         for read in data:
             lengths.append(len(read))
+    tot = sum(lengths)
     if logger:
-        logger.info(str("From the first {0} reads in {1}, " +
-                        "mean length is {2}").format(N,
-                                                     os.path.basename(fastq1),
-                                                     float(tot / count)))
+        logger.info("mean read length is {0} in {1}".format(
+            os.path.basename(fastq1),
+            float(tot / len(lengths))))
     file_handle.close()
     return (lengths)
 
 
-def id_fastq_encoding(tempdir):
+def id_fastq_encoding(args, tmpdir):
     """
     Identifies fastq quality encoding type, based upon the information
     at http://en.wikipedia.org/wiki/FASTQ_format:
@@ -704,7 +745,7 @@ def id_fastq_encoding(tempdir):
     """
     min_val = 104;
     max_val = 0;
-    if os.path.exists(args.long_fastq):
+    if args.long_fastq is not None and os.path.exists(args.long_fastq):
         target = args.long_fastq
     else:
         target = args.fastq1
@@ -735,7 +776,7 @@ def id_fastq_encoding(tempdir):
     return encoding
 
 
-def assess_reads(args, conf, platform, tempdir, logger=None):
+def assess_reads(args, config, platform, tmpdir, logger=None):
     """
     Determine some characteristics of the provided reads. Need to determine
     the mean read length, wheterh they are variable length or not, and the
@@ -756,6 +797,7 @@ def assess_reads(args, conf, platform, tempdir, logger=None):
     my ( @mean, @stddev, $long_mean, $long_stddev, $tot_length, $long_tot_length );
     """
     logger.info("Checking reads...");
+    counts = []
     means = []
     stddevs = []
     long_mean = 0
@@ -765,8 +807,8 @@ def assess_reads(args, conf, platform, tempdir, logger=None):
     # get the lengths of all the short reads
     type_list = ["short", "short", "long"]
     for i, read in enumerate([args.fastq1, args.fastq2, args.long_fastq]):
-        if not os.path.exists(read):
-            next
+        if  read is None or not os.path.exists(read):
+            continue
         lengths = get_read_len_from_fastq(read, logger=logger)
         if type_list[i] == "long":
             tot_long_length = tot_long_length + sum(lengths)
@@ -778,11 +820,11 @@ def assess_reads(args, conf, platform, tempdir, logger=None):
         if type_list[i] == "long":
             long_count = len(lengths)
             long_mean = statistics.mean(lengths)
-            long_stddev = statistics.stddev(lengths)
+            long_stddev = statistics.stdev(lengths)
         else:
             counts.append(len(lengths))
             means.append(statistics.mean(lengths))
-            stddevs.append(statistics.stddev(lengths))
+            stddevs.append(statistics.stdev(lengths))
 
     # ensure paired reads have same numebr of reads
     if len(counts) > 1:
@@ -796,8 +838,8 @@ def assess_reads(args, conf, platform, tempdir, logger=None):
     lib_type = None
     for category in config.assembler_categories:
         if platform is not None:
-            if platform == category.platform:
-                lib_type = category.name
+            if platform in category['platforms']:
+                lib_type = category['name']
         if lib_type == None:  # if that failed, try setting according to read length
             if mean > category.min_length and mean <= category.max_length:
                 lib_type = category.name
@@ -812,17 +854,22 @@ def assess_reads(args, conf, platform, tempdir, logger=None):
     long_coverage = 0
 
     # not making a new one here
-    if os.path.exists(args.reference):
-        with open(args.reference, "r") as inf:
-            for rec in SeqIO.parse(inf, "fasta"):
-                args.genome_size = args.genome_size + len(rec.seq)
+
+    if args.genome_size is None:
+        args.genome_size = 0
+        if args.reference is not None and os.path.exists(args.reference):
+            with open(args.reference, "r") as inf:
+                for rec in SeqIO.parse(inf, "fasta"):
+                    print(rec)
+                    args.genome_size = args.genome_size + len(rec.seq)
+    print(args.genome_size)
+    coverage, long_coverage = 0, 0
     try:
         coverage = tot_length / args.genome_size
         long_coverage = long_tot_length / args.genome_size
     except:
-        logger.error("error calculating coverage!")
-        sys.exit(1)
-    encoding = id_fastq_encoding(tmpdir)
+        logger.warning("error calculating coverage!")
+    encoding = id_fastq_encoding(args, tmpdir)
     return Namespace(lib_type=lib_type, encoding=encoding, mean_read_length=mean,
                      read_length_stddev=stddev,
                      mean_long_read_length=long_mean,
@@ -857,13 +904,14 @@ def parse_config(config_file):
     return(newns)
 
 
-def get_assemblers(args, config, paired):
+def get_assemblers(args, config, paired, reads_ns):
     if len(args.assemblers) > 2:
         raise ValueError("A maximum of 2 assemblers can be requested")
     # sanity check assemblers where these have been manually requested...
     for assembler in args.assemblers:
         assembler_name = os.path.basename(assembler)
-        if shutil.which(assembler) is None:
+        if shutil.which(assembler) is None and \
+           shutil.which(assembler + ".py") is None:
             raise ValueError("%s is nt in PATH! exiting" % assembler)
     # If no assembler is requested, we need to select one based on the
     # 'assembly_type' from the configuration file....
@@ -874,25 +922,25 @@ def get_assemblers(args, config, paired):
     # then check the requested assemblers are appropriate for
     # the sequence characteristics...
     for assembler in args.assemblers:
-        assemblers = config.assemblers
-        for conf_assembler in assemblers:
-            if conf_assembler.name != assembler:
+        for conf_assembler in config.assemblers:
+            if conf_assembler['name'] != assembler:
                 continue
-            if paired and conf_assembler.command_se:
-                raise ValueError("%s requires paired reads, but you only " +
-                                 "specified one fastq file..." % assembler)
-            if conf_assembler.min_length and reads_ns.read_length < conf_assembler.min_length:
-                raise ValueError("%s does not support reads less than %d" % \
-                                 (assembler, conf_assembler.min_length))
-            if conf_assembler.max_length and reads_ns.read_length > conf_assembler.max_length:
+            print(assembler)
+            if not paired and conf_assembler['command_se']:
+                raise ValueError(str("%s requires paired reads, but you only " +
+                                 "specified one fastq file...") % assembler)
+            # if conf_assembler['min_length'] and reads_ns.mean_read_length < conf_assembler['min_length']:
+            #     raise ValueError("%s does not support reads less than %d" % \
+            #                      (assembler, conf_assembler.min_length))
+            if conf_assembler['max_length'] and reads_ns.mean_read_length > conf_assembler['max_length']:
                 raise ValueError("%s does not support reads greather than %d" % \
                                  (assembler, conf_assembler.max_length))
-            if conf_assembler.max_length and reads_ns.read_length > conf_assembler.max_length:
-                raise ValueError("%s requires the library insert size and " +
+            if conf_assembler['max_length'] and reads_ns.mean_read_length > conf_assembler['max_length']:
+                raise ValueError(str("%s requires the library insert size and " +
                                  "stddev to be provided. Please add the " +
                                  "--insert-size and --insert-stddev " +
                                  "parameters, or provide a reference " +
-                                 "sequence" % assembler)
+                                 "sequence") % assembler)
 
 
 def get_scaffolder_and_linkage(args, config, paired):
@@ -951,9 +999,8 @@ def get_varcaller(args, config, paired):
                                  args.varcaller)
 
 
-def select_tools(args, paired, config):
+def select_tools(args, paired, config, reads_ns):
     """
-    select_tools
     options, while checking for validity of selections...
 
     required params: $ ($config hash ref)
@@ -971,7 +1018,7 @@ def select_tools(args, paired, config):
                  $ (name of scaffolder to use)
 
     """
-    get_assemblers(args, config, paired)
+    get_assemblers(args=args, config=config, paired=paired, reads_ns=reads_ns)
     args.scaffolder, linkage_evidence = get_scaffolder_and_linkage(
         args=args, config=config, paired=paired)
 
@@ -991,7 +1038,7 @@ def select_tools(args, paired, config):
 def get_downsampling(args, config):
     assembler_conf = config.assemblers
     for conf_assembler in config.assemblers:
-        if conf_assembler.name in args.assemblers:
+        if conf_assembler['name'] in args.assemblers:
             return True
     return False
 
@@ -1117,13 +1164,13 @@ def quality_trim_reads(args, tmpdir, config, reads_ns):
 
 
 def make_seqtk_ds_cmd(args, reads_ns, new_coverage, outdir, logger):
-    assert is_instance(new_coverage, int), "new_coverage must be an int")
+    assert is_instance(new_coverage, int), "new_coverage must be an int"
     frac = float(new_coverage / reads_ns.coverage)
     cmd_list = []
     logger.info("downsampleing to %f X  to %f X (%f)",
                 reads_ns.coverage, new_coverage , frac )
     for reads in [args.fastq1, args.fastq2]:
-        if os.path.exists(reads):
+        if reads is not None and os.path.exists(reads):
             cmd_list.append("{0} sample -s 100 {1} {2} > {3}".format(
                 config.seqtk,  reads, frac,
                 os.path.join(outdir, os.path.basename(reads))))
@@ -1251,7 +1298,51 @@ def align_reads(dirname, downsample, logger):
     return sorted_bam
 
 
-def main(args):
+def make_picard_stats_command(bam, picard_outdir):
+    cmd = str("java -jar {0} . picard.jar CollectInsertSizeMetrics " +
+              "INPUT={1} HISTOGRAM_FILE={2}insert_histogram.pdf " +
+              "OUTPUT={2}insert_stats.txt QUIET=true VERBOSITY=ERROR " +
+              "ASSUME_SORTED=true VALIDATION_STRINGENCY=LENIENT > " +
+              "{2}CollectInsertMetrics.log 2>&1 ").format(
+                  config.picard_dir, bam, picard_outdir)
+    return(cmd, picard_outdir + "insert_stats.txt")
+
+
+def get_insert_stats(tmpdir, bam):
+    """
+    converts contigs.sam -> bam, sorts, indexes and generates
+    insert stats with Picard
+
+    required params: $ (tmp directory);
+                      $ (reference);
+
+    returns        : $ (insert size)
+                   : $ (stddev)
+    """
+    logger.info("Collecting insert size statistics ")
+    stat_dir = os.path.join(tmpdir, "insert_stats")
+    os.makedirs(stat_dir)
+    pic_cmd, statfile = make_picard_stats_command(bam, picard_outdir=stat_dir)
+    subprocess.run(pic_cmd,
+                   shell=sys.platform != "win32",
+                   stdout=subprocess.PIPE,
+                   stderr=subprocess.PIPE,
+                   check=True)
+    get_next = False
+    with open(statfile, "r") as inf:
+        for line in inf:
+            if get_next:
+                min_insert = line.split("\t")[2]
+                max_insert = line.split("\t")[3]
+                mean_insert = line.split("\t")[4]
+                stddev_insert = line.split("\t")[5]
+                break
+            if "MEDIAN" in line:
+                get_next=True
+    return (mean_insert, stddev_insert)
+
+
+def main(args=None, logger=None):
     if args is None:
         args = get_args()
     assembler_list = match_assembler_args(
@@ -1259,7 +1350,9 @@ def main(args):
         assembler_args=args.assembler_args)
     check_file_paths(args)
 
-    seq_ids = [x.id for x in  list(SeqIO.parse(args.reference, "fasta"))]
+    seq_ids = None
+    if args.reference is not None:
+        seq_ids = [x.id for x in  list(SeqIO.parse(args.reference, "fasta"))]
 
     organism = "{0}{1}{2}".format(args.genus, " " + args.species, " sp. " + args.strain)
     dt = arrow.utcnow()
@@ -1269,26 +1362,38 @@ def main(args):
         else:
             args.outdir = "BugBuilder_" + organism.replace(" ", "_")
     outdir = os.path.abspath(os.path.expanduser(args.outdir))
-    logger = logging
+    try:
+        os.makedirs(outdir, exist_ok=False)
+    except OSError:
+        print("output directory existsl Existing...")
+        sys.exit(1)
+    if logger is None:
+        logger = set_up_logging(
+            verbosity=args.verbosity,
+            outfile=os.path.join(outdir, "BugBuilder.log"),
+            name=__name__)
+    for k, v in sorted(vars(args).items()):
+        logger.debug("%s: %s", k, str(v))
 
-    # my $log = $out_dir . ".log";
-    log = "~/bugbuilder.log"
-    PAIRED = False if not args.fastq2 else True
-
-    logger.debug( "Logging output to %s", log)
-
-    logger.info("Welcome to BugBuilder")
+    # are we dealing with a paired library
+    PAIRED = True if args.fastq2 is not None else False
+    logger.info("\n\nWelcome to BugBuilder\n\n")
     logger.info("\nPreparing to build your bug...\n\n")
-
-    tmpdir = setup_tempdir(args, output_root)
-
-    reference = os.path.basename(args.reference)
+    config_path = get_config_path()
+    logger.debug("config_path: %s", config_path)
+    config = return_config(config_path, force=args.configure)
+    print(config)
+    tmpdir = setup_tmpdir(args, output_root=outdir)
+    if args.reference is None:
+        refernece = None
+    else:
+        reference = os.path.basename(args.reference)
     #  need to know a bit about the provided reads so we can act appropriately
-    reads_ns  = assess_reads(args=args, conf=conf, platform=platform,
-                                    tempdir=tmpdir, logger=logger)
+    reads_ns  = assess_reads(args=args, config=config, platform=args.platform,
+                                    tmpdir=tmpdir, logger=logger)
+    print(reads_ns)
     check_ref_needed(args=args, lib_type=reads_ns.lib_type)
-    config = get_config_path()
-    tools = select_tools(args, paired, config)
+    tools = select_tools(args, paired=PAIRED, config=config, reads_ns=reads_ns)
 
     ################################################################
     downsample_reads = get_downsampling(args, config)
@@ -1303,47 +1408,42 @@ def main(args):
         quality_trim_reads(args, tmpdir, config, reads_ns)
     if (reads_ns.coverage is not None and reads_ns.coverage > 100) and \
        (downsample_reads or args.downsample):
-         downsampled_coverage = downsample_reads(args, reads_ns, config, new_cov=100)
+        downsampled_coverage = downsample_reads(args, reads_ns, config, new_cov=100)
 
     if args.fastq2 and args.reference:
         sorted_bam = align_reads(dirname, downsample=True, logger=logger)
-# 	( $insert_size, $stddev ) = get_insert_stats( "$tmpdir", $reference );
-#     }
-#     my $paired_str;
-#     ($paired) ? ( $paired_str = "Paired" ) : ( $paired_str = "Fragment" );
-#     my $tb = Text::ASCIITable->new( { 'headingText' => 'Read Information' } );
-#     $tb->setCols( 'Aaaaaaaaargh', 'Phwwwwwwweb' );
-#     $tb->setOptions( { 'hide_HeadRow' => 1 } );
-#     $tb->alignCol( 'Aaaaaaaaargh', 'left' );
-#     $tb->alignCol( 'Phwwwwwwweb',  'left' );
-#     $tb->addRow( "Mean Read Length",                  $mean_read_length )          if ($mean_read_length);
-#     $tb->addRow( "Read Length Standard Deviation",    $read_length_stddev )        if ($read_length_stddev);
-#     $tb->addRow( "Insert size",                       $insert_size )               if ($insert_size);
-#     $tb->addRow( "Insert size Standard Deviation",    $stddev )                    if ($stddev);
-#     $tb->addRow( "Mean Long Read Length",             $mean_long_read_length )     if ($mean_long_read_length);
-#     $tb->addRow( "Mean Long Read Standard Deviation", $long_read_length_stddev )   if ($long_read_length_stddev);
-#     $tb->addRow( "Library type",                      $paired_str );
-#     $tb->addRow( "Platform",                          $platform )                  if ($platform);
-#     $tb->addRow( "Quality Encoding",                  $encoding );
-#     $tb->addRow( "Projected Coverage",                "${coverage}x" )             if ($coverage);
-#     $tb->addRow( "Projected Coverage (Downsampled)",  "${downsampled_coverage}x" ) if ($downsampled_coverage);
-#     $tb->addRow( "Projected Long Read Coverage",      "${long_read_coverage}x" )   if ($long_read_coverage);
-#     print "$tb\n";
+        insert_size, stddev  = get_insert_stats(tmpdir, bam=sorted_bam)
+    paired_str = "Paired" if paired else "Fragment"
+    read_table=[
+        ["Mean Read Length", reads_ns.mean_read_length],
+        ["Read Length Standard Deviation", reads_ns.read_length_stddev ],
+        ["Insert size", reads_ns.insert_size],
+        ["Insert size Standard Deviation", reads_ns.stddev],
+        ["Mean Long Read Length", reads_ns.mean_long_read_length],
+        ["Mean Long Read Standard Deviation", reads_ns.long_read_length_stddev],
+        ["Library type", reads_ns.paired_str],
+        ["Platform", platform],
+        ["Quality Encoding", reads_ns.encoding],
+        ["Projected Coverage", str(reads_ns.coverage) + "x"],
+        ["Projected Coverage (Downsampled)", str(downsampled_coverage) + "x"],
+        ["Projected Long Read Coverage", str(reads_ns.long_read_coverage) + "x"]
+        ]
+    print (tabulate(read_table))
 
-#     $tb = Text::ASCIITable->new( { 'headingText' => 'Assembly Information' } );
-#     $tb->setCols( 'Aaaaaaaaargh', 'Phwwwwwwweb' );
-#     $tb->setOptions( { 'hide_HeadRow' => 1 } );
-#     $tb->alignCol( 'Aaaaaaaaargh', 'left' );
-#     $tb->alignCol( 'Phwwwwwwweb',  'left' );
-#     $tb->addRow( "Assembly category",        $type );
-#     $tb->addRow( "Selected assemblers",      join( ",", @assemblers ) );
-#     $tb->addRow( "Selected assembly merger", $merge_method ) if ($merge_method);
-#     $tb->addRow( "Selected scaffolder",      $scaffolder ) if ($scaffolder);
-#     $tb->addRow( "Selected finisher",        $finisher ) if ($finisher);
-#     $tb->addRow( "Selected variant caller",  $varcall ) if ($varcall);
-#     $tb->addRow( "Trim QV",                  $trim_qv ) if ($trim_reads);
-#     $tb->addRow( "Trim length",              $trim_length ) if ($trim_reads);
-#     $tb->addRow( "Split Origin",             $split_origin );
+    # $tb = Text::ASCIITable->new( { 'headingText' => 'Assembly Information' } );
+    # $tb->setCols( 'Aaaaaaaaargh', 'Phwwwwwwweb' );
+    # $tb->setOptions( { 'hide_HeadRow' => 1 } );
+    # $tb->alignCol( 'Aaaaaaaaargh', 'left' );
+    # $tb->alignCol( 'Phwwwwwwweb',  'left' );
+    #  "Assembly category",        reads_nstype );
+    #  "Selected assemblers",      join( ",", @assemblers ) );
+    #  "Selected assembly merger", reads_nsmerge_method ) if (reads_nsmerge_method);
+    #  "Selected scaffolder",      reads_nsscaffolder ) if (reads_nsscaffolder);
+    #  "Selected finisher",        reads_nsfinisher ) if (reads_nsfinisher);
+    #  "Selected variant caller",  reads_nsvarcall ) if (reads_nsvarcall);
+    #  "Trim QV",                  reads_nstrim_qv ) if (reads_nstrim_reads);
+    #  "Trim length",              reads_nstrim_length ) if (reads_nstrim_reads);
+    #  "Split Origin",             $split_origin );
 #     print "$tb\n";
 
 #     my $pm = new Parallel::ForkManager(2);
@@ -1945,56 +2045,8 @@ def main(args):
 
 
 
-# ######################################################################
-# #
-# # get_insert_stats
-# #
-# # converts contigs.sam -> bam, sorts, indexes and generates
-# # insert stats with Picard
-# #
-# # required params: $ (tmp directory);
-# #                  $ (reference);
-# #
-# # returns        : $ (insert size)
-# #                : $ (stddev)
-# #
-# ######################################################################
 
-# sub get_insert_stats {
 
-#     my $tmpdir    = shift;
-#     my $reference = shift;
-
-#     message(" Collecting insert size statistics ");
-
-#     mkdir "$tmpdir/insert_stats"
-#       or die "Error creating $tmpdir/insert_stats: $! "
-#       if ( !-d "$tmpdir/insert_stats" );
-#     chdir "$tmpdir/insert_stats"
-#       or die "Error chdiring to $tmpdir/insert_stats : $! ";
-
-#     # picard command for earlier versions....
-#     #my $cmd = "java -jar " . $config->{'picard_dir'} . "CollectInsertSizeMetrics.jar ";
-#     my $cmd = "java -jar " . $config->{'picard_dir'} . "picard.jar CollectInsertSizeMetrics ";
-#     $cmd .= "INPUT=$tmpdir/bwa/$reference.bam HISTOGRAM_FILE=insert_histogram.pdf OUTPUT=insert_stats.txt ";
-#     $cmd .=
-#       " QUIET=true VERBOSITY=ERROR ASSUME_SORTED=true VALIDATION_STRINGENCY=LENIENT > CollectInsertMetrics.log 2>&1";
-#     system($cmd) == 0 or die " Error executing $cmd: $! ";
-
-#     open STATS, "insert_stats.txt"
-#       or die "Error opening insert_stats.txt: $! ";
-#     my ( $min_insert, $max_insert, $insert, $stddev );
-#   LINE: while ( my $line = <STATS> ) {
-#         if ( $line =~ /^MEDIAN/ ) {
-#             my @stats = split( /\t/, <STATS> );
-#             $min_insert = $stats[2];
-#             $max_insert = $stats[3];
-#             $insert     = sprintf( "%d", $stats[4] );
-#             $stddev     = sprintf( "%d", $stats[5] );
-#             last LINE;
-#         }
-#     }
-#     close STATS;
 
 #     chdir $tmpdir or die "Error chdiring to $tmpdir: $!";
 

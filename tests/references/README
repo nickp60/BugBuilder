@@ -1,0 +1,4 @@
+bwa mem -M  tests/references/AP017923.1.fasta tests/references/AP017923.1_reads1.fq tests/references/AP017923.1_reads2.fq | samtools sort - > mapped.sam
+bwa index tests/references/AP017923.1.fasta 
+art_illumina -ss HS25 -i AP017923.1.fasta -p -l 150 -f 20 -m 200 -s 10 -o ./AP017923.1_reads
+samtools view -q 10 -b mapped.sam | samtools sort - > mapped.bam

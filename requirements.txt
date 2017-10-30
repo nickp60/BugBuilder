@@ -1,3 +1,4 @@
 Biopython==1.68
 pyyaml
 arrow
+tabulate
