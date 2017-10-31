@@ -317,6 +317,7 @@ use strict;
 
 import argparse
 import os
+import re
 import yaml
 import sys
 import arrow
@@ -368,8 +369,8 @@ def configure(config_path):
         'fastqc', 'sickle', 'seqtk', 'samtools', 'picard',
         'R', 'barrnap', 'prokka', 'aragorn', 'prodigal', 'hmmer3', 'rnammer',
         'mummer', 'infernal', 'blast', 'bwa', 'tbl2asn', 'abyss', 'spades',
-        'celera','gapfiller', 'sspace', 'asn2gb', 'amos' , 'masurca', 'gfinisher',
-        'pilon', 'vcflib', 'cgview']
+        'celera','gapfiller', 'sspace', 'asn2gb', 'amos' , 'masurca',
+        'gfinisher', 'pilon', 'vcflib', 'cgview']
     opt_programs = ['sis', 'mauve']
     programs = mand_programs + opt_programs
     program_dict = dict((k, None) for k in programs)
@@ -383,11 +384,11 @@ def configure(config_path):
         yaml.dump(program_dict, outfile, default_flow_style=False)
 
 
-def return_config(config_path, force=False):
-    if force:
-        configure(config_path)
+def return_config(config_path, force=False, logger=None):
     config = parse_config(config_path)
-    if config.STATUS != "COMPLETE":
+    if force or config.STATUS != "COMPLETE":
+        logger.info("(Re-)Configuring BugBuilder")
+        configure(config_path)
         config = parse_config(config_path)
     return config
 
@@ -589,7 +590,6 @@ def get_args():  # pragma: no cover
     args = parser.parse_args()
     return args
 
-
 def set_up_logging(verbosity, outfile, name):
     """
     Set up logging a la pyani, with
@@ -608,10 +608,16 @@ def set_up_logging(verbosity, outfile, name):
     # create console handler and set level to given verbosity
     console_err = logging.StreamHandler(sys.stderr)
     console_err.setLevel(level=(verbosity * 10))
-    console_err_format = logging.Formatter(str("%(asctime)s - " +
-                                               "%(levelname)s - %(message)s"),
-                                           "%Y-%m-%d %H:%M:%S")
+    console_err_format = logging.Formatter(
+        str("%(asctime)s " + "%(levelname)s" +" %(message)s"),
+        "%H:%M:%S")
     console_err.setFormatter(console_err_format)
+    # set some pretty colors, shorten names of loggers to keep lines aligned
+    logging.addLevelName(logging.DEBUG, "\u001b[30m%s\033[1;0m" % "..")
+    logging.addLevelName(logging.INFO,  "\u001b[32m%s\033[1;0m" % "--")
+    logging.addLevelName(logging.WARNING, "\u001b[33m%s\033[1;0m" % "!!")
+    logging.addLevelName(logging.ERROR, "\u001b[31m%s\033[1;0m" % "xx")
+    logging.addLevelName(logging.CRITICAL, "\u001b[31m%s\033[1;0m" % "XX")
     logger.addHandler(console_err)
     # create debug file handler and set level to debug
     try:
@@ -659,7 +665,7 @@ def check_file_paths(args):
     if args.merge_method is None and len(args.assemblers) > 1:
         raise ValueError("Must provide merge method if using multiple assemblers")
 
-def setup_tmp_dir(args, output_root):
+def setup_tmp_dir(args, output_root, logger):
     """  setup_tmp_dir creates a temporary directory and copies
     over the relevent files
 
@@ -675,11 +681,11 @@ def setup_tmp_dir(args, output_root):
     """
     if args.tmp_dir is None:
         args.tmp_dir = os.path.join(output_root, "temp_dir")
-    print("Created working directory: %s" % args.tmp_dir)
+    logger.info("Created working directory: %s" % args.tmp_dir)
     try:
         os.makedirs(args.tmp_dir, exist_ok=False)
     except OSError:
-        print("Temp directory already exists; exiting...")
+        logger.error("Temp directory already exists; exiting...")
         sys.exit(1)
     # copy to tmp dir
     for f in [args.fastq1, args.fastq2, args.long_fastq,
@@ -717,7 +723,6 @@ def setup_tmp_dir(args, output_root):
         new_reference = os.path.join(args.tmp_dir, os.path.basename(args.reference))
         with open(args.reference, "r") as inf:
             for rec in SeqIO.parse(inf, "fasta"):
-                print(rec)
                 with open(new_reference, "a") as outf:
                     SeqIO.write(rec, outf, 'fasta')
         args.reference = new_reference
@@ -748,7 +753,7 @@ def get_read_lens_from_fastq(fastq1, logger=None):
     return (lengths)
 
 
-def id_fastq_encoding(args):
+def id_fastq_encoding(args, logger):
     """
     Identifies fastq quality encoding type, based upon the information
     at http://en.wikipedia.org/wiki/FASTQ_format:
@@ -802,9 +807,10 @@ def id_fastq_encoding(args):
     elif min_val > 64:
         encoding = 'illumina'
     else:
-        print("assumina illumina encoding")
+        logger.info("assumina illumina encoding")
         encoding = 'illumina'
-    print("min: %d, max: %d, encoding: %s" %(min_val, max_val, encoding))
+    logger.info("Read encoding detection summary:\n" + tabulate.tabulate(
+        [["min:", min_val],["max", max_val], ["encoding" , encoding]]))
     return encoding
 
 
@@ -886,20 +892,20 @@ def assess_reads(args, config, platform, logger=None):
     long_coverage = 0
 
     if args.genome_size == 0:
-        print(args.reference)
+        logger.info("Infering genome size from reference")
         if args.reference is not None and os.path.exists(args.reference):
             with open(args.reference, "r") as inf:
                 for rec in SeqIO.parse(inf, "fasta"):
                     args.genome_size = args.genome_size + len(rec.seq)
-    print(args.genome_size)
-    print(tot_length)
+    logger.info("Genome Size: %d", args.genome_size)
+    logger.info("Genome Length: %d", tot_length)
     coverage, long_coverage = None, None
     try:
         coverage = float(tot_length / args.genome_size)
         long_coverage = float(long_tot_length / args.genome_size)
     except:
         logger.warning("error calculating coverage!")
-    encoding = id_fastq_encoding(args)
+    encoding = id_fastq_encoding(args, logger)
     return Namespace(lib_type=lib_type, encoding=encoding, mean_read_length=mean,
                      read_length_stddev=stddev,
                      mean_long_read_length=long_mean,
@@ -936,7 +942,7 @@ def parse_config(config_file):
     return(newns)
 
 
-def get_assemblers(args, config, paired, reads_ns):
+def check_assemblers(args, config, paired, reads_ns):
     if len(args.assemblers) > 2:
         raise ValueError("A maximum of 2 assemblers can be requested")
     # sanity check assemblers where these have been manually requested...
@@ -957,7 +963,6 @@ def get_assemblers(args, config, paired, reads_ns):
         for conf_assembler in config.assemblers:
             if conf_assembler['name'] != assembler:
                 continue
-            print(assembler)
             if not paired and conf_assembler['command_se']:
                 raise ValueError(str("%s requires paired reads, but you only " +
                                  "specified one fastq file...") % assembler)
@@ -978,7 +983,7 @@ def get_assemblers(args, config, paired, reads_ns):
 def get_scaffolder_and_linkage(args, config, paired):
     if args.scaffolder is None:
         return None
-    print(config.scaffolders)
+    logger.debug(config.scaffolders)
     if args.scaffolder not in [k['name'].lower() for k in config.scaffolders]:
         raise ValueError("%s not an available scaffolder!" %args.scaffolder)
     linkage_evidence = None
@@ -1031,7 +1036,7 @@ def get_varcaller(args, config, paired):
                                  args.varcaller)
 
 
-def select_tools(args, paired, config, reads_ns):
+def select_tools(args, paired, config, reads_ns, logger):
     """
     options, while checking for validity of selections...
 
@@ -1050,16 +1055,16 @@ def select_tools(args, paired, config, reads_ns):
                  $ (name of scaffolder to use)
 
     """
-    get_assemblers(args=args, config=config, paired=paired, reads_ns=reads_ns)
-    print("get scaffolder")
+    check_assemblers(args=args, config=config, paired=paired, reads_ns=reads_ns)
+    logger.debug("get scaffolder")
     linkage_evidence = get_scaffolder_and_linkage(
         args=args, config=config, paired=paired)
-    print("getting merger")
+    logger.debug("getting merger")
     get_merger_and_linkage(args, config, paired)
     get_finisher(args, config, paired)
     get_varcaller(args, config, paired)
 
-    print ("linkage: %s" % linkage_evidence)
+    logger.info("linkage: %s" % linkage_evidence)
     return Namespace(assemblers=args.assemblers,
                      scaffolder=args.scaffolder,
                      scaffold_type=linkage_evidence,
@@ -1109,22 +1114,22 @@ def run_fastqc(reads_ns, args, logger=None):
         logger.warning("Error running fastqc with command %s", fastqc_cmd)
         sys.exit(1)
     report = []
+    report.append(["Status", "Metric", "File"])
     fails = 0
     for f in [args.fastq1, args.fastq2, args.long_fastq]:
         if f is None:
             continue
         name = os.path.splitext(os.path.basename(f))[0] + "_fastqc"
-        report.append(name + "\n----------------------------------")
+        report.append(["--", "--", "--"])
         with open(os.path.join(
                 fastqc_dir, name, "summary.txt"), "r") as s:
             for line in s:
                 if "FAIL" in line:
                     fails = fails + 1
-                report.append(line.split("\t")[:2])
+                report.append(line.split("\t"))
         shutil.copyfile(os.path.join(fastqc_dir, name + ".html"),
                         os.path.join(args.tmp_dir, name + ".html"))
-    for line in report:
-        logger.info(line)
+    logger.info("FastQC STATISTICS:\n" + tabulate.tabulate(report))
     if fails > 0:
         if reads_ns.lib_type in ["long", "hybrid", "de_fere"]:
             logger.info("NB: Reported quality issues from_fastq are normal " +
@@ -1184,16 +1189,20 @@ def quality_trim_reads(args, config, reads_ns, logger):
         args.fastq2 = os.path.join(trim_dir, "read2.fastq")
     kept = 0
     disc = 0
-    logger.info("Quality Trimming result:s")
+    report = []
     with open(os.path.join(trim_dir, "sickle.log"), "r") as inf:
         for line in inf:
-            logger.info(line)
+            if line.strip() == "":
+                continue
+            splits = re.split(":\s", line.strip())
+            report.append([splits[0], " ".join(splits[1:])])
             if "kept" in line:
                 kept = kept + int(line.split(": ")[1].split("(")[0].strip())
             elif "discarded" in line:
                 disc = disc + int(line.split(": ")[1].split("(")[0].strip())
             else:
                 pass
+    logger.info("Quality Trimming result:\n" + tabulate.tabulate(report))
     if float(disc / kept) * 100 > 10:
         logger.warning(">10\% of reads discarded during read trimming. "+
                        "Please examine the FastQC outputs...")
@@ -1486,13 +1495,11 @@ def run_assembler(assembler, assembler_args, args, reads_ns,config, logger):
 
     logger.info("%s assembly statistics", assembler);
     report = get_contig_stats( contigs_path, 'contigs' )
-    logger.info("CONTIG STATS")
-    print(tabulate.tabulate(report))
+    logger.info("CONTIG STATS:\n" + tabulate.tabulate(report))
     # Only generate scaffold stats for paired read alignments...
     if scaffold_output and args.fastq2:
         report = get_contig_stats( scaffolds_path, 'scaffolds' )
-        logger.info("SCAFFOLD STATS")
-        print(tabulate.tabulate(report))
+        logger.info("SCAFFOLD STATS:\n" + tabulate.tabulate(report))
 
     # rename contigs/scaffolds for consistent naming, since we need to retrieve by
     # id later, so it helps if we know what the ids look like...
@@ -1550,9 +1557,8 @@ def merge_assemblies(args, config, reads_ns, logger):
     # symlink( "$method/$contig_output", "contigs.fasta" )
     #   or die " Error creating symlink : $! ";
 
-    logger.info("Merged assembly statistics : \n============================\n")
-    report = get_contig_stats( "$tmpdir/$method/$contig_output", 'contigs' )
-    logger.info("\n" + "\n".join(report))
+    report = get_contig_stats(contig_output, 'contigs' )
+    logger.info("MERGED ASSEMBLY STATISTICS:\n" + tabulate.tabulate(report))
     return contig_output
 
 
@@ -1642,13 +1648,13 @@ def main(args=None, logger=None):
 
     # are we dealing with a paired library
     PAIRED = True if args.fastq2 is not None else False
-    logger.info("\n\nWelcome to BugBuilder\n\n")
-    logger.info("\nPreparing to build your bug...\n\n")
+    logger.info("Welcome to BugBuilder")
+    logger.info("Preparing to build your bug...")
     config_path = get_config_path()
-    logger.debug("config_path: %s", config_path)
-    config = return_config(config_path, force=args.configure)
+    config = return_config(config_path, force=args.configure, logger=logger)
+    logger.info("Using configuration from %s", config_path)
     logger.debug(config)
-    setup_tmp_dir(args, output_root=outdir)
+    setup_tmp_dir(args, output_root=outdir, logger=logger)
     # if args.reference is None:
     #     reference = None
     # else:
@@ -1664,7 +1670,7 @@ def main(args=None, logger=None):
     logger.info("Determining if a reference is needed")
     check_ref_needed(args=args, lib_type=reads_ns.lib_type)
     logger.info("preparing config and tools; lol not really but we will be")
-    tools = select_tools(args, paired=PAIRED, config=config, reads_ns=reads_ns)
+    tools = select_tools(args, paired=PAIRED, config=config, reads_ns=reads_ns, logger=logger)
 
     downsample_reads = get_downsampling(args, config)
     if not args.skip_fastqc and config.fastqc is not None:
@@ -1706,8 +1712,7 @@ def main(args=None, logger=None):
         ["Projected Coverage (Downsampled)", str(downsampled_coverage) + "x"],
         ["Projected Long Read Coverage", str(reads_ns.long_read_coverage) + "x"]
         ]
-    print("LIBRARY DETAILS")
-    print(tabulate.tabulate(read_table))
+    logger.info("LIBRARY DETAILS:\n" + tabulate.tabulate(read_table))
 
     run_table = [
         ["Assembly category",        reads_ns.lib_type],
@@ -1720,8 +1725,7 @@ def main(args=None, logger=None):
         ["Trim length",              args.trim_length],
         ["Split Origin",             not args.skip_split_origin]
     ]
-    print("ASSEMBLER DETAILS")
-    print(tabulate.tabulate(run_table))
+    logger.info("ASSEMBLER DETAILS:\n" + tabulate.tabulate(run_table))
     contig_scaffold_list = [] # holds pairs of (contigs_path, scaffolds_path)
     if args.assemblies_contigs is None and args.assemblies_scaffolds is None:
         for assembler, assembler_args in assemblers_list:
