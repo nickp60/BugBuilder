@@ -1,4 +1,4 @@
-#!/bin/env perl
+#!/usr/bin/env perl
 
 ################################################################################
 #
@@ -206,7 +206,7 @@ set_paths($config);
     my $threads      = $config->{'threads'};
     my $genome_size  = 0;
     my $out_dir      = undef;
-    my $tmpdir       = $config->{'tmp_dir'};
+    my $tmpdir       = undef; #$config->{'tmp_dir'};
 
     my $fastq_error = 0;
 
@@ -328,6 +328,9 @@ set_paths($config);
 	$read_length_stddev, $mean_long_read_length, $long_read_length_stddev,
 	$coverage,           $long_read_coverage,    $read_bases
 	) = assess_reads( $tmpdir, $platform, $genome_size );
+    print "Type: $type \n" ;
+    print "Encoding: $encoding \n" ;
+    print "Mean Read Length: $mean_read_length \n" ;
 
     die "\nPlease supply a genome size or reference sequence when running a long-read assembly"
 	if ( $type eq 'long' && ( !$genome_size && !$reference ) );
@@ -515,7 +518,8 @@ set_paths($config);
 
     run_varcaller( $tmpdir, $varcall, $threads, $mean_read_length ) if ($varcall);
     merge_annotations( $tmpdir, $amosvalidate_results, $gaps, $genus, $species, $strain );
-    run_cgview($tmpdir);
+    #  This kept throwing an error about Bio::SeqIO 
+    # run_cgview($tmpdir);
 
     build_comparisons( $tmpdir, basename($reference), $organism ) if ($reference);
 

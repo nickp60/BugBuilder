@@ -1,4 +1,4 @@
-#!/bin/env perl
+#!/usr/bin/env perl
 
 ######################################################################
 #
@@ -112,7 +112,7 @@ use Bio::SeqIO;
 
         my $cmd = $config->{'gapfiller_dir'}
           . "GapFiller.pl -s $tmpdir/gapfiller/unfilled_scaffold_$i -l library.txt -T $threads -i 20 -b gapfilled_$i >> $tmpdir/gapfiller/gapfiller.log 2>&1";
-
+	print "Running $cmd \n";
         #GapFiller will fail on singleton scaffolds, so wrap the system call in an eval,
         # and if it hasn't succeeded just symlink in the original file
         eval { system($cmd); };

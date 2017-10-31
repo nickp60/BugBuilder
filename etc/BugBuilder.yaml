@@ -2,7 +2,7 @@
 #
 # BugBuilder configuration in YAML format
 #
-# This file defines the BugBuilder configuration. See the BugBuilder
+# This file defines the BugBuilder configuration. See the BugBuilder 
 # User Guide for details of the dependencies which need to be installed.
 #
 ######################################################################
@@ -10,54 +10,54 @@
 # tmp_dir specifies the location on the machine where working directories will be created
 tmp_dir: /tmp/
 # java specifies the java binary
-java: /usr/bin/java
+java: /home/nick/miniconda3/bin/java
 # number of parallel threads to run
-threads: 4
-fastqc_dir: /usr/local/bin/
-sickle_dir: /home/nicholas/bin/
-seqtk_dir: /home/nicholas/bin/
-samtools_dir: /home/nicholas/bin/
-picard_dir: /home/nicholas/GitHub/BugBuilder/bin/../packages/lib/picard//
-sis_dir: /home/nicholas/GitHub/BugBuilder/packages/bin/
-mauve_dir: /home/nicholas/GitHub/BugBuilder/bin/../packages/mauve//
+threads: 16
+fastqc_dir: /home/nick/miniconda3/bin/
+sickle_dir: /home/nick/miniconda3/bin/
+seqtk_dir: /home/nick/miniconda3/bin/
+samtools_dir: /home/nick/miniconda3/bin/
+picard_dir: /home/nick/GitHub/BugBuilder/bin/../packages/lib/picard//
+sis_dir: /home/nick/GitHub/BugBuilder/packages/bin/
+mauve_dir: /home/nick/GitHub/BugBuilder/bin/../packages/mauve//
 R_dir: /usr/bin/
-barrnap_dir: /home/nicholas/barrnap/bin/
-prokka_dir: /home/nicholas/GitHub/BugBuilder/packages/prokka/bin/
-aragorn_dir: /home/nicholas/GitHub/BugBuilder/packages/bin/
-prodigal_dir: /usr/bin/
-hmmer3_dir: /home/nicholas/bin/
-rnammer_dir: ./
-mummer_dir: /usr/bin/
-infernal_dir: /usr/bin/
-blast_dir: /usr/bin/
-bwa_dir: /usr/bin/
-tbl2asn_dir: /usr/bin/
-abyss_dir: ./
-spades_dir: /home/nicholas/SPAdes-3.9.0-Linux/bin/
-celera_dir: /home/nicholas/GitHub/BugBuilder/packages/celera/Linux-amd64/bin/
-gapfiller_dir: /home/nicholas/GitHub/BugBuilder/packages/gapfiller/
-sspace_dir: /home/nicholas/GitHub/BugBuilder/packages/sspace/
-asn2gb_dir: /usr/bin/
-amos_dir: /home/nicholas/GitHub/BugBuilder/packages/amos/bin/
+barrnap_dir: /home/nick/miniconda3/bin/
+prokka_dir: /home/nick/miniconda3/bin/
+aragorn_dir: /home/nick/miniconda3/bin/
+prodigal_dir: /home/nick/miniconda3/bin/
+hmmer3_dir: /home/nick/miniconda3/bin/
+rnammer_dir: /home/nick/GitHub/BugBuilder/packages/rnammer/
+mummer_dir: /home/nick/miniconda3/bin/
+infernal_dir: /home/nick/miniconda3/bin/
+blast_dir: /home/nick/miniconda3/bin/
+bwa_dir: /home/nick/miniconda3/bin/
+tbl2asn_dir: /home/nick/miniconda3/bin/
+abyss_dir: /home/nick/miniconda3/bin/
+spades_dir: /home/nick/miniconda3/bin/
+celera_dir: /home/nick/GitHub/BugBuilder/packages/celera/Linux-amd64/bin/
+gapfiller_dir: /home/nick/GitHub/BugBuilder/packages/gapfiller/
+sspace_dir: /home/nick/GitHub/BugBuilder/packages/sspace/
+asn2gb_dir: /home/nick/GitHub/BugBuilder/packages/bin/
+amos_dir: /home/nick/miniconda3/bin/
 masurca_dir: ./
-gfinisher_dir: /home/nicholas/GitHub/BugBuilder/bin/../packages/lib/gfinisher//
-pilon_dir: /home/nicholas/GitHub/BugBuilder/bin/../packages/lib/pilon//
-vcflib_dir: /home/nicholas/GitHub/BugBuilder/packages/vcflib/bin/
-cgview_dir: /home/nicholas/GitHub/BugBuilder/bin/../packages/cgview//
+gfinisher_dir: /home/nick/GitHub/BugBuilder/bin/../packages/lib/gfinisher//
+pilon_dir: /home/nick/GitHub/BugBuilder/bin/../packages/lib/pilon//
+vcflib_dir: /home/nick/miniconda3/bin/
+cgview_dir: /home/nick/GitHub/BugBuilder/bin/../packages/cgview//
 
-perl_lib_path: /home/nicholas/GitHub/BugBuilder/lib/perl5
+perl_lib_path: /home/nick/GitHub/BugBuilder/lib/perl5
 
 
 
 # Definition of assembly categories, and platforms
-# These are used for automated assembler selection based on assesment of the
+# These are used for automated assembler selection based on assesment of the 
 # provided reads. These should ideally not overlap or the choice of category
 # may become a bit random
 assembler_categories:
   - name: 'short_illumina'
     min_length: 25
     max_length: 100
-    single_fastq: 'optional'
+    single_fastq: 'optional' 
     paired_fastq: 'optional'
     platforms:
       - 'illumina'
@@ -70,7 +70,7 @@ assembler_categories:
       - sspace
   - name: 'long_illumina'
     min_length:  75
-    max_length: 250
+    max_length: 303
     single_fastq: 'optional'
     paired_fastq: 'optional'
     platforms:
@@ -102,12 +102,12 @@ assembler_categories:
     platforms:
       - 'PacBio'
       - 'MinION'
-    assemblers:
+    assemblers: 
       - PBcR
   - name: 'hybrid'
     min_length: 75
     max_length: 50000
-    platforms:
+    platforms: 
       - hybrid
     paired_fastq: 'required'
     long_fastq: 'required'
@@ -132,7 +132,7 @@ assembler_categories:
 
 #Assembler configuration
 assemblers:
-   - name: abyss
+   - name: abyss 
      create_dir: 1
      max_length: 200
      command_pe: __BUGBUILDER_BIN__/run_abyss --tmpdir __TMPDIR__ --fastq1 __FASTQ1__ --fastq2 __FASTQ2__ --read_length __READ_LENGTH__
@@ -171,9 +171,9 @@ assemblers:
      command_pe: __BUGBUILDER_BIN__/run_masurca --fastq1 __ORIG_FASTQ1__ --fastq2 __ORIG_FASTQ2__ --tmpdir __TMPDIR__ --category __CATEGORY__ --insert_size __INSSIZE__ --insert_stddev __INSSD__
      command_hybrid: __BUGBUILDER_BIN__/run_masurca --fastq1 __ORIG_FASTQ1__ --fastq2 __ORIG_FASTQ2__ --longfastq __LONGFASTQ__ --tmpdir __TMPDIR__ --category __CATEGORY__ --insert_size __INSSIZE__ --insert_stddev __INSSD__
      contig_output: __TMPDIR__/masurca/contigs.fasta
-     scaffold_output: __TMPDIR__/masurca/scaffolds.fasta
-     default_args: --threads __THREADS__
-     downsample_reads: 0
+     scaffold_output: __TMPDIR__/masurca/scaffolds.fasta 
+     default_args: --threads __THREADS__ 
+     downsample_reads: 0 
      insert_size_required: 1
 
 scaffolders:
@@ -192,7 +192,7 @@ scaffolders:
      scaffold_output: scaffolds.fasta
    - name: sspace
      linkage_evidence: paired-ends
-     command: __BUGBUILDER_BIN__/run_sspace --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__ --contigs __CONTIGS__ --insert_size __INSSIZE__ --insert_sd __INSSD__
+     command: __BUGBUILDER_BIN__/run_sspace --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__ --contigs __CONTIGS__ --insert_size __INSSIZE__ --insert_sd __INSSD__ 
      scaffold_output: BugBuilder.scaffolds.fasta
      create_dir: 1
      priority: 3
