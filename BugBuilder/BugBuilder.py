@@ -123,10 +123,10 @@ assemblers:
    - name: spades
      create_dir: 0
      max_length: 303
-     command_se: spades.py -s __FASTQ1__ -o __TMPDIR__/spades
-     command_pe: spades.py -1 __FASTQ1__ -2 __FASTQ2__ -o __TMPDIR__/spades
-     command_hybrid: spades.py -1 __FASTQ1__ -2 __FASTQ2__ --pacbio __LONGFASTQ__ -o __TMPDIR__/spades
-     command_de_fere: spades.py -1 __FASTQ1__ -2 __FASTQ2__ --trusted-contigs __DE_FERE_CONTIGS__ -o __TMPDIR__/spades
+     command_se: spades.py --memory __MEMORY__ -t __THREADS__ -s __FASTQ1__ -o __TMPDIR__/spades
+     command_pe: spades.py --memory __MEMORY__ -t __THREADS__ -1 __FASTQ1__ -2 __FASTQ2__ -o __TMPDIR__/spades
+     command_hybrid: spades.py --memory __MEMORY__ -t __THREADS__ -1 __FASTQ1__ -2 __FASTQ2__ --pacbio __LONGFASTQ__ -o __TMPDIR__/spades
+     command_de_fere: spades.py --memory __MEMORY__ -t __THREADS__ -1 __FASTQ1__ -2 __FASTQ2__ --trusted-contigs __DE_FERE_CONTIGS__ -o __TMPDIR__/spades
      contig_output: __TMPDIR__/spades/contigs.fasta
      scaffold_output: __TMPDIR__/spades/scaffolds.fasta
      default_args: -t __THREADS__ --careful
@@ -463,9 +463,19 @@ def get_args():  # pragma: no cover
                           "assemblers are specified.",
                           nargs="*",
                           type=str)
-    optional.add_argument("--assemblies", dest='assemblies',
+    optional.add_argument("--assemblies_contigs", dest='assemblies_contigs',
                           action="store",
-                          help="path to output directory(s) if assembler(s) " +
+                          help="path to contig file(s) if assembler(s) " +
+                          "have already been run; this helps save time when " +
+                          "rerunning analyses. If running multiple assemble" +
+                          "rs, assemblies should be specified twice, once " +
+                          "for each assemler, in the same order than the " +
+                          "assemblers are specified.",
+                          nargs="*",
+                          type=str)
+    optional.add_argument("--assemblies_scaffolds", dest='assemblies_scaffolds',
+                          action="store",
+                          help="path to scafoold file(s) if  assembler(s) " +
                           "have already been run; this helps save time when " +
                           "rerunning analyses. If running multiple assemble" +
                           "rs, assemblies should be specified twice, once " +
@@ -561,6 +571,9 @@ def get_args():  # pragma: no cover
                           type=str)
     optional.add_argument("--configure", dest='configure', action="store_true",
                           help="whether to reconfigure ")
+    optional.add_argument("--memory", dest='memory', action="store",
+                          help="how much memory to use",
+                          type=int, default=4)
     optional.add_argument("-v", "--verbosity", dest='verbosity',
                           action="store",
                           default=2, type=int, choices=[1, 2, 3, 4, 5],
@@ -770,10 +783,11 @@ def id_fastq_encoding(args):
     with open_fun(target, "r") as inf:
         counter = 3
         for i, line in enumerate(inf):
-            if i <= 1000:
+            if i >= 1000:
                 break
             if counter == 0:
-                quals = [ord(x) for x in line.split()]
+                counter = 3
+                quals = [ord(x) for x in list(line)]
                 tmp_min =  min(quals)
                 tmp_max =  max(quals)
                 min_val = tmp_min if tmp_min < min_val else min_val
@@ -790,6 +804,7 @@ def id_fastq_encoding(args):
     else:
         print("assumina illumina encoding")
         encoding = 'illumina'
+    print("min: %d, max: %d, encoding: %s" %(min_val, max_val, encoding))
     return encoding
 
 
@@ -1119,7 +1134,7 @@ def run_fastqc(reads_ns, args, logger=None):
                            "data.Please examine the fastqc outputs for " +
                            "these reads")
 
-def make_sickle_cmd(args):
+def make_sickle_cmd(args, reads_ns, out_dir):
     if args.fastq2:
         cmd = str("sickle pe -f {0} -r {1} -t {2} -q {3} -l {4} -o " +
                   "{5}read1.fastq -p {5}read2.fastq -s {5}singles.fastq" +
@@ -1128,19 +1143,19 @@ def make_sickle_cmd(args):
                       args.fastq2,  # 1
                       reads_ns.encoding,  # 2
                       args.trim_qv,  #3
-                      args.min_length,  #4
-                      args.tmp_dir)
+                      args.trim_length,  #4
+                      out_dir)
     else:
         cmd = str("sickle se -f {0} -t {1} -q {2} -l {3} -o {4}read1.fastq " +
                   "> {4}sickle.log").format(
                       args.fastq1,  # 0
                       reads_ns.encoding,  # 1
                       args.trim_qv,  #2
-                      args.min_length,  #3
-                      args.tmp_dir)
+                      args.trim_length,  #3
+                      out_dir)
     return cmd
 
-def quality_trim_reads(args, config, reads_ns):
+def quality_trim_reads(args, config, reads_ns, logger):
     """
     Quality trims reads using sickle
 
@@ -1149,12 +1164,12 @@ def quality_trim_reads(args, config, reads_ns):
 
     returns          $ (0)
     """
-    if encoding is None:
+    if reads_ns.encoding is None:
         logger.warning("Sequence quality encoding could not be determined;" +
                        "Sequence quality trimming will be skipped...")
     trim_dir = os.path.join(args.tmp_dir, "qc_trim", "")
     os.makedirs(trim_dir)
-    trim_cmd = make_sickle_cmd(args)
+    trim_cmd = make_sickle_cmd(args, reads_ns, trim_dir)
     trim_res = subprocess.run(trim_cmd,
                                 shell=sys.platform != "win32",
                                 stdout=subprocess.PIPE,
@@ -1176,7 +1191,7 @@ def quality_trim_reads(args, config, reads_ns):
             if "kept" in line:
                 kept = kept + int(line.split(": ")[1].split("(")[0].strip())
             elif "discarded" in line:
-                disc = desc + int(line.split(": ")[1].split("(")[0].strip())
+                disc = disc + int(line.split(": ")[1].split("(")[0].strip())
             else:
                 pass
     if float(disc / kept) * 100 > 10:
@@ -1368,10 +1383,11 @@ def get_insert_stats(bam, reads_ns, args, config, logger):
     return (mean_insert, stddev_insert)
 
 
-def replace_placeholders(string, config, reads_ns, args, assembler):
+def replace_placeholders(string, config, reads_ns, args):
     replace_dict = {
         "__BUGBUILDER_BIN__": "/$FindBin::Bin/g",
         # "__ASMDIR__": os.path.dirname(config.assemblers[assembler['name']]),
+        "__MEMORY__": args.memory,
         "__TMPDIR__": args.tmp_dir,
         "__FASTQ1__": args.fastq1,
         "__FASTQ2__": args.fastq2,
@@ -1392,6 +1408,203 @@ def replace_placeholders(string, config, reads_ns, args, assembler):
     for k,v in replace_dict.items():
         string = string.replace(k, str(v) if v is not None else "")
     return string
+
+
+def get_assembler_cmds(assembler, assembler_args, args, config, reads_ns):
+    # get the proper running command
+    if reads_ns.lib_type == "hybrid":
+        cmd = assembler['command_hybrid']
+    elif reads_ns.lib_type == "de_fere":
+        cmd = assembler['command_hybrid']
+    elif args.fastq2 is not None:
+        cmd = assembler['command_pe']
+    else:
+        cmd = assembler['command_se']
+    # add args
+    if assembler_args:
+        cmd = cmd + " " + assembler_args
+    elif assembler['default_args']:
+        cmd = cmd + " " + assembler['default_args']
+    # get output name
+    contig_output = assembler['contig_output']
+    scaffold_output = assembler['scaffold_output'] if assembler['scaffold_output'] else None
+    CREATE = assembler['create_dir']
+    if CREATE:
+        os.makedirs(os.path.join(args.tmp_dir, assembler['name']))
+    cmd = replace_placeholders(string=cmd, config=config, args=args,
+                               reads_ns=reads_ns)
+    # cmd = cmd + " > {0}/{1}.log 2>&1".format(args.tmp_dir, assembler['name'])
+    return (cmd,
+            replace_placeholders(contig_output, config, reads_ns, args),
+            replace_placeholders(scaffold_output, config, reads_ns, args))
+
+
+def standardize_fasta_output(infile, outfile, ctype):
+    assert ctype in ['scaffolds', 'contigs'], "invalid contig type"
+    count = 0
+    with open(infile, "r") as inf:
+        with open(outfile, "w") as outf:
+            for rec in SeqIO.parse(inf, "fasta"):
+                count = count + 1
+                rec.id = "%s_%06d" % (ctype, count)
+                rec.description = ""
+                SeqIO.write(rec, outf, "fasta")
+
+def run_assembler(assembler, assembler_args, args, reads_ns,config, logger):
+    """
+    Runs specified assembler on fastq files
+
+    required params: $ (tmpdir)
+                 $ (assembler name)
+                 $ (reference fasta sequece - probably not needed)
+                 $ (arguments to pass to assembler)
+                 $ (link - flag to indicate contigs should be symlinked into tmpdir)
+                 $ (category - type of assembly to run, since an assembler may fall into more
+                 than one category)
+                 $ (encoding - some assemblers need explicitly telling)
+                 $ (genome size)
+                 $ (average read length)
+	           $ (insert size)
+                 $ (insert size stddev)
+    returns          $ (0)
+    """
+    conf_assembler = [x for x in config.assemblers if x['name'] == assembler]
+    assert len(conf_assembler) == 1, "multiple matches for assemblers"
+    conf_assembler = conf_assembler[0]
+    assembler_cmd, contigs_path, scaffold_path = get_assembler_cmds(
+        assembler=conf_assembler,
+        assembler_args=assembler_args,
+        args=args,
+        config=config, reads_ns=reads_ns)
+    logger.info(" Starting %s assembly ... ", assembler)
+    logger.debug(assembler_cmd)
+    subprocess.run(assembler_cmd,
+                   shell=sys.platform != "win32",
+                   stdout=subprocess.PIPE,
+                   stderr=subprocess.PIPE,
+                   check=True)
+
+    logger.info("%s assembly statistics", assembler);
+    report = get_contig_stats( contigs_path, 'contigs' )
+    logger.info("CONTIG STATS")
+    print(tabulate.tabulate(report))
+    # Only generate scaffold stats for paired read alignments...
+    if scaffold_output and args.fastq2:
+        report = get_contig_stats( scaffolds_path, 'scaffolds' )
+        logger.info("SCAFFOLD STATS")
+        print(tabulate.tabulate(report))
+
+    # rename contigs/scaffolds for consistent naming, since we need to retrieve by
+    # id later, so it helps if we know what the ids look like...
+    # if ( !$create ) {
+    #     my $outdir = dirname($contig_output);
+    #     chdir $outdir or die " Error changing to dir $outdir: $! ";
+    # }
+    renamed_contigs = os.path.join(os.path.basename(contigs_output),
+                                   "BugBuilder.contigs.fasta")
+    standardize_fasta_output(
+        infile=contigs_output,
+        outfile=renamed_contigs,
+        ctype="contigs")
+    if os.path.exists(scaffolds_output):
+        renamed_scaffolds = os.path.join(os.path.basename(scaffolds_output),
+                                           "BugBuilder.scaffolds.fasta")
+        standardize_fasta_output(
+            infile=scaffolds_output,
+            outfile=renamed_scaffolds,
+            ctype="contigs")
+    else:
+        renamed_scaffolds = None
+    return(renamed_contigs, renamed_scaffolds)
+
+
+def merge_assemblies(args, config, reads_ns, logger):
+    """
+    combines two assemblies using the selected merge-method
+
+    required params: $ (tmpdir)
+                 $ (arrayref of assemblers used)
+                 $ (method)
+                 $ (reference)
+
+    returns        : $ (0)
+    """
+    logger.info("Merging assemblies (%s)...", args.merge_tool)
+    for tool in config.merge_tools:
+        if args.merge_tool == tool['name']:
+            cmd = tool['command']
+            CREATE_DIR = tool['create_dir']
+            contig_output = tool['contig_output']
+    if CREATE_DIR:
+        outdir = os.path.join(args.tmpdir, args.merge_tool)
+        os.makedirs(outdir)
+    merge_cmd = replace_placeholders(string=cmd, config=config,
+                                     reads_ns=reads_ns, args=args)
+    logger.debug(merge_cmd)
+    subprocess.run(merge_cmd,
+                   shell=sys.platform != "win32",
+                   stdout=subprocess.PIPE,
+                   stderr=subprocess.PIPE,
+                   check=True)
+
+    # symlink( "$method/$contig_output", "contigs.fasta" )
+    #   or die " Error creating symlink : $! ";
+
+    logger.info("Merged assembly statistics : \n============================\n")
+    report = get_contig_stats( "$tmpdir/$method/$contig_output", 'contigs' )
+    logger.info("\n" + "\n".join(report))
+    return contig_output
+
+
+def check_id(args, contigs, logger):
+    """
+    Checks wether the assembled contigs have sufficient identity to the
+    reference for reference-based scaffolding
+
+    required params: $ (tmp directory);
+
+    returns        : $ id_ok (boolean)
+    """
+    logger.info("Checking identity of assembly with reference...")
+    ID_OK = False
+    check_dir = os.path.join(args.tmp_dir, "id_check", "")
+    os.makedirs(checkdir)
+    cmd = str("{0} -query {0} -subject {1} -outfmt 6 -evalue 0.01 -out " +
+              "{3}blastout.tab 2>&1 > {3}blastn.log").format(
+        config.blastn, contigs, args.reference, check_dir)
+    logger.debug(cmd)
+    subprocess.run(cmd,
+                   shell=sys.platform != "win32",
+                   stdout=subprocess.PIPE,
+                   stderr=subprocess.PIPE,
+                   check=True)
+    fake_aves = []
+    #TODO correct this
+    with open(check_dir + "blastout.tab", "r") as inf:
+        for line in inf:
+            fake_aves.append(line.strip().split("\t")[2])
+    percent_id = statistics.mean(fake_aves)
+    # system($cmd) == 0 or die "Error running $cmd: $!";
+    # my $blio = Bio::SearchIO->new( -format => 'blastxml',
+    #                                -file   => 'blastout.xml' );
+    # my ( $aligned, $unaligned );
+    # while ( my $result = $blio->next_result() ) {
+    #     foreach my $hit ( $result->hits() ) {
+    #         my $tiling = Bio::Search::Tiling::MapTiling->new($hit);
+    #         $aligned   += $tiling->num_aligned();
+    #         $unaligned += $tiling->num_unaligned();
+    #     }
+    # }
+    # my $percent_id = sprintf( '%.2f', ( $aligned / ( $aligned + $unaligned ) * 100 ) );
+    # print "ID=$percent_id %\n";
+    if percent_id > 80:
+        ID_OK = True
+    else:
+        logger.warning("Percentage identity of assembly with reference looks" +
+                       " too low (%.2f)", percent_id)
+        logger.warning("Reference will not be used for scaffolding or " +
+                       "ordering contigs")
+    return ID_OK
 
 
 def main(args=None, logger=None):
@@ -1436,37 +1649,44 @@ def main(args=None, logger=None):
     config = return_config(config_path, force=args.configure)
     logger.debug(config)
     setup_tmp_dir(args, output_root=outdir)
-    if args.reference is None:
-        refernece = None
-    else:
-        reference = os.path.basename(args.reference)
+    # if args.reference is None:
+    #     reference = None
+    # else:
+    #     reference = os.path.basename(args.reference)
     #  need to know a bit about the provided reads so we can act appropriately
     # copy paths to raw reads in case we need them for mascura
     args.untrimmed_fastq1 = args.fastq1
     args.untrimmed_fastq2 = args.fastq2
+    logger.info("Assessing reads and library type")
     reads_ns  = assess_reads(args=args, config=config, platform=args.platform,
                              logger=logger)
     logger.debug(reads_ns)
+    logger.info("Determining if a reference is needed")
     check_ref_needed(args=args, lib_type=reads_ns.lib_type)
+    logger.info("preparing config and tools; lol not really but we will be")
     tools = select_tools(args, paired=PAIRED, config=config, reads_ns=reads_ns)
 
     downsample_reads = get_downsampling(args, config)
     if not args.skip_fastqc and config.fastqc is not None:
-       run_fastqc(reads_ns, args, logger=logger)
+        logger.info("Running fastqc on reads")
+        run_fastqc(reads_ns, args, logger=logger)
     if reads_ns.mean_read_length is not None:
         if reads_ns.mean_read_length < 50 and reads_ns.mean_read_length < args.trim_length:
             logger.info("trim-length reset to 25 due to mean read length: %i",
                         reads_ns.mean_read_length)
             args.trim_length = 25
-    if reads_ns.lib_type == "long" or args.skip_trim:
-        quality_trim_reads(args, config, reads_ns)
+    if reads_ns.lib_type != "long" and not args.skip_trim:
+        logger.info("Trimming reads based on quality")
+        quality_trim_reads(args, config, reads_ns, logger)
     if (reads_ns.coverage is not None and reads_ns.coverage > 100) and \
        (downsample_reads or args.downsample):
+        logger.info("Downsampling reads to 100x coverage")
         downsampled_coverage = downsample_reads(args=args, reads_ns=reads_ns,
                                                 config=config, new_cov=100)
     else:
         downsampled_coverage = None
     if args.fastq2 and args.reference:
+        logger.info("Aligning reads to reference for determinging insert size")
         sorted_bam = align_reads(dirname="align", reads_ns=reads_ns,
                                  config=config, downsample=True, args=args, logger=logger)
         reads_ns.insert_mean, reads_ns.insert_stddev = get_insert_stats(
@@ -1489,12 +1709,6 @@ def main(args=None, logger=None):
     print("LIBRARY DETAILS")
     print(tabulate.tabulate(read_table))
 
-    ################################################################
-    # $tb = Text::ASCIITable->new( { 'headingText' => 'Assembly Information' } );
-    # $tb->setCols( 'Aaaaaaaaargh', 'Phwwwwwwweb' );
-    # $tb->setOptions( { 'hide_HeadRow' => 1 } );
-    # $tb->alignCol( 'Aaaaaaaaargh', 'left' );
-    # $tb->alignCol( 'Phwwwwwwweb',  'left' );
     run_table = [
         ["Assembly category",        reads_ns.lib_type],
         ["Selected assemblers",      " ".join(args.assemblers)],
@@ -1508,37 +1722,24 @@ def main(args=None, logger=None):
     ]
     print("ASSEMBLER DETAILS")
     print(tabulate.tabulate(run_table))
-    if args.assemblies is None:
+    contig_scaffold_list = [] # holds pairs of (contigs_path, scaffolds_path)
+    if args.assemblies_contigs is None and args.assemblies_scaffolds is None:
         for assembler, assembler_args in assemblers_list:
-            run_assembler(
+            logger.info("Assembling with %s", assembler)
+            contigs_path, scaffolds_path  = run_assembler(
                 assembler=assembler, assembler_args=assembler_args,
                 args=args, reads_ns=reads_ns, config=config, logger=logger)
-#     my $pm = new Parallel::ForkManager(2);
-#     my $id_ok = 1;
-#     if ( !$already_assembled ){
-# 	print "Running in $mode mode\n";
-# 	my $ret;
-# 	my $link = 0;
-
-# 	#if we are running a single assembler we need to symlink its contig output
-# 	# into $tmpdir - pass a $link flag to run_assembler
-# 	$link = 1 if ( $#assemblers == 0 );
-# 	for ( my $i = 0 ; $i <= $#assemblers ; $i++ ) {
-
-# 	    my $assembler = $assemblers[$i];
-# 	    my $args      = $assembler_args[$i];
-
-# 	    run_assembler(
-# 		$tmpdir,      $assembler, $reference,   $args,     $link,
-# 		$type,        $encoding,  $genome_size, $platform, $mean_read_length,
-# 		$insert_size, $stddev,    $threads
-# 		);
-# 	}
-# 	merge_assemblies( $tmpdir, \@assemblers, $merge_method ) if ( $#assemblers == 1 );
-# 	if ( $scaffolder && $reference ) {
-# 	    $id_ok = check_id($tmpdir);
-# 	}
-#     } else { # end if already assembled
+            contig_scaffold_list.append((contigs_path, scaffolds_path))
+    else:
+        for i, path  in enumerate(args.assemblies_contigs):
+            contig_scaffold_list.append((path, args.assemblies_scaffolds[i]))
+    if len(contig_scaffold_list) > 1:
+        #run merge
+        merged_contigs_path = merge_assemblies(args=args, config=config, reads_ns=reads_ns, logger=logger)
+        if args.scaffolder and args.reference:
+            ID_OK = check_id(args, contigs, logger)
+    sys.exit(0)
+    # } else { # end if already assembled
 #     	print "using assemblies from another directory\n";
 #     	$id_ok = 1;  # it better be, that is
 # 	$tmpdir = $scratchdir;
@@ -1822,183 +2023,11 @@ def main(args=None, logger=None):
 
 
 
-def get_assembler_cmds(assembler, assembler_args, args, config, reads_ns):
-    # get the proper running command
-    if reads_ns.lib_type == "hybrid":
-        cmd = assembler['command_hybrid']
-    elif reads_ns.lib_type == "de_fere":
-        cmd = assembler['command_hybrid']
-    elif args.fastq2 is None:
-        cmd = assembler['command_pe']
-    else:
-        cmd = assembler['command_se']
-    # add args
-    if assembler_args:
-        cmd = cmd + " " + assembler_args
-    elif assembler['default_args']:
-        cmd = cmd + " " + assembler['default_args']
-    # get output name
-    contig_output = assembler['contig_output']
-    scaffold_output = assembler['scaffold_output'] if assembler['scaffold_output'] else None
-    CREATE = assembler['create_dir']
-    if CREATE:
-        os.makedirs(os.path.join(args.tmp_dir, assembler['name']))
-    cmd = replace_placeholders(string=cmd, config=config, args=args,
-                               reads_ns=reads_ns, assembler=assembler)
-    cmd = cmd + " > {0}/{1}.log 2>&1".format(args.tmp_dir, assembler['name'])
-    return cmd
 
 
-def run_assembler(assembler, assembler_args, args, reads_ns,config, logger):
-    """
-    Runs specified assembler on fastq files
 
-    required params: $ (tmpdir)
-                 $ (assembler name)
-                 $ (reference fasta sequece - probably not needed)
-                 $ (arguments to pass to assembler)
-                 $ (link - flag to indicate contigs should be symlinked into tmpdir)
-                 $ (category - type of assembly to run, since an assembler may fall into more
-                 than one category)
-                 $ (encoding - some assemblers need explicitly telling)
-                 $ (genome size)
-                 $ (average read length)
-	           $ (insert size)
-                 $ (insert size stddev)
-    returns          $ (0)
-    """
-    assembler = [x for x in config.assemblers if x['name'] == assembler]
-    assert len(assembler) == 1, "multiple matches for assemblers"
-    assembler = assembler[0]
-    assembler_cmd = get_assembler_cmds(assembler=assembler,
-                                       assembler_args=assembler_args,
-                                       args=args,
-                                       config=config, reads_ns=reads_ns)
-    logger.debug(assembler_cmd)
-    subprocess.run(assembler_cmd,
-                   shell=sys.platform != "win32",
-                   stdout=subprocess.PIPE,
-                   stderr=subprocess.PIPE,
-                   check=True)
-#     message(" Starting $assembler assembly ... ");
-#     system($cmd) == 0 or die "Error running $cmd: $! ";
 
-#     my $header = "$assembler assembly statistics";
-#     print $header . "\n" . '=' x length($header) . "\n\n";
-#     get_contig_stats( "$contig_output", 'contigs' );
 
-#     # Only generate scaffold stats for paired read alignments...
-#     get_contig_stats( "$scaffold_output", 'scaffolds' )
-#       if ( $scaffold_output && -e $scaffold_output && -e "$tmpdir/read2.fastq" );
-
-#     # rename contigs/scaffolds for consistent naming, since we need to retrieve by
-#     # id later, so it helps if we know what the ids look like...
-#     if ( !$create ) {
-#         my $outdir = dirname($contig_output);
-#         chdir $outdir or die " Error changing to dir $outdir: $! ";
-#     }
-
-#     my $inIO = Bio::SeqIO->new( -format => 'fasta', -file => $contig_output );
-#     my $outIO =
-#       Bio::SeqIO->new( -format => 'fasta',
-#                        -file   => ">BugBuilder.contigs.fasta" );
-#     my $contig_count = 0;
-#     while ( my $seq = $inIO->next_seq() ) {
-#         my $contig_id = sprintf( "contig_%06s", ++$contig_count );
-#         $seq->id($contig_id);
-#         $outIO->write_seq($seq);
-#     }
-
-#     if ( $scaffold_output && ( -e $scaffold_output ) ) {    #&& ( -e "$tmpdir/read2.fastq" ) ) {
-#         my $inIO = Bio::SeqIO->new( -format => 'fasta', -file => $scaffold_output );
-#         my $outIO =
-#           Bio::SeqIO->new( -format => 'fasta',
-#                            -file   => ">BugBuilder.scaffolds.fasta" );
-#         my $scaffold_count = 0;
-#         while ( my $seq = $inIO->next_seq() ) {
-#             my $scaffold_id = sprintf( "scaffold_%06s", ++$scaffold_count );
-#             $seq->id($scaffold_id);
-#             $outIO->write_seq($seq);
-#         }
-#     }
-
-#     if ($link) {
-
-#         # need to use File::Find::Rule to get the right path since some outputs are more nested
-#         # than others...
-#         my $contigs = ( File::Find::Rule->file()->name("BugBuilder.contigs.fasta")->in("$tmpdir/$assembler") )[0];
-#         symlink( $contigs, "../contigs.fasta" )
-#           or die "Error creating symlink: $!";
-#         if ( $scaffold_output && ( -e $scaffold_output ) ) {
-#             my $scaffolds =
-#               ( File::Find::Rule->file()->name("BugBuilder.scaffolds.fasta")->in("$tmpdir/$assembler") )[0];
-#             symlink( $scaffolds, "../scaffolds.fasta" )
-#               or die "Error creating symlink: $!"
-#               if ($scaffolds);
-#         }
-#     }
-
-#     chdir $tmpdir or die "Could not chdir to $tmpdir: $!" if ($create);
-
-#     return ();
-# }
-
-# ######################################################################
-# #
-# # merge_assemblies
-# #
-# # combines two assemblies using the selected merge-method
-# #
-# # required params: $ (tmpdir)
-# #                  $ (arrayref of assemblers used)
-# #                  $ (method)
-# #                  $ (reference)
-# #
-# # returns        : $ (0)
-# #
-# ######################################################################
-
-# sub merge_assemblies {
-
-#     my $tmpdir     = shift;
-#     my $assemblers = shift;
-#     my $method     = shift;
-#     my $reference  = shift;
-
-#     message("Merging assemblies ($method)...");
-
-#     my ( $cmd, $create_dir, $contig_output );
-#     my $merge_tools = $config->{'merge_tools'};
-#     foreach my $tool (@$merge_tools) {
-#         my $name = $tool->{'name'};
-#         if ( $name eq $method ) {
-#             $cmd           = $tool->{'command'};
-#             $create_dir    = $tool->{'create_dir'};
-#             $contig_output = $tool->{'contig_output'};
-#         }
-#         if ($create_dir) {
-#             mkdir "$tmpdir/$method" or die "Error creating $tmpdir/$method: $! ";
-#             chdir "$tmpdir/$method" or die "Error chdiring to $tmpdir/$method: $!";
-#         }
-
-#         $cmd =~ s/__BUGBUILDER_BIN__/$FindBin::Bin/;
-#         $cmd =~ s/__TMPDIR__/$tmpdir/;
-#         $cmd =~ s/__ASSEMB1__/$assemblers->[0]/;
-#         $cmd =~ s/__ASSEMB2__/$assemblers->[1]/;
-#         $cmd =~ s/__REFERENCE__/${tmpdir}\/reference.fasta/;
-
-#         system($cmd) == 0 or die "Error running $cmd: $!";
-#         chdir $tmpdir     or die " Error chdiring to $tmpdir: $! ";
-#         symlink( "$method/$contig_output", "contigs.fasta" )
-#           or die " Error creating symlink : $! ";
-
-#         print "Merged assembly statistics : \n============================\n";
-#         get_contig_stats( "$tmpdir/$method/$contig_output", 'contigs' );
-
-#         return (0);
-
-#     }
-# }
 
 # ######################################################################
 # #
@@ -2071,65 +2100,8 @@ def run_assembler(assembler, assembler_args, args, reads_ns,config, logger):
 
 # }
 
-# ######################################################################
-# #
-# # check_id
-# #
-# # Checks wether the assembled contigs have sufficient identity to the
-# # reference for reference-based scaffolding
-# #
-# # required params: $ (tmp directory);
-# #
-# # returns        : $ id_ok (boolean)
-# #
-# ######################################################################
 
-# sub check_id {
 
-#     my $tmpdir = shift;
-
-#     message("Checking identity of assembly with reference...");
-
-#     my $id_ok = 0;
-
-#     mkdir "$tmpdir/id_check"
-#       or die "Error creating $tmpdir/id_check: $! "
-#       if ( !-d "$tmpdir/id_check" );
-#     chdir "$tmpdir/id_check"
-#       or die "Error chdiring to $tmpdir/id_check: $! ";
-
-#     my $cmd = $config->{'blast_dir'}
-#       . "/blastn -query $tmpdir/contigs.fasta -subject $tmpdir/reference_parsed_ids.fasta -outfmt 5 -evalue 0.01 -out blastout.xml 2>&1 > blastn.log";
-#     system($cmd) == 0 or die "Error running $cmd: $!";
-
-#     my $blio = Bio::SearchIO->new( -format => 'blastxml',
-#                                    -file   => 'blastout.xml' );
-
-#     my ( $aligned, $unaligned );
-#     while ( my $result = $blio->next_result() ) {
-#         foreach my $hit ( $result->hits() ) {
-#             my $tiling = Bio::Search::Tiling::MapTiling->new($hit);
-#             $aligned   += $tiling->num_aligned();
-#             $unaligned += $tiling->num_unaligned();
-#         }
-#     }
-#     my $percent_id = sprintf( '%.2f', ( $aligned / ( $aligned + $unaligned ) * 100 ) );
-#     print "ID=$percent_id %\n";
-
-#     if ( $percent_id > 80 ) {
-#         $id_ok = 1;
-#     }
-#     else {
-#         $id_ok = 0;
-#         print RED, "WARNING", RESET, ": Percentage identitiy of assembly with reference looks to low (${percent_id}%\n";
-#         print "Reference will not be used for scaffolding or ordering contigs\n";
-#     }
-
-#     chdir $tmpdir or die "Error chdiring to $tmpdir: $!";
-
-#     return ($id_ok);
-
-# }
 
 # ######################################################################
 # #
@@ -3636,109 +3608,55 @@ def run_assembler(assembler, assembler_args, args, reads_ns,config, logger):
 #     return (0);
 # }
 
-# ######################################################################
-# #
-# # get_contig_stats
-# #
-# # Reports contig statistics on assembly. Reports on scaffolds or
-# # contigs depending upon 2nd argument passed - contigs gives values
-# # for all contigs and those >200bp
-# #
-# # required params: $ (path to contigs)
-# #                  $ ('scaffolds'|'contigs')
-# #
-# # returns          $ (0)
-# #
-# ######################################################################
+def get_L50_N50(lengths):
+    lengths.sort()
+    tot = sum(lengths)
+    fifty = float(tot / 2)
+    progress, N50 = 0, 0
+    for L50 in lengths:
+        N50 = N50 + 1
+        progress = progress + L50
+        if progress >= fifty:
+            return (L50, N50)
 
-# sub get_contig_stats {
 
-#     my $file = shift;
-#     my $type = shift;
+def get_contig_stats(contigs, ctype):
+    """
+    Reports contig statistics on assembly. Reports on scaffolds or
+    contigs depending upon 2nd argument passed - contigs gives values
+    for all contigs and those >200bp
 
-#     my $IO = Bio::SeqIO->new( -format => 'fasta', -file => $file );
-#     my ( %lengths, @all_lengths, $count, $tot_length, $max, $progress, $n50, $l50, $n50_tot );
-#     my (
-#          %lengths_200,  @all_lengths_200, $count_200, $tot_length_200, $max_200,
-#          $progress_200, $n50_200,         $l50_200,   $n50_tot_200
-#        );
+    required params: $ (path to contigs)
+                 $ ('scaffolds'|'contigs')
 
-#     while ( my $seq = $IO->next_seq() ) {
-#         $lengths{ $seq->length() }++;
-#         $count++;
-#         $tot_length += $seq->length();
-#         push @all_lengths, $seq->length();
-#         if ( $seq->length() > 200 ) {
-#             $lengths_200{ $seq->length() }++;
-#             $count_200++;
-#             $tot_length_200 += $seq->length();
-#             push @all_lengths_200, $seq->length();
-#         }
-#     }
+    returns          $ (0)
+    """
+    assert ctype in ['scaffolds', 'contigs'], "invalid contig type"
+    count, count_200 = 0, 0
+    all_lengths, all_lengths_200 = [], []
+    lengths, lengths_200 = [], []
+    with open(contigs, "r") as inf:
+        for rec in SeqIO.parse(contigs, "fasta"):
+            length = len(rec.seq)
+            count = count + 1
+            all_lengths.append(length)
+            if length > 200:
+                lengths_200.append(length)
+                count_200 = count_200 + 1
+                all_lengths_200.append(length)
 
-#     my $fifty     = $tot_length / 2;
-#     my $fifty_200 = $tot_length_200 / 2;
-
-#     my @sorted_lengths     = sort { $b <=> $a } @all_lengths;
-#     my @sorted_lengths_200 = sort { $b <=> $a } @all_lengths_200;
-
-#     # l50
-#     foreach ( sort { $b <=> $a } keys(%lengths) ) {
-#         $max = $_ if ( !$max );
-#         $progress += $_ * ( $lengths{$_} );
-#         if ( $progress >= $fifty ) {
-#             $l50 = $_;
-#             last;
-#         }
-#     }
-#     foreach ( sort { $b <=> $a } keys(%lengths_200) ) {
-#         $max_200 = $_ if ( !$max_200 );
-#         $progress_200 += $_ * ( $lengths_200{$_} );
-#         if ( $progress_200 >= $fifty_200 ) {
-#             $l50_200 = $_;
-#             last;
-#         }
-#     }
-
-#     # n50
-#     foreach my $length (@sorted_lengths) {
-#         $n50_tot += $length;
-#         $n50++;
-
-#         # $l50 = $length;
-#         last if ( $n50_tot >= $fifty );
-#     }
-#     foreach my $length (@sorted_lengths_200) {
-#         $n50_tot_200 += $length;
-#         $n50_200++;
-
-#         # $l50_200 = $length;
-#         last if ( $n50_tot_200 >= $fifty_200 );
-#     }
-
-#     my $tb = Text::ASCIITable->new();
-#     if ( $type eq 'contigs' ) {
-#         $type = ucfirst($type);
-#         $tb->setCols( "", "All $type", "$type >200bp" );
-#         $tb->addRow( "$type count",   $count,      $count_200 );
-#         $tb->addRow( "Max Length",    $max,        $max_200 );
-#         $tb->addRow( "Assembly size", $tot_length, $tot_length_200 );
-#         $tb->addRow( "L50",           $l50,        $l50_200 );
-#         $tb->addRow( "N50",           $n50,        $n50_200 );
-#     }
-#     else {
-#         $type = ucfirst($type);
-#         $tb->setCols( "", "All $type" );
-#         $tb->addRow( "$type count",   $count );
-#         $tb->addRow( "Max Length",    $max );
-#         $tb->addRow( "Assembly size", $tot_length );
-#         $tb->addRow( "L50",           $l50 );
-#         $tb->addRow( "N50",           $n50 );
-#     }
-#     print $tb . "\n";
-
-#     return (0);
-# }
+    sorted_lengths     = sorted(all_lengths)
+    sorted_lengths_200 = sorted(all_lengths_200)
+    L50, N50 = get_L50_N50(all_lengths)
+    L50_200, N50_200 = get_L50_N50(all_lengths_200)
+    return [
+        ["", "All $type", "$type >200bp"],
+        [ctype + " count", count, count_200],
+        ["Max Length", max(all_lengths), max(all_lengths_200)],
+        ["Assembly size", sum(all_lengths), sum(all_lengths_200)],
+        ["L50", L50, L50_200],
+        ["N50", N50, N50_200 ]
+    ]
 
 # ######################################################################
 # #
