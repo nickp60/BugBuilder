@@ -61,6 +61,18 @@ class test_BugBuilder(unittest.TestCase):
         lengths  = [2, 2, 2, 3, 3, 4, 8, 8]
         self.assertEqual(bb.get_L50_N50(lengths), (2, 6))
 
+    def test_match_assembler_args_unequal(self):
+        test_args = Namespace(assembler=["spades"],
+                              assembler_args=["too", "many", "args"])
+        with self.assertRaises(ValueError):
+            bb.match_assembler_args(test_args)
+
+    def test_match_assembler_args_no_assembler(self):
+        test_args = Namespace(assembler=[],
+                              assembler_args=["too", "many", "args"])
+        self.assertEqual(bb.match_assembler_args(test_args),
+                         [None], [None])
+
 
     def tearDown(self):
         pass

@@ -635,13 +635,26 @@ def set_up_logging(verbosity, outfile, name):
     return logger
 
 
-def match_assembler_args(assembler, assembler_args):
-    """these will both be lists coming off of argparse
+def match_assembler_args(args):
+    """Ensure that both assembler and assemb_args are same length
+
+    these will both be lists coming off of argparse; we need to ensure that
+    they have the same number of items in list.
+
+    Args:
+       args (Namespace): The argparse namespace
+    Raises:
+        ValueError: if the length of the args is unequal
+    Returns:
+        list: [assembler_name, assembler_argument_string]
     """
     assembler_list = []
-    if assembler is not None and assembler_args is not None:
-        assert len(assembler) == len(assembler_args), \
-            "length of assemblers must equal length of assembler args"
+    if args.assembler is None:
+        return [None, None]
+    if args.assembler_args is not None:
+        if len(assembler) != len(assembler_args):
+            raise ValueError("length of assemblers must equal " +
+                             "length of assembler args")
         for i, v in enumerate(assembler):
             assembler_list.append([v, assembler_args[i]])
     else:
@@ -1618,9 +1631,7 @@ def check_id(args, contigs, logger):
 def main(args=None, logger=None):
     if args is None:
         args = get_args()
-    assemblers_list = match_assembler_args(
-        assembler=args.assemblers,
-        assembler_args=args.assembler_args)
+    assemblers_list = match_assembler_args(args=args)
     check_file_paths(args)
 
     seq_ids = None
@@ -2147,8 +2158,6 @@ def run_scaffolder(scaffolder_name, args, config, reads_ns, run_id, logger):
     # my $threads          = shift;
     logger.info(" Starting $scaffolder");
 
-    # my ( $cmd, $scaffold_output, $unscaffolded_output, $create, $linkage_evidence, $default_args );
-
     blast_dir = config.blast_dir
 #     for scaffolder in args.scaffolders:
 #         get_scaffolder_cmd():
@@ -2230,193 +2239,196 @@ def run_scaffolder(scaffolder_name, args, config, reads_ns, run_id, logger):
                             if ref.id == ref:
                                 SeqIO.write(contig_f, rec, "fasta")
 
-###################################################3
-        my $mergedIO = Bio::SeqIO->new( -format => 'fasta', -file => ">$run_dir/scaffolds.fasta" );
-        my $merged_scaffolds;    #for final merging of per-reference scaffolds
-        my $merged_scaff_count = 0;
+        ###################################################3
 
-        # Now run the selecting scaffolder on each set of reference and contigs...
-        foreach my $ref_id (@ref_ids) {
+#         my $mergedIO = Bio::SeqIO->new( -format => 'fasta', -file => ">$run_dir/scaffolds.fasta" );
+#         my $merged_scaffolds;    #for final merging of per-reference scaffolds
+#         my $merged_scaff_count = 0;
 
-            my $scaff_contigs = "reference_${ref_id}_contigs";
+#         # Now run the selecting scaffolder on each set of reference and contigs...
+#         for ref_id in ref_ids:
+#             if os.path.exists(re
+#         foreach my $ref_id (@ref_ids) {
 
-            # Only if anything mapped to this reference
-            next unless ( -e "${run_dir}/${scaff_contigs}" );
+#             my $scaff_contigs = "reference_${ref_id}_contigs";
 
-            print "\nScaffolding vs. $ref_id\n";
+#             # Only if anything mapped to this reference
+#             next unless ( -e "${run_dir}/${scaff_contigs}" );
 
-            my $exec_cmd  = $cmd;
-            my $reference = "reference_${ref_id}";
+#             print "\nScaffolding vs. $ref_id\n";
 
-            my @replace = ( $cmd, $scaffold_output );
-            foreach ( $exec_cmd, $scaffold_output ) {
-                s/__BUGBUILDER_BIN__/$FindBin::Bin/;
-                s/__TMPDIR__/$tmpdir/g;
-                s/__SCAFFDIR__/$run_dir\/${scaffolder}_${ref_id}/g;
-                s/__RUN__/$run_id/;
-                s/__FASTQ1__/$tmpdir\/read1.fastq/;
-                s/__FASTQ2__/$tmpdir\/read2.fastq/;
-                s/__REFERENCE__/${run_dir}\/${reference}/;
-                s/__CONTIGS__/${run_dir}\/${scaff_contigs}/;
-                s/__INSSIZE__/$insert_size/;
-                s/__INSSD__/$insert_sd/;
-                s/__THREADS__/$threads/;
-            }
-            if ( defined($unscaffolded_output) ) {
-                $unscaffolded_output =~ s/__BUGBUILDER_BIN__/$FindBin::Bin/;
-                $unscaffolded_output =~ s/__TMPDIR__/$tmpdir/g;
-                $unscaffolded_output =~ s/__SCAFFDIR__/$run_dir\/$ref_id/g;
-                $unscaffolded_output =~ s/__RUN__/$run_id/g;
-                $unscaffolded_output =~ s/__FASTQ1__/$tmpdir\/read1.fastq/;
-                $unscaffolded_output =~ s/__FASTQ2__/$tmpdir\/read2.fastq/;
-                $unscaffolded_output =~ s/__REFERENCE__/${run_dir}_${reference}/;
-                $unscaffolded_output =~ s/__CONTIGS__/$run_dir\/$scaff_contigs/;
-                $unscaffolded_output =~ s/__INSSIZE__/$insert_size/;
-                $unscaffolded_output =~ s/__INSSD__/$insert_sd/;
-            }
-            my $run_scaffold_output = "$run_dir/${scaffolder}_${ref_id}/$scaffold_output";
+#             my $exec_cmd  = $cmd;
+#             my $reference = "reference_${ref_id}";
 
-            if ($scaffolder_args) {
-                $exec_cmd .= "$scaffolder_args";
-            }
-            elsif ($default_args) {
-                $exec_cmd .= "$default_args" if ($default_args);
-            }
+#             my @replace = ( $cmd, $scaffold_output );
+#             foreach ( $exec_cmd, $scaffold_output ) {
+#                 s/__BUGBUILDER_BIN__/$FindBin::Bin/;
+#                 s/__TMPDIR__/$tmpdir/g;
+#                 s/__SCAFFDIR__/$run_dir\/${scaffolder}_${ref_id}/g;
+#                 s/__RUN__/$run_id/;
+#                 s/__FASTQ1__/$tmpdir\/read1.fastq/;
+#                 s/__FASTQ2__/$tmpdir\/read2.fastq/;
+#                 s/__REFERENCE__/${run_dir}\/${reference}/;
+#                 s/__CONTIGS__/${run_dir}\/${scaff_contigs}/;
+#                 s/__INSSIZE__/$insert_size/;
+#                 s/__INSSD__/$insert_sd/;
+#                 s/__THREADS__/$threads/;
+#             }
+#             if ( defined($unscaffolded_output) ) {
+#                 $unscaffolded_output =~ s/__BUGBUILDER_BIN__/$FindBin::Bin/;
+#                 $unscaffolded_output =~ s/__TMPDIR__/$tmpdir/g;
+#                 $unscaffolded_output =~ s/__SCAFFDIR__/$run_dir\/$ref_id/g;
+#                 $unscaffolded_output =~ s/__RUN__/$run_id/g;
+#                 $unscaffolded_output =~ s/__FASTQ1__/$tmpdir\/read1.fastq/;
+#                 $unscaffolded_output =~ s/__FASTQ2__/$tmpdir\/read2.fastq/;
+#                 $unscaffolded_output =~ s/__REFERENCE__/${run_dir}_${reference}/;
+#                 $unscaffolded_output =~ s/__CONTIGS__/$run_dir\/$scaff_contigs/;
+#                 $unscaffolded_output =~ s/__INSSIZE__/$insert_size/;
+#                 $unscaffolded_output =~ s/__INSSD__/$insert_sd/;
+#             }
+#             my $run_scaffold_output = "$run_dir/${scaffolder}_${ref_id}/$scaffold_output";
 
-            $exec_cmd .= " 2>&1 >$tmpdir/${scaffolder}_${run_id}_${ref_id}.log";
+#             if ($scaffolder_args) {
+#                 $exec_cmd .= "$scaffolder_args";
+#             }
+#             elsif ($default_args) {
+#                 $exec_cmd .= "$default_args" if ($default_args);
+#             }
 
-            mkdir("$run_dir/${scaffolder}_${ref_id}") or die "Error creating $run_dir/${scaffolder}_${ref_id}: $! ";
-            chdir("$run_dir/${scaffolder}_${ref_id}") or die "Error in chdir $run_dir/${scaffolder}_${ref_id}: $! ";
-            symlink( "$run_dir/${reference}", "$run_dir/${scaffolder}_${ref_id}/$reference" )
-              or die "Error linking $reference:$! ";
+#             $exec_cmd .= " 2>&1 >$tmpdir/${scaffolder}_${run_id}_${ref_id}.log";
 
-            #symlink( "$run_dir/reference_${ref_ids[0]}_contigs", "$run_dir/${scaffolder}_${ref_id}/$contigs" )
-            #or die "Error linking $contigs:$! ";
+#             mkdir("$run_dir/${scaffolder}_${ref_id}") or die "Error creating $run_dir/${scaffolder}_${ref_id}: $! ";
+#             chdir("$run_dir/${scaffolder}_${ref_id}") or die "Error in chdir $run_dir/${scaffolder}_${ref_id}: $! ";
+#             symlink( "$run_dir/${reference}", "$run_dir/${scaffolder}_${ref_id}/$reference" )
+#               or die "Error linking $reference:$! ";
 
-            system("perl $exec_cmd") == 0 or die "Error executing $exec_cmd: ";
-            my $scaffIO =
-              Bio::SeqIO->new( -format => 'fasta', -file => "$run_dir/${scaffolder}_${ref_id}/scaffolds.fasta" )
-              or die "Error opening $run_dir/${scaffolder}_${ref_id}/scaffolds.fasta: $!";
-            while ( my $scaff = $scaffIO->next_seq() ) {
-                $scaff->display_id( 'scaffold_' . ++$merged_scaff_count );
-                $mergedIO->write_seq($scaff);
-            }
-        }
-    }
-    else {    #non reference-guided scaffolding....
+#             #symlink( "$run_dir/reference_${ref_ids[0]}_contigs", "$run_dir/${scaffolder}_${ref_id}/$contigs" )
+#             #or die "Error linking $contigs:$! ";
 
-        my $exec_cmd = $cmd;
+#             system("perl $exec_cmd") == 0 or die "Error executing $exec_cmd: ";
+#             my $scaffIO =
+#               Bio::SeqIO->new( -format => 'fasta', -file => "$run_dir/${scaffolder}_${ref_id}/scaffolds.fasta" )
+#               or die "Error opening $run_dir/${scaffolder}_${ref_id}/scaffolds.fasta: $!";
+#             while ( my $scaff = $scaffIO->next_seq() ) {
+#                 $scaff->display_id( 'scaffold_' . ++$merged_scaff_count );
+#                 $mergedIO->write_seq($scaff);
+#             }
+#         }
+#     }
+#     else {    #non reference-guided scaffolding....
 
-        # A kludge to work when tmpdir is not the top run dir - needed
-        # because align_reads concatenates path from tmpdir and contigs.fasta
-        if ( !-e "$tmpdir/contigs.fasta" ) {
-            symlink( $contigs, "$tmpdir/contigs.fasta" );
-        }
+#         my $exec_cmd = $cmd;
 
-        # if no reference provided we won't have an estimate of insert size,
-        # so need to get this by read alignment vs the assembly.
-        if ( !$insert_size ) {
-            align_reads( $tmpdir, "contigs.fasta", $mean_read_length, 1 );
-            ( $insert_size, $insert_sd ) = get_insert_stats( "$tmpdir", "contigs.fasta" );
-        }
+#         # A kludge to work when tmpdir is not the top run dir - needed
+#         # because align_reads concatenates path from tmpdir and contigs.fasta
+#         if ( !-e "$tmpdir/contigs.fasta" ) {
+#             symlink( $contigs, "$tmpdir/contigs.fasta" );
+#         }
 
-        my @replace = ( $cmd, $scaffold_output );
-        foreach ( $exec_cmd, $scaffold_output ) {
-            s/__BUGBUILDER_BIN__/$FindBin::Bin/;
-            s/__TMPDIR__/$tmpdir/g;
-            s/__SCAFFDIR__/$run_dir/g;
-            s/__RUN__/$run_id/;
-            s/__FASTQ1__/$tmpdir\/read1.fastq/;
-            s/__FASTQ2__/$tmpdir\/read2.fastq/;
-            s/__CONTIGS__/$contigs/;
-            s/__INSSIZE__/$insert_size/;
-            s/__INSSD__/$insert_sd/;
-            s/__THREADS__/$threads/;
-        }
-        if ( defined($unscaffolded_output) ) {
-            $unscaffolded_output =~ s/__BUGBUILDER_BIN__/$FindBin::Bin/;
-            $unscaffolded_output =~ s/__TMPDIR__/$tmpdir/g;
-            $unscaffolded_output =~ s/__SCAFFDIR__/$run_dir/g;
-            $unscaffolded_output =~ s/__RUN__/$run_id/g;
-            $unscaffolded_output =~ s/__FASTQ1__/$tmpdir\/read1.fastq/;
-            $unscaffolded_output =~ s/__FASTQ2__/$tmpdir\/read2.fastq/;
-            $unscaffolded_output =~ s/__CONTIGS__/$contigs/;
-            $unscaffolded_output =~ s/__INSSIZE__/$insert_size/;
-            $unscaffolded_output =~ s/__INSSD__/$insert_sd/;
-        }
-        my $run_scaffold_output = "$run_dir/${scaffolder}/$scaffold_output";
+#         # if no reference provided we won't have an estimate of insert size,
+#         # so need to get this by read alignment vs the assembly.
+#         if ( !$insert_size ) {
+#             align_reads( $tmpdir, "contigs.fasta", $mean_read_length, 1 );
+#             ( $insert_size, $insert_sd ) = get_insert_stats( "$tmpdir", "contigs.fasta" );
+#         }
 
-        if ($scaffolder_args) {
-            $exec_cmd .= "$scaffolder_args";
-        }
-        elsif ($default_args) {
-            $exec_cmd .= "$default_args" if ($default_args);
-        }
+#         my @replace = ( $cmd, $scaffold_output );
+#         foreach ( $exec_cmd, $scaffold_output ) {
+#             s/__BUGBUILDER_BIN__/$FindBin::Bin/;
+#             s/__TMPDIR__/$tmpdir/g;
+#             s/__SCAFFDIR__/$run_dir/g;
+#             s/__RUN__/$run_id/;
+#             s/__FASTQ1__/$tmpdir\/read1.fastq/;
+#             s/__FASTQ2__/$tmpdir\/read2.fastq/;
+#             s/__CONTIGS__/$contigs/;
+#             s/__INSSIZE__/$insert_size/;
+#             s/__INSSD__/$insert_sd/;
+#             s/__THREADS__/$threads/;
+#         }
+#         if ( defined($unscaffolded_output) ) {
+#             $unscaffolded_output =~ s/__BUGBUILDER_BIN__/$FindBin::Bin/;
+#             $unscaffolded_output =~ s/__TMPDIR__/$tmpdir/g;
+#             $unscaffolded_output =~ s/__SCAFFDIR__/$run_dir/g;
+#             $unscaffolded_output =~ s/__RUN__/$run_id/g;
+#             $unscaffolded_output =~ s/__FASTQ1__/$tmpdir\/read1.fastq/;
+#             $unscaffolded_output =~ s/__FASTQ2__/$tmpdir\/read2.fastq/;
+#             $unscaffolded_output =~ s/__CONTIGS__/$contigs/;
+#             $unscaffolded_output =~ s/__INSSIZE__/$insert_size/;
+#             $unscaffolded_output =~ s/__INSSD__/$insert_sd/;
+#         }
+#         my $run_scaffold_output = "$run_dir/${scaffolder}/$scaffold_output";
 
-        $exec_cmd .= " 2>&1 >$tmpdir/${scaffolder}_${run_id}.log";
+#         if ($scaffolder_args) {
+#             $exec_cmd .= "$scaffolder_args";
+#         }
+#         elsif ($default_args) {
+#             $exec_cmd .= "$default_args" if ($default_args);
+#         }
 
-        system("perl $exec_cmd") == 0 or die "Error executing $exec_cmd:$!";
+#         $exec_cmd .= " 2>&1 >$tmpdir/${scaffolder}_${run_id}.log";
 
-        #mkdir("$run_dir/${scaffolder}") or die "Error creating $run_dir/${scaffolder}: $! ";
-        #chdir("$run_dir/${scaffolder}") or die "Error in chdir $run_dir/{scaffolder}: $! ";
-        #symlink( "$run_dir/${reference}", "$run_dir/${scaffolder}/$reference" )
-        #  or die "Error linking $reference:$! ";
+#         system("perl $exec_cmd") == 0 or die "Error executing $exec_cmd:$!";
 
-        #symlink( "$run_dir/reference_${ref_ids[0]}_contigs", "$run_dir/${scaffolder}_${ref_id}/$contigs" )
+#         #mkdir("$run_dir/${scaffolder}") or die "Error creating $run_dir/${scaffolder}: $! ";
+#         #chdir("$run_dir/${scaffolder}") or die "Error in chdir $run_dir/{scaffolder}: $! ";
+#         #symlink( "$run_dir/${reference}", "$run_dir/${scaffolder}/$reference" )
+#         #  or die "Error linking $reference:$! ";
 
-    }
+#         #symlink( "$run_dir/reference_${ref_ids[0]}_contigs", "$run_dir/${scaffolder}_${ref_id}/$contigs" )
 
-    # Create a fasta file of unplaced contigs if files of contig_ids are generated by the scaffolder wrapper
-    my @id_files = File::Find::Rule->file()->name("${scaffolder}.contig_ids")->in($run_dir);
-    if ( scalar(@id_files) ) {
-        my %used_contigs;
-        foreach my $id_file (@id_files) {
-            open CONTIG_IDS, $id_file or die "Error opening $id_file: $!";
-            while (<CONTIG_IDS>) {
-                chomp;
-                $used_contigs{$_}++;
-            }
-            close CONTIG_IDS;
-        }
-        my $inIO  = Bio::SeqIO->new( -format => 'fasta', -file => "$contigs" );
-        my $outIO = Bio::SeqIO->new( -format => 'fasta', -file => ">$run_dir/unplaced_contigs.fasta" );
-        while ( my $contig = $inIO->next_seq() ) {
-            $outIO->write_seq($contig) unless ( $used_contigs{ $contig->display_id() } && $contig->length() > 200 );
-        }
-    }
+#     }
 
-    #renumber scaffolds to ensure they are unique...
-    my $count = 0;
-    my $inIO  = Bio::SeqIO->new( -file => "$run_dir/scaffolds.fasta", -format => "fasta" );
-    my $outIO = Bio::SeqIO->new( -file => ">$run_dir/scaffolds_renumbered.fasta", -format => "fasta" );
+#     # Create a fasta file of unplaced contigs if files of contig_ids are generated by the scaffolder wrapper
+#     my @id_files = File::Find::Rule->file()->name("${scaffolder}.contig_ids")->in($run_dir);
+#     if ( scalar(@id_files) ) {
+#         my %used_contigs;
+#         foreach my $id_file (@id_files) {
+#             open CONTIG_IDS, $id_file or die "Error opening $id_file: $!";
+#             while (<CONTIG_IDS>) {
+#                 chomp;
+#                 $used_contigs{$_}++;
+#             }
+#             close CONTIG_IDS;
+#         }
+#         my $inIO  = Bio::SeqIO->new( -format => 'fasta', -file => "$contigs" );
+#         my $outIO = Bio::SeqIO->new( -format => 'fasta', -file => ">$run_dir/unplaced_contigs.fasta" );
+#         while ( my $contig = $inIO->next_seq() ) {
+#             $outIO->write_seq($contig) unless ( $used_contigs{ $contig->display_id() } && $contig->length() > 200 );
+#         }
+#     }
 
-    while ( my $seq = $inIO->next_seq() ) {
-        $seq->display_id( "scaffold_" . ++$count );
-        $outIO->write_seq($seq);
-    }
+#     #renumber scaffolds to ensure they are unique...
+#     my $count = 0;
+#     my $inIO  = Bio::SeqIO->new( -file => "$run_dir/scaffolds.fasta", -format => "fasta" );
+#     my $outIO = Bio::SeqIO->new( -file => ">$run_dir/scaffolds_renumbered.fasta", -format => "fasta" );
 
-    print "\nScaffolded assembly stats\n=========================\n\n";
-    get_contig_stats( "$run_dir/scaffolds.fasta", 'scaffolds' );
+#     while ( my $seq = $inIO->next_seq() ) {
+#         $seq->display_id( "scaffold_" . ++$count );
+#         $outIO->write_seq($seq);
+#     }
 
-    if ( $run_id == 1 ) {
-        chdir $tmpdir or die "Error chdiring to $tmpdir: $! ";
-        unlink "scaffolds.fasta"
-          or die "Error removing scaffolds.fasta: $! "
-          if ( -l "scaffolds.fasta" );
-        symlink( "$run_dir/scaffolds_renumbered.fasta", "scaffolds.fasta" )
-          or die "Error creating symlink: $! ";
-        if ( defined($unscaffolded_output) ) {
-            symlink( "$run_dir/$unscaffolded_output", "unplaced_contigs.fasta" )
-              or die "Error creating symlink: $!";
-        }
-        elsif ( -e "$tmpdir/${scaffolder}/unplaced_contigs.fasta" ) {
-            symlink( "${scaffolder}/unplaced_contigs.fasta", "unplaced_contigs.fasta" )
-              or die "Error creating symlink: $!";
-        }
-    }
-    return ($linkage_evidence);
+#     print "\nScaffolded assembly stats\n=========================\n\n";
+#     get_contig_stats( "$run_dir/scaffolds.fasta", 'scaffolds' );
 
-}
+#     if ( $run_id == 1 ) {
+#         chdir $tmpdir or die "Error chdiring to $tmpdir: $! ";
+#         unlink "scaffolds.fasta"
+#           or die "Error removing scaffolds.fasta: $! "
+#           if ( -l "scaffolds.fasta" );
+#         symlink( "$run_dir/scaffolds_renumbered.fasta", "scaffolds.fasta" )
+#           or die "Error creating symlink: $! ";
+#         if ( defined($unscaffolded_output) ) {
+#             symlink( "$run_dir/$unscaffolded_output", "unplaced_contigs.fasta" )
+#               or die "Error creating symlink: $!";
+#         }
+#         elsif ( -e "$tmpdir/${scaffolder}/unplaced_contigs.fasta" ) {
+#             symlink( "${scaffolder}/unplaced_contigs.fasta", "unplaced_contigs.fasta" )
+#               or die "Error creating symlink: $!";
+#         }
+#     }
+#     return ($linkage_evidence);
+
+# }
 
 # ######################################################################
 # #
