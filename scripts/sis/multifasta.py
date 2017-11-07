@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python3
 #-*- coding: utf-8 -*-
 
  #   This software was developed by Zanoni Dias, Ulisses Dias and João

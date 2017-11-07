@@ -1,22 +1,22 @@
-#!/usr/bin/python
+#!/usr/bin/env python3
 #-*- coding: utf-8 -*-
 
-#   This software was developed by Zanoni Dias, Ulisses Dias and João
-#   C. Setubal
-#
-#   It should not be redistributed or used for any commercial purpose
-#   without written permission from authors
-#
-#   release date: nov 15, 2011
-#
-# This software is experimental in nature and is
-# supplied "AS IS", without obligation by the authors to provide
-# accompanying services or support.  The entire risk as to the quality
-# and performance of the Software is with you. The authors
-# EXPRESSLY DISCLAIM ANY AND ALL WARRANTIES REGARDING THE SOFTWARE,
-# WHETHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES
-# PERTAINING TO MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
-#
+ #   This software was developed by Zanoni Dias, Ulisses Dias and João
+ #   C. Setubal
+
+ #   It should not be redistributed or used for any commercial purpose
+ #   without written permission from authors
+
+ #   release date: nov 15, 2011
+
+ # This software is experimental in nature and is
+ # supplied "AS IS", without obligation by the authors to provide
+ # accompanying services or support.  The entire risk as to the quality
+ # and performance of the Software is with you. The authors
+ # EXPRESSLY DISCLAIM ANY AND ALL WARRANTIES REGARDING THE SOFTWARE,
+ # WHETHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES
+ # PERTAINING TO MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+
 
 import sys
 import re
