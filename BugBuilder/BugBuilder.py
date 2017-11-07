@@ -649,48 +649,67 @@ def match_assembler_args(args):
         list: [assembler_name, assembler_argument_string]
     """
     assembler_list = []
-    if args.assembler is None:
+    if len(args.assembler) == 0:
         return [None, None]
-    if args.assembler_args is not None:
-        if len(assembler) != len(assembler_args):
+    if len(args.assembler_args) != 0:
+        if len(args.assembler) != len(args.assembler_args):
             raise ValueError("length of assemblers must equal " +
                              "length of assembler args")
-        for i, v in enumerate(assembler):
-            assembler_list.append([v, assembler_args[i]])
+        for i, v in enumerate(args.assembler):
+            assembler_list.append([v, args.assembler_args[i]])
     else:
-        for i, v in enumerate(assembler):
+        for i, v in enumerate(args.assembler):
             assembler_list.append([v, None])
     return assembler_list
 
 
-def check_file_paths(args):
+def check_files_present(args):
+    """ ensure our files are here if they are needed
+
+    Args:
+        argparse namespace
+    Return:
+        None
+    Raises:
+        ValueError: files duplicated
+        ValueError: file not found
+        ValueError: reference missing in draft mode
+    """
     for f in [args.fastq1, args.fastq2, args.reference]:
         if f is not None and not os.path.exists(f):
             raise ValueError("file %s does not exist!" % f)
-    if args.fastq1 is not None and args.fastq1 == args.fastq2:
-        raise valueError("fastq1 and fastq2 are the same!")
+    if args.fastq2 is not None and args.fastq1 == args.fastq2:
+        raise ValueError("fastq1 and fastq2 are the same!")
     if args.mode == "draft" and args.reference is None:
         raise ValueError("Draft mode requiresa reference!")
-    if args.reference is not None:
-         if not os.path.exists(args.reference):
-             raise ValueError(
-                 "reference sequence %s does not exist!" % args.reference )
-    if args.merge_method is None and len(args.assemblers) > 1:
-        raise ValueError("Must provide merge method if using multiple assemblers")
+    # if args.reference is not None:
+    #      if not os.path.exists(args.reference):
+    #          raise ValueError(
+    #              "reference sequence %s does not exist!" % args.reference )
+
+
+def fastq_needs_newname(args):
+    """ read the first read of each file;  if ends with -1 or -2, return true
+    """
+    for fastq in [args.fastq1, args.fastq2]:
+        with open(fastq, "r") as inf:
+            for read in SeqIO.parse(inf, "fastq"):
+                if read.id.endswith("-1") or read.id.endswith("-2"):
+                    return True
+                break
+    return False
+
 
 def setup_tmp_dir(args, output_root, logger):
     """  setup_tmp_dir creates a temporary directory and copies
     over the relevent files
-
-    requried params: $ (path to fastq1)
-                  $ (path to fastq2)
-                  $ (path to longread fastq file)
-                  $ (path to fastafile)
-    optional params: $ (platform)
-                  $ (preset value for tmp_dir)
-
-    returns        : $ (path to tmp_dir)
-
+    Args:
+        args (Namespace):
+        output_root (str):
+    Raises:
+        Sys.Exit: temp dir cannot be created
+    Returns:
+        None
     """
     if args.tmp_dir is None:
         args.tmp_dir = os.path.join(output_root, "temp_dir")
@@ -708,8 +727,14 @@ def setup_tmp_dir(args, output_root, logger):
             shutil.copyfile(f, newpath)
             # does this even work?
             f = newpath
+    if fastq_needs_newname(args):
+        rename_fastq_seqids(args)
+def rename_fastq_seqids(args):
+    if args.fastq1 is None and args.fastq2 is None:
+        return 0
 
-    # implement this later
+
+
     # # we've seen some miseq fastq files have -1/-2 rather that /1 /2 pair ids which cause
     # # problems with older software which doesn't expect this
     # my @fastqs = ( basename($fastq1) ) if ($fastq1);
@@ -1631,8 +1656,11 @@ def check_id(args, contigs, logger):
 def main(args=None, logger=None):
     if args is None:
         args = get_args()
+    if args.merge_method is None and len(args.assemblers) > 1:
+        raise ValueError("Must provide merge method if using multiple assemblers")
+
     assemblers_list = match_assembler_args(args=args)
-    check_file_paths(args)
+    check_files_present(args)
 
     seq_ids = None
     if args.reference is not None:
