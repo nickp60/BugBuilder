@@ -28,6 +28,7 @@ class test_BugBuilder(unittest.TestCase):
         self.encoding_dir = os.path.join(self.ref_dir, "encoding")
         self.test_dir = os.path.join(os.path.dirname(__file__), "tmp_tests")
         self.empty_config = os.path.join(self.ref_dir, "empty_config.yaml")
+        self.filled_config = os.path.join(self.ref_dir, "semicomplete_config.yaml")
         self.ref_fasta = os.path.join(self.ref_dir, "AP017923.1.fasta")
         self.renaming_fq = os.path.join(self.ref_dir, "needs_renaming.fq")
         self.renamed = os.path.join(self.ref_dir, "renamed_ref.fq")
@@ -115,12 +116,16 @@ class test_BugBuilder(unittest.TestCase):
         tmp_dir = os.path.join(self.test_dir, "tmp_setup")
         test_args = Namespace(fastq1=self.fastq1, fastq2=self.fastq2,
                               reference=self.ref_fasta, mode="draft",
-                              tmp_dir=tmp_dir, long_fastq=None, de_fere_contigs=None)
+                              tmp_dir=tmp_dir, long_fastq=None,
+                              de_fere_contigs=None)
         bb.setup_tmp_dir(args=test_args, output_root=tmp_dir, logger=logger)
         intended_files = [
-            os.path.join(self.test_dir, "tmp_setup", os.path.basename(self.fastq1)),
-            os.path.join(self.test_dir, "tmp_setup", os.path.basename(self.fastq2)),
-            os.path.join(self.test_dir, "tmp_setup", os.path.basename(self.ref_fasta)),
+            os.path.join(self.test_dir, "tmp_setup",
+                         os.path.basename(self.fastq1)),
+            os.path.join(self.test_dir, "tmp_setup",
+                         os.path.basename(self.fastq2)),
+            os.path.join(self.test_dir, "tmp_setup",
+                         os.path.basename(self.ref_fasta)),
         ]
         for idx, f in enumerate([self.fastq1, self.fastq2, self.ref_fasta]):
             self.assertEqual(bb.md5(intended_files[idx]), bb.md5(f))
@@ -171,13 +176,60 @@ class test_BugBuilder(unittest.TestCase):
                 de_fere_contigs=None)
             self.assertEqual(k, bb.id_fastq_encoding(args=test_args, logger=logger))
 
+
+    def test_assess_reads(self):
+        test_args = Namespace(
+            fastq1=self.fastq1, fastq2=self.fastq2, long_fastq=None,
+            de_fere_contigs=None, reference=self.ref_fasta, genome_size=0)
+        config = bb.parse_config(self.filled_config)
+        reads_ns = bb.assess_reads(args=test_args, config=config,
+                                platform="illumina", logger=logger)
+        print(reads_ns)
+        self.assertEqual(9.996, reads_ns.coverage)
+        self.assertEqual("sanger", reads_ns.encoding)
+        self.assertEqual("long_illumina", reads_ns.lib_type)
+
+    def test_check_ref_needed(self):
+        test_args = Namespace(genome_size=0, reference=None)
+        with self.assertRaises(ValueError):
+            bb.check_ref_needed(args=test_args, lib_type="long")
+
+    def test_get_config_path(self):
+        pass
+
+    def test_check_assemblers_bad_assembler(self):
+        test_args = Namespace(
+            fastq1=self.fastq1, fastq2=self.fastq2, long_fastq=None,
+            de_fere_contigs=None, reference=self.ref_fasta, genome_size=0)
+        config = bb.parse_config(self.filled_config)
+        reads_ns = bb.assess_reads(args=test_args, config=config,
+                                platform="illumina", logger=logger)
+        test_args.assemblers = ["notAnAssembler"]
+        with self.assertRaises(ValueError):
+            bb.check_assemblers(args=test_args, config=config, paired=False,
+                                reads_ns=reads_ns, logger=logger)
+
+    def test_check_assemblers_none_provided(self):
+        test_args = Namespace(
+            fastq1=self.fastq1, fastq2=self.fastq2, long_fastq=None,
+            de_fere_contigs=None, reference=self.ref_fasta, genome_size=0)
+        config = bb.parse_config(self.filled_config)
+        reads_ns = bb.assess_reads(args=test_args, config=config,
+                                   platform="illumina", logger=logger)
+        test_args.assemblers = []
+        reads_ns.lib_type = "hybrid"
+        bb.check_assemblers(args=test_args, config=config, paired=False,
+                            reads_ns=reads_ns, logger=logger)
+        self.assertEqual(test_args.assemblers, ["mascura", "spades"])
+
     def tearDown(self):
         """ delete temp files if no errors, and report elapsed time
         """
         for filename in self.to_be_removed:
             try:
                 os.unlink(filename)
-            except PermissionError :
+            except Exception as e: # could be IsADirectpry or PErmissionsError
+                print (e)
                 shutil.rmtree(filename)
         t = time.time() - self.startTime
         print("%s: %.3f" % (self.id(), t))
