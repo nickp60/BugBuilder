@@ -317,6 +317,7 @@ use strict;
 
 import argparse
 import os
+import hashlib
 import re
 import yaml
 import sys
@@ -635,6 +636,17 @@ def set_up_logging(verbosity, outfile, name):
     return logger
 
 
+def md5(fname):
+    """ return md5 of file
+    from https://stackoverflow.com/questions/3431825
+    """
+    hash_md5 = hashlib.md5()
+    with open(fname, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_md5.update(chunk)
+    return hash_md5.hexdigest()
+
+
 def match_assembler_args(args):
     """Ensure that both assembler and assemb_args are same length
 
@@ -700,6 +712,26 @@ def fastq_needs_newname(args):
     return False
 
 
+def rename_fastq_seqids(args):
+    """ for each fastq of pair, replace the -[1|2] with /[1|2]
+    """
+    flist = ["fastq1", "fastq2"]
+    for f in flist:
+        # changed to allow perios
+        pattern = re.compile("^([@\+][0-9A-Z\.\:\-]+)-([12])$")
+        # this is almost exclusively for testing; should be checked prior
+        fastq = getattr(args, f)
+        if fastq is None:
+            break
+        tmp = os.path.splitext(fastq)[0] + "_renamed.fq"
+        with open(tmp, "w") as outf:
+            with open(fastq, "r") as inf:
+                for line in inf:
+                    line = pattern.sub('\\1/\\2', line)
+                    outf.write(line)
+        setattr(args, f, tmp)
+
+
 def setup_tmp_dir(args, output_root, logger):
     """  setup_tmp_dir creates a temporary directory and copies
     over the relevent files
@@ -727,43 +759,26 @@ def setup_tmp_dir(args, output_root, logger):
             shutil.copyfile(f, newpath)
             # does this even work?
             f = newpath
-    if fastq_needs_newname(args):
-        rename_fastq_seqids(args)
-def rename_fastq_seqids(args):
+     # we've seen some miseq fastq files have -1/-2 rather that /1 /2 pair
+     # ids which cause problems with older software which doesn't expect this.
+     # So, if you have PE data, and those read names are seen, we fix it
     if args.fastq1 is None and args.fastq2 is None:
-        return 0
-
-
-
-    # # we've seen some miseq fastq files have -1/-2 rather that /1 /2 pair ids which cause
-    # # problems with older software which doesn't expect this
-    # my @fastqs = ( basename($fastq1) ) if ($fastq1);
-    # push @fastqs, basename($fastq2) if ($fastq2);
-    # foreach my $file (@fastqs) {
-    #     open FASTQ, "$tmp_dir/$file" or die "Error opening $tmp_dir/$file:$!";
-    #     open NEW, ">$tmp_dir/$file.new"
-    #       or die "Error opening $tmp_dir/$file.new: $!";
-    #     while ( my $line = <FASTQ> ) {
-    #         $line =~ s/^([@\+][0-9A-Z\:\-]+)-([12])$/$1\/$2/;
-    #         print NEW $line;
-    #     }
-    #     close NEW;
-    #     close FASTQ;
-    #     move( "$tmp_dir/$file.new", "$tmp_dir/$file" )
-    #       or die "Error copying $tmp_dir/$file.new -> $tmp_dir/$file: $!";
-    # }
-
+        if fastq_needs_newname(args):
+            rename_fastq_seqids(args)
 
     # Different tools have differing interpretations of various fasta ids,
     # so, rewrite the reference fasta file to ensure these just contain the id.
     # accepted formats are for ENA and Genbank format fasta headers, as well as plain IDs
+    #  Or in this case, let BioPython complain
     if args.reference:
         new_reference = os.path.join(args.tmp_dir, os.path.basename(args.reference))
         with open(args.reference, "r") as inf:
             for rec in SeqIO.parse(inf, "fasta"):
                 with open(new_reference, "a") as outf:
+                    rec.desc = None
                     SeqIO.write(rec, outf, 'fasta')
         args.reference = new_reference
+
 
 def return_open_fun(f):
     if os.path.splitext(f)[-1] in ['.gz', '.gzip']:

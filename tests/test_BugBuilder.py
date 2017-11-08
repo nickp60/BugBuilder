@@ -3,6 +3,7 @@
 Created on Tue Aug 30 08:57:31 2016
 @author: nicholas
 """
+import time
 import sys
 import logging
 import os
@@ -27,10 +28,13 @@ class test_BugBuilder(unittest.TestCase):
         self.empty_config = os.path.join(self.ref_dir, "empty_config.yaml")
         self.ref_fasta = os.path.join(self.ref_dir, "AP017923.1.fasta")
         self.renaming_fq = os.path.join(self.ref_dir, "needs_renaming.fq")
+        self.renamed = os.path.join(self.ref_dir, "renamed_ref.fq")
         self.fastq1 = os.path.join(self.ref_dir, "AP017923.1_reads1.fq")
         self.fastq2 = os.path.join(self.ref_dir, "AP017923.1_reads2.fq")
         self.args = Namespace()
         os.makedirs(self.test_dir, exist_ok=True)
+        self.startTime = time.time() # for timing
+        self.to_be_removed = []
 
     def test_parse_config(self):
         """ test pandas import
@@ -106,15 +110,56 @@ class test_BugBuilder(unittest.TestCase):
             bb.check_files_present(test_args)
 
     def test_setup_tmp_dir(self):
-        pass
+        tmp_dir = os.path.join(self.test_dir, "tmp_setup")
+        test_args = Namespace(fastq1=self.fastq1, fastq2=self.fastq2,
+                              reference=self.ref_fasta, mode="draft",
+                              tmp_dir=tmp_dir, long_fastq=None, de_fere_contigs=None)
+        bb.setup_tmp_dir(args=test_args, output_root=tmp_dir, logger=logger)
+        intended_files = [
+            os.path.join(self.test_dir, "tmp_setup", os.path.basename(self.fastq1)),
+            os.path.join(self.test_dir, "tmp_setup", os.path.basename(self.fastq2)),
+            os.path.join(self.test_dir, "tmp_setup", os.path.basename(self.ref_fasta)),
+        ]
+        for idx, f in enumerate([self.fastq1, self.fastq2, self.ref_fasta]):
+            self.assertEqual(bb.md5(intended_files[idx]), bb.md5(f))
+        self.to_be_removed.append(tmp_dir)
+
+    def test_setup_tmp_dir_existingdir(self):
+        with self.assertRaises(SystemExit):
+            bad_test_args = Namespace(fastq1=self.fastq1, fastq2=self.fastq2,
+                                      reference=self.ref_fasta, mode="draft",
+                                      tmp_dir=self.test_dir, long_fastq=None,
+                                      de_fere_contigs=None)
+            bb.setup_tmp_dir(args=bad_test_args,
+                             output_root=bad_test_args.tmp_dir, logger=logger)
+
 
     def test_fastq_needs_newname(self):
-        test_args = Namespace(fastq1=self.renaming_fq, fastq2=self.fastq1,
+        test_args = Namespace(fastq1=self.renaming_fq, fastq2=self.fastq2,
                               reference=None, mode="draft")
         self.assertTrue(bb.fastq_needs_newname(test_args))
 
+    def test_rename_fastq_seqids(self):
+        test_args = Namespace(fastq1=self.renaming_fq, fastq2=None)
+        bb.rename_fastq_seqids(args=test_args)
+        self.assertEqual(
+            bb.md5(self.renamed), bb.md5(test_args.fastq1))
+        self.assertEqual(
+            test_args.fastq1,
+            os.path.splitext(self.renaming_fq)[0] +"_renamed.fq")
+        self.to_be_removed.append(os.path.splitext(self.renaming_fq)[0] +
+                                  "_renamed.fq")
+
     def tearDown(self):
-        pass
+        """ delete temp files if no errors, and report elapsed time
+        """
+        for filename in self.to_be_removed:
+            try:
+                os.unlink(filename)
+            except PermissionError :
+                shutil.rmtree(filename)
+        t = time.time() - self.startTime
+        print("%s: %.3f" % (self.id(), t))
 
 
 if __name__ == '__main__':
