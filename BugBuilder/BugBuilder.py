@@ -816,7 +816,7 @@ def id_fastq_encoding(args, logger):
     ...............................IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII......................
     .................................JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ......................
     LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL....................................................
-    !"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~
+    !"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHoIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~
     |                         |    |        |                              |                     |
     33                        59   64       73                            104                   126
 
@@ -841,6 +841,7 @@ def id_fastq_encoding(args, logger):
     with open_fun(target, "r") as inf:
         counter = 3
         for i, line in enumerate(inf):
+            line = line.strip() #gets rid of eol, qual 10
             if i >= 1000:
                 break
             if counter == 0:
@@ -853,6 +854,7 @@ def id_fastq_encoding(args, logger):
             else:
                 counter = counter - 1
                 continue
+    logger.info("Quality score Min: %d;  Max:  %d", min_val, max_val)
     if min_val <= 59 and max_val <= 74:
         encoding = 'sanger'
     elif min_val > 59 and min_val < 64 and max_val < 104:
@@ -860,7 +862,8 @@ def id_fastq_encoding(args, logger):
     elif min_val > 64:
         encoding = 'illumina'
     else:
-        logger.info("assumina illumina encoding")
+        logger.error("Error detecting fastq encoding!")
+        raise ValueError
         encoding = 'illumina'
     logger.info("Read encoding detection summary:\n" + tabulate.tabulate(
         [["min:", min_val],["max", max_val], ["encoding" , encoding]]))

@@ -10,6 +10,7 @@ import os
 import unittest
 import shutil
 import BugBuilder.BugBuilder as bb
+import statistics
 
 from .context import BugBuilder
 from argparse import Namespace
@@ -24,6 +25,7 @@ class test_BugBuilder(unittest.TestCase):
     """
     def setUp(self):
         self.ref_dir = os.path.join(os.path.dirname(__file__), "references")
+        self.encoding_dir = os.path.join(self.ref_dir, "encoding")
         self.test_dir = os.path.join(os.path.dirname(__file__), "tmp_tests")
         self.empty_config = os.path.join(self.ref_dir, "empty_config.yaml")
         self.ref_fasta = os.path.join(self.ref_dir, "AP017923.1.fasta")
@@ -149,6 +151,25 @@ class test_BugBuilder(unittest.TestCase):
             os.path.splitext(self.renaming_fq)[0] +"_renamed.fq")
         self.to_be_removed.append(os.path.splitext(self.renaming_fq)[0] +
                                   "_renamed.fq")
+
+    def test_get_fastq_read_len(self):
+        lens = bb.get_read_lens_from_fastq(fastq1=self.fastq1, logger=logger)
+        self.assertEqual(150, statistics.mean(lens))
+
+
+    def test_id_fastq_encoding(self):
+        tests = {
+            "illumina": "illumina13.fq",
+            "illumina": "illumina15.fq",
+            "sanger": "illumina18_sanger.fq",
+            "sanger": "sanger.fq",
+            "solexa": "solexa.fq"
+        }
+        for k, v in tests.items():
+            test_args = Namespace(
+                fastq1=os.path.join(self.encoding_dir, v), long_fastq=None,
+                de_fere_contigs=None)
+            self.assertEqual(k, bb.id_fastq_encoding(args=test_args, logger=logger))
 
     def tearDown(self):
         """ delete temp files if no errors, and report elapsed time
