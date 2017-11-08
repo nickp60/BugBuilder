@@ -115,13 +115,15 @@ assembler_categories:
 assemblers:
    - name: abyss
      create_dir: 1
-     max_length: 200
+     min_length: 200
+     max_length: null
      command_pe: __BUGBUILDER_BIN__/run_abyss --tmpdir __TMPDIR__ --fastq1 __FASTQ1__ --fastq2 __FASTQ2__ --read_length __READ_LENGTH__
      contig_output: __TMPDIR__/abyss/abyss-contigs.fa
      scaffold_output: __TMPDIR__/abyss/abyss-scaffolds.fa
      downsample_reads: 1
    - name: spades
      create_dir: 0
+     min_length: null
      max_length: 303
      command_se: spades.py --memory __MEMORY__ -t __THREADS__ -s __FASTQ1__ -o __TMPDIR__/spades
      command_pe: spades.py --memory __MEMORY__ -t __THREADS__ -1 __FASTQ1__ -2 __FASTQ2__ -o __TMPDIR__/spades
@@ -134,6 +136,7 @@ assemblers:
    - name: celera
      create_dir: 1
      min_length: 75
+     max_length: null
      command_se: __BUGBUILDER_BIN__/run_celera --fastq1 __FASTQ1__ --tmpdir __TMPDIR__ --category __CATEGORY__ --encoding __ENCODING__ --genome_size __GENOME_SIZE__
      command_pe: __BUGBUILDER_BIN__/run_celera --fastq1 __FASTQ1__ --fastq2 --tmpdir __TMPDIR__ --category __CATEGORY__ --encoding __ENCODING__ --genome_size __GENOME_SIZE__
      contig_output: __TMPDIR__/celera/output/9-terminator/BugBuilder.ctg.fasta
@@ -142,6 +145,7 @@ assemblers:
    - name: PBcR
      create_dir: 1
      min_length: 500
+     max_length: null
      command_se: __BUGBUILDER_BIN__/run_PBcR --fastq __LONGFASTQ__ --tmpdir __TMPDIR__ --genome_size __GENOME_SIZE__ --platform __PLATFORM__
      contig_output: __TMPDIR__/PBcR/BugBuilder/9-terminator/asm.ctg.fasta
      scaffold_output: __TMPDIR__/PBcR/BugBuilder/9-terminator/asm.scf.fasta
@@ -149,6 +153,8 @@ assemblers:
      # masurca works best with untrimmed reads, so use __ORIG_FASTQ1__ nad __ORIG_FASTQ2__
    - name: masurca
      create_dir: 1
+     min_length: null
+     max_length: null
      command_pe: __BUGBUILDER_BIN__/run_masurca --fastq1 __ORIG_FASTQ1__ --fastq2 __ORIG_FASTQ2__ --tmpdir __TMPDIR__ --category __CATEGORY__ --insert_size __INSSIZE__ --insert_stddev __INSSD__
      command_hybrid: __BUGBUILDER_BIN__/run_masurca --fastq1 __ORIG_FASTQ1__ --fastq2 __ORIG_FASTQ2__ --longfastq __LONGFASTQ__ --tmpdir __TMPDIR__ --category __CATEGORY__ --insert_size __INSSIZE__ --insert_stddev __INSSD__
      contig_output: __TMPDIR__/masurca/contigs.fasta
@@ -748,7 +754,7 @@ def setup_tmp_dir(args, output_root, logger):
     logger.info("Created working directory: %s" % args.tmp_dir)
     try:
         os.makedirs(args.tmp_dir, exist_ok=False)
-    except OSError:
+    except FileExistsError: #OSError:
         logger.error("Temp directory already exists; exiting...")
         sys.exit(1)
     # copy to tmp dir
@@ -928,7 +934,6 @@ def assess_reads(args, config, platform, logger=None):
     mean = statistics.mean(means)
     stddev = statistics.mean(stddevs)
     # set type of library
-    # TODO type is a bad variable name in python
     lib_type = None
     for category in config.assembler_categories:
         if platform is not None:
@@ -957,12 +962,13 @@ def assess_reads(args, config, platform, logger=None):
     logger.info("Genome Length: %d", tot_length)
     coverage, long_coverage = None, None
     try:
-        coverage = float(tot_length / args.genome_size)
-        long_coverage = float(long_tot_length / args.genome_size)
+        coverage = round(float(tot_length / args.genome_size), 3)
+        long_coverage = round(float(long_tot_length / args.genome_size), 3)
     except:
-        logger.warning("error calculating coverage!")
+        logger.warning("Cannot calculate coverage without a reference!")
     encoding = id_fastq_encoding(args, logger)
-    return Namespace(lib_type=lib_type, encoding=encoding, mean_read_length=mean,
+    return Namespace(lib_type=lib_type, encoding=encoding,
+                     mean_read_length=mean,
                      read_length_stddev=stddev,
                      mean_long_read_length=long_mean,
                      long_read_length_stddev=long_stddev,
@@ -974,7 +980,7 @@ def assess_reads(args, config, platform, logger=None):
 
 def check_ref_needed(args, lib_type):
     if lib_type == "long" :
-        if (args.genome_size is 0 and args.reference):
+        if (args.genome_size is 0 and args.reference is None):
             raise ValueError("Please supply a genome size or reference " +
                              "sequence when running a long-read assembly")
 
@@ -998,30 +1004,35 @@ def parse_config(config_file):
     return(newns)
 
 
-def check_assemblers(args, config, paired, reads_ns):
+def check_assemblers(args, config, paired, reads_ns, logger):
+    """
+    """
     if len(args.assemblers) > 2:
         raise ValueError("A maximum of 2 assemblers can be requested")
     # sanity check assemblers where these have been manually requested...
     for assembler in args.assemblers:
-        assembler_name = os.path.basename(assembler)
         if shutil.which(assembler) is None and \
            shutil.which(assembler + ".py") is None:
             raise ValueError("%s is nt in PATH! exiting" % assembler)
     # If no assembler is requested, we need to select one based on the
     # 'assembly_type' from the configuration file....
-    if len(args.assemblers) > 1:
+    if len(args.assemblers) == 0:
         for category in config.assembler_categories:
-            if category.name == reads_ns.lib_type:
-                args.assemblers.append(category.assemblers)
+            if category['name'] == reads_ns.lib_type:
+                args.assemblers = category['assemblers']
     # then check the requested assemblers are appropriate for
     # the sequence characteristics...
     for assembler in args.assemblers:
         for conf_assembler in config.assemblers:
             if conf_assembler['name'] != assembler:
                 continue
-            if not paired and conf_assembler['command_se']:
-                raise ValueError(str("%s requires paired reads, but you only " +
-                                 "specified one fastq file...") % assembler)
+            print(conf_assembler)
+            if not paired and 'command_se' not in conf_assembler.keys():
+                logger.warning(str("%s requires paired reads, but you only " +
+                               "specified one fastq file..."), assembler)
+                args.assemblers = [x for x in args.assemblers if x != assembler]
+                if len(args.assemblers) == 0:
+                    raise ValueError("No valid assemblers chosen!")
             # if conf_assembler['min_length'] and reads_ns.mean_read_length < conf_assembler['min_length']:
             #     raise ValueError("%s does not support reads less than %d" % \
             #                      (assembler, conf_assembler.min_length))
