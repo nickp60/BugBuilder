@@ -247,6 +247,62 @@ class test_BugBuilder(unittest.TestCase):
         bb.get_scaffolder_and_linkage(args=test_args, config=config,
                                       paired=True, logger=logger)
 
+    def test_check_already_assembled_bad_path(self):
+        test_args = Namespace(
+            already_assembled_dirs=["notAnActualDir"], assemblers=["spades"])
+        config = bb.parse_config(self.filled_config)
+        with self.assertRaises(FileNotFoundError):
+            bb.check_already_assembled_dirs(
+                args=test_args, config=config, logger=logger)
+
+    def test_check_already_assembled_missing_file(self):
+        test_args = Namespace(
+            already_assembled_dirs=[self.ref_dir], assemblers=["spades"])
+        config = bb.parse_config(self.filled_config)
+        with self.assertRaises(FileNotFoundError):
+            bb.check_already_assembled_dirs(
+                args=test_args, config=config, logger=logger)
+
+    def test_check_already_assembled_uneven_args(self):
+        test_args = Namespace(
+            already_assembled_dirs=[self.ref_dir],
+            assemblers=["spades", "masurca"])
+        config = bb.parse_config(self.filled_config)
+        with self.assertRaises(ValueError):
+            bb.check_already_assembled_dirs(
+                args=test_args, config=config, logger=logger)
+
+    def test_check_already_assembled(self):
+        already_dir = os.path.join(self.ref_dir,"already_assembled_test")
+        already_ctg = os.path.join(already_dir,"contigs.fasta")
+        already_scf = os.path.join(already_dir,"scaffolds.fasta")
+        test_args = Namespace(
+            already_assembled_dirs=[
+                already_dir],
+            assemblers=["spades" ])
+        config = bb.parse_config(self.filled_config)
+        self.assertEqual(
+            bb.check_already_assembled_dirs(
+                args=test_args, config=config, logger=logger),
+            ([already_ctg], [already_scf]))
+
+
+
+
+
+    ###########################################################################
+    def test_run_scaffolder_sis(self):
+        test_args = Namespace(
+            fastq1=self.fastq1, fastq2=self.fastq2, long_fastq=None,
+            de_fere_contigs=None, reference=self.ref_fasta, genome_size=0,
+            tmp_dir=self.test_dir)
+        config = bb.parse_config(self.filled_config)
+        reads_ns = bb.assess_reads(args=test_args, config=config,
+                                   platform="illumina", logger=logger)
+        bb.run_scaffolder(scaffolder_name="sis",
+                       scaffolder_args=None, args=test_args, config=config, reads_ns=reads_ns,
+                       run_id=1, logger=logger)
+        self.to_be_removed.append(os.path.join(self.test_dir, "SIS_1"))
 
     def tearDown(self):
         """ delete temp files if no errors, and report elapsed time

@@ -173,11 +173,13 @@ scaffolders:
      command: __BUGBUILDER_BIN__/run_sis --reference __REFERENCE__ --contigs __CONTIGS__ --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__
      scaffold_output: scaffolds.fasta
      unscaffolded_output: unplaced_contigs.fasta
+     default_args: null
      create_dir: 1
      priority: 2
    - name: mauve
      linkage_evidence: align_genus
      command: __BUGBUILDER_BIN__/run_mauve --reference __REFERENCE__ --run __RUN__ --contigs __CONTIGS__ --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__
+     default_args: null
      create_dir: 1
      priority: 1
      scaffold_output: scaffolds.fasta
@@ -185,6 +187,7 @@ scaffolders:
      linkage_evidence: paired-ends
      command: __BUGBUILDER_BIN__/run_sspace --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__ --contigs __CONTIGS__ --insert_size __INSSIZE__ --insert_sd __INSSD__
      scaffold_output: BugBuilder.scaffolds.fasta
+     default_args: null
      create_dir: 1
      priority: 3
 
@@ -377,9 +380,9 @@ def parse_available_varcaller():
 
 def configure(config_path):
     mand_programs = [
-        'fastqc', 'sickle', 'seqtk', 'samtools', 'picard',
+        'fastqc', 'sickle', 'seqtk', 'samtools', 'picard', 'blastn', 'makeblastdb', "nucmer",
         'R', 'barrnap', 'prokka', 'aragorn', 'prodigal', 'hmmer3', 'rnammer',
-        'mummer', 'infernal', 'blast', 'bwa', 'tbl2asn', 'abyss', 'spades',
+        'mummer', 'infernal', 'bwa', 'tbl2asn', 'abyss', 'spades',
         'celera','gapfiller', 'sspace', 'asn2gb', 'amos' , 'masurca',
         'gfinisher', 'pilon', 'vcflib', 'cgview']
     opt_programs = ['sis', 'mauve']
@@ -475,26 +478,27 @@ def get_args():  # pragma: no cover
                           "assemblers are specified.",
                           nargs="*",
                           type=str)
-    optional.add_argument("--assemblies_contigs", dest='assemblies_contigs',
-                          action="store",
-                          help="path to contig file(s) if assembler(s) " +
-                          "have already been run; this helps save time when " +
-                          "rerunning analyses. If running multiple assemble" +
-                          "rs, assemblies should be specified twice, once " +
-                          "for each assemler, in the same order than the " +
-                          "assemblers are specified.",
-                          nargs="*",
-                          type=str)
-    optional.add_argument("--assemblies_scaffolds", dest='assemblies_scaffolds',
-                          action="store",
-                          help="path to scafoold file(s) if  assembler(s) " +
-                          "have already been run; this helps save time when " +
-                          "rerunning analyses. If running multiple assemble" +
-                          "rs, assemblies should be specified twice, once " +
-                          "for each assemler, in the same order than the " +
-                          "assemblers are specified.",
-                          nargs="*",
-                          type=str)
+    #  These are depreciated in favour of the --already-assembled_dirs arg
+    # optional.add_argument("--assemblies_contigs", dest='assemblies_contigs',
+    #                       action="store",
+    #                       help="path to contig file(s) if assembler(s) " +
+    #                       "have already been run; this helps save time when " +
+    #                       "rerunning analyses. If running multiple assemble" +
+    #                       "rs, assemblies should be specified twice, once " +
+    #                       "for each assemler, in the same order than the " +
+    #                       "assemblers are specified.",
+    #                       nargs="*",
+    #                       type=str)
+    # optional.add_argument("--assemblies_scaffolds", dest='assemblies_scaffolds',
+    #                       action="store",
+    #                       help="path to scafoold file(s) if  assembler(s) " +
+    #                       "have already been run; this helps save time when " +
+    #                       "rerunning analyses. If running multiple assemble" +
+    #                       "rs, assemblies should be specified twice, once " +
+    #                       "for each assemler, in the same order than the " +
+    #                       "assemblers are specified.",
+    #                       nargs="*",
+    #                       type=str)
     optional.add_argument("--scaffolder", dest='scaffolder', action="store",
                           help="scaffolder to use",
                           choices=parse_available_scaffolders(),
@@ -574,13 +578,15 @@ def get_args():  # pragma: no cover
     optional.add_argument("--tmp-dir", dest='tmp_dir', action="store",
                           help="dir for results",
                           type=str)
-    optional.add_argument("--already_assembled", dest='already_assembled',
-                          action="store_true",
-                          help="use existing assembly from --scratchdir ",
-                          default=False)
-    optional.add_argument("--scratchdir", dest='scratchdir', action="store",
-                          help="dir for results",
-                          type=str)
+    optional.add_argument("--already_assembled_dirs", dest='already_assembled_dirs',
+                          action="store",
+                          help="dir(s) with existing assembler results; must" +
+                          " specify assembler(s), and lists much match " +
+                          "length",
+                          nargs="*", type=str)
+    # optional.add_argument("--scratchdir", dest='scratchdir', action="store",
+    #                       help="dir for results",
+    #                       type=str)
     optional.add_argument("--configure", dest='configure', action="store_true",
                           help="whether to reconfigure ")
     optional.add_argument("--memory", dest='memory', action="store",
@@ -1468,7 +1474,6 @@ def get_insert_stats(bam, reads_ns, args, config, logger):
                 get_next=True
     return (mean_insert, stddev_insert)
 
-
 def replace_placeholders(string, config, reads_ns, args):
     replace_dict = {
         "__BUGBUILDER_BIN__": "/$FindBin::Bin/g",
@@ -1692,6 +1697,39 @@ def check_id(args, contigs, logger):
     return ID_OK
 
 
+def check_already_assembled_dirs(args, config, logger):
+    """Ensure that the directory(ies) providded have the expect output files
+    Chances are, they do, but we need to bee exceedingly sure that they do
+    """
+    res_dict = {"contig": [],
+                "scaffold": []}
+    for path in args.already_assembled_dirs:
+        if not os.path.exists(path):
+            raise FileNotFoundError("Could not find directory: %s" % path)
+    if len(args.assemblers) != len(args.already_assembled_dirs):
+        raise ValueError(
+            "You must explicity specify the assemblers used to generate " +
+            "the already-assembled results.  The lengths of those lists do " +
+            "not match")
+    for i in range(0, len(args.assemblers)):
+        assembler = args.assemblers[i]
+        for f in ["contig", "scaffold"]:
+            # get teh configuration for the selected assembler
+            assembler_conf = [x for x in config.assemblers if x['name'] == assembler][0]
+            res = assembler_conf[f + '_output']
+            # res = res.replace("__TMPDIR__", args.already_assembled_dirs[i])
+            res =  os.path.join(args.already_assembled_dirs[i],
+                                os.path.basename(res))
+            if not os.path.exists(res):
+                raise FileNotFoundError(str(
+                    "Expected %s output %s could not be found. Please " +
+                    "check files and  re-assemble") %(args.assemblers[i], res))
+            else:
+                res_dict[f].append(res)
+    return (res_dict["contig"], res_dict["scaffold"])
+
+
+
 def main(args=None, logger=None):
     if args is None:
         args = get_args()
@@ -1806,16 +1844,22 @@ def main(args=None, logger=None):
     ]
     logger.info("ASSEMBLER DETAILS:\n" + tabulate.tabulate(run_table))
     contig_scaffold_list = [] # holds pairs of (contigs_path, scaffolds_path)
-    if args.assemblies_contigs is None and args.assemblies_scaffolds is None:
+    if len(args.already_assembled_dirs) != 0:
+        ctgs, scafs = check_already_assembled_dirs(args, config, logger)
+        for idx, f  in ctgs:
+            contig_scaffold_list.append((f, scafs[idx]))
+    else:
+    #     pass
+    # if args.assemblies_contigs is None and args.assemblies_scaffolds is None:
         for assembler, assembler_args in assemblers_list:
             logger.info("Assembling with %s", assembler)
             contigs_path, scaffolds_path  = run_assembler(
                 assembler=assembler, assembler_args=assembler_args,
                 args=args, reads_ns=reads_ns, config=config, logger=logger)
             contig_scaffold_list.append((contigs_path, scaffolds_path))
-    else:
-        for i, path  in enumerate(args.assemblies_contigs):
-            contig_scaffold_list.append((path, args.assemblies_scaffolds[i]))
+    # else:
+    #     for i, path  in enumerate(args.assemblies_contigs):
+    #         contig_scaffold_list.append((path, args.assemblies_scaffolds[i]))
     if len(contig_scaffold_list) > 1:
         #run merge
         merged_contigs_path = merge_assemblies(args=args, config=config, reads_ns=reads_ns, logger=logger)
@@ -2191,7 +2235,8 @@ def main(args=None, logger=None):
 
 
 
-def run_scaffolder(scaffolder_name, args, config, reads_ns, run_id, logger):
+def run_scaffolder(scaffolder_name, args, config, reads_ns, run_id,
+                   scaffolder_args=None, logger=None):
     """
     Runs specified scaffolder....
 
@@ -2224,14 +2269,11 @@ def run_scaffolder(scaffolder_name, args, config, reads_ns, run_id, logger):
     # my $threads          = shift;
     logger.info(" Starting $scaffolder");
 
-    blast_dir = config.blast_dir
-#     for scaffolder in args.scaffolders:
-#         get_scaffolder_cmd():
-# def get_scaffolder_cmd(tool_name, args, config):
+    # blast_dir = config.blast_dir
     tool_name = scaffolder_name
     try:
-        conf_scaffolder = getattr(config, tool_name)
-    except AttributeError:
+        conf_scaffolder = [x for x in config.scaffolders if x['name'].lower() == tool_name][0]
+    except IndexError:
         raise ValueError("Scaffolder %s is not defined" % tool_name)
     cmd = conf_scaffolder['command']
     scaffold_output = conf_scaffolder['scaffold_output']
@@ -2240,8 +2282,9 @@ def run_scaffolder(scaffolder_name, args, config, reads_ns, run_id, logger):
         unscaffolded_output = conf_scaffolder['unscaffolded_output']
     create = conf_scaffolder['create_dir']
     linkage_evidence = conf_scaffolder['linkage_evidence']
+    # no default args are currently implemeted
     default_args = conf_scaffolder['default_args']
-    run_dir = os.path.join(args.temp_dir, tool_name + " " + run_id)
+    run_dir = os.path.join(args.tmp_dir, tool_name + "_" + str(run_id))
     os.makedirs(run_dir)
     # Treat reference-based scaffolder separately from paired-read scaffolders,
     # since we need to scaffold per-reference, which
@@ -2257,18 +2300,18 @@ def run_scaffolder(scaffolder_name, args, config, reads_ns, run_id, logger):
         with open(args.reference, "r") as ref:
             for idx, rec in enumerate(SeqIO.parse(ref, "fasta")):
                 ref_ids.append(rec.id)
-                ref_paths.append(os.path.join(run_Dir, "reference_" + rec.id))
-                with open(run_paths[idx], "w") as outf:
-                    SeqIO.write(outf, rec, "fasta")
+                ref_paths.append(os.path.join(run_dir, "reference_" + rec.id))
+                with open(ref_paths[idx], "w") as outf:
+                    SeqIO.write( rec, outf, "fasta")
         if not len(ref_ids) > 1:
             # if we don't have mulitple references, we just need to make the
             # reference and contigs available under consistent names
-            reference = ref_list[0]
-            contigs = contigs
+            reference = ref_ids[0]
+            # contigs = contigs_output
         else:
             # blast indexing doesn't produce a workable index from a symlink, so need to copy the reference sequences
             reference_copy = os.path.join(run_dir, "reference.fasta")
-            contigs_copy = os.path.join(run_dir, "contigs..fasta")
+            contigs_copy = os.path.join(run_dir, "contigs.fasta")
             shutil.copyfile(args.reference, reference_copy)
             shutil.copyfile(contigs, contigs_copy)
             cmd = str("{0} -query {1} -subject {2}  -task blastn -out " +
@@ -2296,9 +2339,9 @@ def run_scaffolder(scaffolder_name, args, config, reads_ns, run_id, logger):
                         subject = hsps[0].sbjct
                         ref_seqs[subject] = query
 
-            # generate a fasta file of contigs which align to each reference
+            logger.debug("generate a fasta file of contigs which align to each reference")
             for ref in ref_seq.keys():
-                out_name = os.path.join(run_dir, ref + "_aligned_contigs.fasta")
+                out_name = os.path.join(run_dir, "reference_" + ref + "_contigs.fasta")
                 with open(contigs, "r") as contig_f:
                     with open(out_name, "a") as outf:
                         for rec in SeqIO.parse(contig_f, "fasta"):
@@ -2312,56 +2355,38 @@ def run_scaffolder(scaffolder_name, args, config, reads_ns, run_id, logger):
 #         my $merged_scaff_count = 0;
 
 #         # Now run the selecting scaffolder on each set of reference and contigs...
-#         for ref_id in ref_ids:
-#             if os.path.exists(re
-#         foreach my $ref_id (@ref_ids) {
+        for ref_id in ref_ids:
+            scaff_contigs = os.path.join(run_dir, "reference_" + ref_id + "_contigs.fasta")
+            if not os.path.exists(scaff_contigs):
+                continue
+            logger.info("Scaffolding vs. %s", ref_id)
+            reference = "reference_" + ref_id
+            exec_cmd = replace_placeholders(string=cmd, config=config,
+                                            reads_ns=reads_ns, args=args)
+            scaffold_output = replace_placeholders(string=scaffold_output,
+                                                   config=config,
+                                                   reads_ns=reads_ns, args=args)
+            if unscaffolded_output:
+                unscaffolded_output = replace_placeholders(
+                    string=unscaffolded_output,config=config,
+                    reads_ns=reads_ns, args=args)
+            os.makedirs
+            run_scaffold_output = os.path.join(args.tmp_dir,
+                                               scaffolder +"_"+ ref_id,
+                                               scaffold_output)
+            if scaffolder_args:
+                exec_cmd = exec_cmd + scaffolder_args
+            else:
+                exec_cmd = exec_cmd + default_args
+            exec_cmd = exec_cmd + " 2>&1 > " + os.path.join(
+                args.tmpdir,
+                scaffolder_name + "_" + str(run_id) + "_" + ref_id + ".log")
 
-#             my $scaff_contigs = "reference_${ref_id}_contigs";
-
-#             # Only if anything mapped to this reference
-#             next unless ( -e "${run_dir}/${scaff_contigs}" );
-
-#             print "\nScaffolding vs. $ref_id\n";
-
-#             my $exec_cmd  = $cmd;
-#             my $reference = "reference_${ref_id}";
-
-#             my @replace = ( $cmd, $scaffold_output );
-#             foreach ( $exec_cmd, $scaffold_output ) {
-#                 s/__BUGBUILDER_BIN__/$FindBin::Bin/;
-#                 s/__TMPDIR__/$tmpdir/g;
-#                 s/__SCAFFDIR__/$run_dir\/${scaffolder}_${ref_id}/g;
-#                 s/__RUN__/$run_id/;
-#                 s/__FASTQ1__/$tmpdir\/read1.fastq/;
-#                 s/__FASTQ2__/$tmpdir\/read2.fastq/;
-#                 s/__REFERENCE__/${run_dir}\/${reference}/;
-#                 s/__CONTIGS__/${run_dir}\/${scaff_contigs}/;
-#                 s/__INSSIZE__/$insert_size/;
-#                 s/__INSSD__/$insert_sd/;
-#                 s/__THREADS__/$threads/;
-#             }
-#             if ( defined($unscaffolded_output) ) {
-#                 $unscaffolded_output =~ s/__BUGBUILDER_BIN__/$FindBin::Bin/;
-#                 $unscaffolded_output =~ s/__TMPDIR__/$tmpdir/g;
-#                 $unscaffolded_output =~ s/__SCAFFDIR__/$run_dir\/$ref_id/g;
-#                 $unscaffolded_output =~ s/__RUN__/$run_id/g;
-#                 $unscaffolded_output =~ s/__FASTQ1__/$tmpdir\/read1.fastq/;
-#                 $unscaffolded_output =~ s/__FASTQ2__/$tmpdir\/read2.fastq/;
-#                 $unscaffolded_output =~ s/__REFERENCE__/${run_dir}_${reference}/;
-#                 $unscaffolded_output =~ s/__CONTIGS__/$run_dir\/$scaff_contigs/;
-#                 $unscaffolded_output =~ s/__INSSIZE__/$insert_size/;
-#                 $unscaffolded_output =~ s/__INSSD__/$insert_sd/;
-#             }
-#             my $run_scaffold_output = "$run_dir/${scaffolder}_${ref_id}/$scaffold_output";
-
-#             if ($scaffolder_args) {
-#                 $exec_cmd .= "$scaffolder_args";
-#             }
-#             elsif ($default_args) {
-#                 $exec_cmd .= "$default_args" if ($default_args);
-#             }
-
-#             $exec_cmd .= " 2>&1 >$tmpdir/${scaffolder}_${run_id}_${ref_id}.log";
+            subprocess.run(exec_cmd,
+                           shell=sys.platform != "win32",
+                           stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE,
+                           check=True)
 
 #             mkdir("$run_dir/${scaffolder}_${ref_id}") or die "Error creating $run_dir/${scaffolder}_${ref_id}: $! ";
 #             chdir("$run_dir/${scaffolder}_${ref_id}") or die "Error in chdir $run_dir/${scaffolder}_${ref_id}: $! ";

@@ -62,7 +62,7 @@ assembler_categories:
       - SIS
   - name: 'long'
     min_length: 500
-    max_length: 50000
+    max_length: 500000
     long_fastq: 'required'
     platforms:
       - 'PacBio'
@@ -157,11 +157,13 @@ scaffolders:
      command: __BUGBUILDER_BIN__/run_sis --reference __REFERENCE__ --contigs __CONTIGS__ --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__
      scaffold_output: scaffolds.fasta
      unscaffolded_output: unplaced_contigs.fasta
+     default_args: null
      create_dir: 1
      priority: 2
    - name: mauve
      linkage_evidence: align_genus
      command: __BUGBUILDER_BIN__/run_mauve --reference __REFERENCE__ --run __RUN__ --contigs __CONTIGS__ --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__
+     default_args: null
      create_dir: 1
      priority: 1
      scaffold_output: scaffolds.fasta
@@ -169,6 +171,7 @@ scaffolders:
      linkage_evidence: paired-ends
      command: __BUGBUILDER_BIN__/run_sspace --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__ --contigs __CONTIGS__ --insert_size __INSSIZE__ --insert_sd __INSSD__
      scaffold_output: BugBuilder.scaffolds.fasta
+     default_args: null
      create_dir: 1
      priority: 3
 
@@ -218,7 +221,7 @@ amos: null
 aragorn: null
 asn2gb: null
 barrnap: null
-blast: null
+blastn: /Users/nicholas/miniconda3/bin/blastn
 bwa: /Users/nicholas/miniconda3/bin/bwa
 celera: null
 cgview: null
@@ -227,6 +230,7 @@ gapfiller: null
 gfinisher: null
 hmmer3: null
 infernal: null
+makeblastdb: /Users/nicholas/miniconda3/bin/makeblastdb
 masurca: null
 mauve: null
 mummer: null
