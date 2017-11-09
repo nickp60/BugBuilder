@@ -1887,7 +1887,11 @@ def main(args=None, logger=None):
 # 	unlink glob "$tmpdir/comparison_vs*" or print "unable to delete comparisons";
 #     	print "idok: $id_ok\n";
 #     }
-
+    if args.scaffolder is not None:
+        if \
+           (ID_OK and scaffolder_type == "paired_ends" or \
+             not ID_OK and scaffolder_type == "paired_ends"):
+            scaffolds = run_scaffolder()
 
 #     run_scaffolder( $tmpdir, "$tmpdir/reference_parsed_ids.fasta",
 #                     $scaffolder, $scaffolder_args, $insert_size, $stddev, 1, "$tmpdir/contigs.fasta", $mean_read_length,
@@ -2275,8 +2279,17 @@ def run_scaffolder(scaffolder_name, args, config, reads_ns, run_id,
         conf_scaffolder = [x for x in config.scaffolders if x['name'].lower() == tool_name][0]
     except IndexError:
         raise ValueError("Scaffolder %s is not defined" % tool_name)
-    cmd = conf_scaffolder['command']
-    scaffold_output = conf_scaffolder['scaffold_output']
+    exec_cmd = replace_placeholders(string=conf_scaffolder['command'],
+                                    config=config,
+                                    reads_ns=reads_ns, args=args)
+    scaffold_output = replace_placeholders(string=conf_scaffolder['scaffold_output'],
+                                           config=config,
+                                           reads_ns=reads_ns, args=args)
+    if scaffolder_args:
+        exec_cmd = exec_cmd + scaffolder_args
+    else:
+        exec_cmd = exec_cmd + default_args
+
     unscaffolded_output = None
     if conf_scaffolder['unscaffolded_output']:
         unscaffolded_output = conf_scaffolder['unscaffolded_output']
@@ -2289,20 +2302,26 @@ def run_scaffolder(scaffolder_name, args, config, reads_ns, run_id,
     # Treat reference-based scaffolder separately from paired-read scaffolders,
     # since we need to scaffold per-reference, which
     # doesn't work if your not using one...
+    scaffolder_cmd_list = []  # commands to be subprocessed
+    # list of paths of resulting scaffolds to be combined, if ref sequence has multiple records
+    merge_these_scaffolds = []
+    # this helps keep trak of resulting files
+    ref_ids = []
+    ref_paths = []
+    with open(args.reference, "r") as ref:
+        for idx, rec in enumerate(SeqIO.parse(ref, "fasta")):
+            ref_ids.append(rec.id)
+            ref_paths.append(os.path.join(run_dir, "reference_" + rec.id))
+            with open(ref_paths[idx], "w") as outf:
+                SeqIO.write( rec, outf, "fasta")
     if linkage_evidence == 'align_genus':
         # If the reference contains multiple contigs, we first neeed to align
         # out contigs to these
         # to identify which contigs to scaffold against which reference, since
         # some scaffolders targeted at bacteria don't handle multiple reference
         # sequences
-        ref_ids = []
-        ref_paths = []
-        with open(args.reference, "r") as ref:
-            for idx, rec in enumerate(SeqIO.parse(ref, "fasta")):
-                ref_ids.append(rec.id)
-                ref_paths.append(os.path.join(run_dir, "reference_" + rec.id))
-                with open(ref_paths[idx], "w") as outf:
-                    SeqIO.write( rec, outf, "fasta")
+
+        # moved ID parsing out, so we can keep naming the same
         if not len(ref_ids) > 1:
             # if we don't have mulitple references, we just need to make the
             # reference and contigs available under consistent names
@@ -2314,11 +2333,11 @@ def run_scaffolder(scaffolder_name, args, config, reads_ns, run_id,
             contigs_copy = os.path.join(run_dir, "contigs.fasta")
             shutil.copyfile(args.reference, reference_copy)
             shutil.copyfile(contigs, contigs_copy)
-            cmd = str("{0} -query {1} -subject {2}  -task blastn -out " +
+            blast_cmd = str("{0} -query {1} -subject {2}  -task blastn -out " +
                       "{3}clusters.blast 2>&1 > {3}blastn.log").format(
                   config.blastn, contigs, args.reference, run_dir)
 
-            subprocess.run(cmd,
+            subprocess.run(blast_cmd,
                            shell=sys.platform != "win32",
                            stdout=subprocess.PIPE,
                            stderr=subprocess.PIPE,
@@ -2361,11 +2380,7 @@ def run_scaffolder(scaffolder_name, args, config, reads_ns, run_id,
                 continue
             logger.info("Scaffolding vs. %s", ref_id)
             reference = "reference_" + ref_id
-            exec_cmd = replace_placeholders(string=cmd, config=config,
-                                            reads_ns=reads_ns, args=args)
-            scaffold_output = replace_placeholders(string=scaffold_output,
-                                                   config=config,
-                                                   reads_ns=reads_ns, args=args)
+            # moved replacment of placehodlers to above -- should be fine, eh?
             if unscaffolded_output:
                 unscaffolded_output = replace_placeholders(
                     string=unscaffolded_output,config=config,
@@ -2374,20 +2389,12 @@ def run_scaffolder(scaffolder_name, args, config, reads_ns, run_id,
             run_scaffold_output = os.path.join(args.tmp_dir,
                                                scaffolder +"_"+ ref_id,
                                                scaffold_output)
-            if scaffolder_args:
-                exec_cmd = exec_cmd + scaffolder_args
-            else:
-                exec_cmd = exec_cmd + default_args
+            # moved scaf_args out of if statement as well!
             exec_cmd = exec_cmd + " 2>&1 > " + os.path.join(
                 args.tmpdir,
                 scaffolder_name + "_" + str(run_id) + "_" + ref_id + ".log")
-
-            subprocess.run(exec_cmd,
-                           shell=sys.platform != "win32",
-                           stdout=subprocess.PIPE,
-                           stderr=subprocess.PIPE,
-                           check=True)
-
+            scaffolder_cmd_list.append(exec_cmd)
+            merge_these_scaffolds.append(os.path.join(run_scaffold_output, "scaffolds.fasta"))
 #             mkdir("$run_dir/${scaffolder}_${ref_id}") or die "Error creating $run_dir/${scaffolder}_${ref_id}: $! ";
 #             chdir("$run_dir/${scaffolder}_${ref_id}") or die "Error in chdir $run_dir/${scaffolder}_${ref_id}: $! ";
 #             symlink( "$run_dir/${reference}", "$run_dir/${scaffolder}_${ref_id}/$reference" )
@@ -2406,68 +2413,57 @@ def run_scaffolder(scaffolder_name, args, config, reads_ns, run_id,
 #             }
 #         }
 #     }
-#     else {    #non reference-guided scaffolding....
+    else: # non reference-guided scaffolding, that is....
+        # A kludge to work when tmpdir is not the top run dir - needed
+        # because align_reads concatenates path from tmpdir and contigs.fasta
+        # if ( !-e "$tmpdir/contigs.fasta" ) {
+        #     symlink( $contigs, "$tmpdir/contigs.fasta" );
+        # }
 
-#         my $exec_cmd = $cmd;
+        # if no reference provided we won't have an estimate of insert size,
+        # so need to get this by read alignment vs the assembly.
+        if reads_ns.mean_insert is None:
+            logger.info("Aligning reads to contigs to determine insert size")
+            sorted_bam = align_reads(dirname="align_to_contigs", reads_ns=reads_ns,
+                                     config=config, downsample=True, args=args,
+                                     logger=logger)
+            reads_ns.insert_mean, reads_ns.insert_stddev = get_insert_stats(
+                bam=sorted_bam, config=config, args=args, reads_ns=reads_ns, logger=logger)
 
-#         # A kludge to work when tmpdir is not the top run dir - needed
-#         # because align_reads concatenates path from tmpdir and contigs.fasta
-#         if ( !-e "$tmpdir/contigs.fasta" ) {
-#             symlink( $contigs, "$tmpdir/contigs.fasta" );
-#         }
+        run_scaffold_output = os.path.join(args.tmp_dir,
+                                           scaffolder + "_no_reference",
+                                           scaffold_output)
 
-#         # if no reference provided we won't have an estimate of insert size,
-#         # so need to get this by read alignment vs the assembly.
-#         if ( !$insert_size ) {
-#             align_reads( $tmpdir, "contigs.fasta", $mean_read_length, 1 );
-#             ( $insert_size, $insert_sd ) = get_insert_stats( "$tmpdir", "contigs.fasta" );
-#         }
+        # moved scaf_args out of if statement as well!
+        exec_cmd = exec_cmd + " 2>&1 > " + os.path.join(
+            args.tmpdir,
+            scaffolder_name + "_" + str(run_id) + ".log")
+        scaffolder_cmd_list.append(exec_cmd)
+        merge_these_scaffolds.append(os.path.join(run_scaffold_output, "scaffolds.fasta"))
 
-#         my @replace = ( $cmd, $scaffold_output );
-#         foreach ( $exec_cmd, $scaffold_output ) {
-#             s/__BUGBUILDER_BIN__/$FindBin::Bin/;
-#             s/__TMPDIR__/$tmpdir/g;
-#             s/__SCAFFDIR__/$run_dir/g;
-#             s/__RUN__/$run_id/;
-#             s/__FASTQ1__/$tmpdir\/read1.fastq/;
-#             s/__FASTQ2__/$tmpdir\/read2.fastq/;
-#             s/__CONTIGS__/$contigs/;
-#             s/__INSSIZE__/$insert_size/;
-#             s/__INSSD__/$insert_sd/;
-#             s/__THREADS__/$threads/;
-#         }
-#         if ( defined($unscaffolded_output) ) {
-#             $unscaffolded_output =~ s/__BUGBUILDER_BIN__/$FindBin::Bin/;
-#             $unscaffolded_output =~ s/__TMPDIR__/$tmpdir/g;
-#             $unscaffolded_output =~ s/__SCAFFDIR__/$run_dir/g;
-#             $unscaffolded_output =~ s/__RUN__/$run_id/g;
-#             $unscaffolded_output =~ s/__FASTQ1__/$tmpdir\/read1.fastq/;
-#             $unscaffolded_output =~ s/__FASTQ2__/$tmpdir\/read2.fastq/;
-#             $unscaffolded_output =~ s/__CONTIGS__/$contigs/;
-#             $unscaffolded_output =~ s/__INSSIZE__/$insert_size/;
-#             $unscaffolded_output =~ s/__INSSD__/$insert_sd/;
-#         }
-#         my $run_scaffold_output = "$run_dir/${scaffolder}/$scaffold_output";
+        #mkdir("$run_dir/${scaffolder}") or die "Error creating $run_dir/${scaffolder}: $! ";
+        #chdir("$run_dir/${scaffolder}") or die "Error in chdir $run_dir/{scaffolder}: $! ";
+        #symlink( "$run_dir/${reference}", "$run_dir/${scaffolder}/$reference" )
+        #  or die "Error linking $reference:$! ";
 
-#         if ($scaffolder_args) {
-#             $exec_cmd .= "$scaffolder_args";
-#         }
-#         elsif ($default_args) {
-#             $exec_cmd .= "$default_args" if ($default_args);
-#         }
+        #symlink( "$run_dir/reference_${ref_ids[0]}_contigs", "$run_dir/${scaffolder}_${ref_id}/$contigs" )
 
-#         $exec_cmd .= " 2>&1 >$tmpdir/${scaffolder}_${run_id}.log";
-
-#         system("perl $exec_cmd") == 0 or die "Error executing $exec_cmd:$!";
-
-#         #mkdir("$run_dir/${scaffolder}") or die "Error creating $run_dir/${scaffolder}: $! ";
-#         #chdir("$run_dir/${scaffolder}") or die "Error in chdir $run_dir/{scaffolder}: $! ";
-#         #symlink( "$run_dir/${reference}", "$run_dir/${scaffolder}/$reference" )
-#         #  or die "Error linking $reference:$! ";
-
-#         #symlink( "$run_dir/reference_${ref_ids[0]}_contigs", "$run_dir/${scaffolder}_${ref_id}/$contigs" )
-
-#     }
+    # when refactor, end get_scaffolder_cmds here
+    # now we have are command(s), so run them
+    subprocess.run(exec_cmd,
+                   shell=sys.platform != "win32",
+                   stdout=subprocess.PIPE,
+                   stderr=subprocess.PIPE,
+                   check=True)
+    resulting_scaffold = os.path.join(args.tmp_dir, scaffolder_name + run_id,
+                                      "scaffolds.fasta")
+    if len(merge_these_scaffolds) != 0:
+        counter = 1
+        with open(resulting_scaffold, "w") as outf:
+            for scaf in merge_these_scaffolds:
+                for rec in SeqIO.parse(scaf):
+                    rec.id = "scaffold_%05d" % counter
+                    SeqIO.write(rec, outf, fasta)
 
 #     # Create a fasta file of unplaced contigs if files of contig_ids are generated by the scaffolder wrapper
 #     my @id_files = File::Find::Rule->file()->name("${scaffolder}.contig_ids")->in($run_dir);
@@ -2517,7 +2513,7 @@ def run_scaffolder(scaffolder_name, args, config, reads_ns, run_id,
 #               or die "Error creating symlink: $!";
 #         }
 #     }
-#     return ($linkage_evidence);
+    return linkage_evidence
 
 # }
 
