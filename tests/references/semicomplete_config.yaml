@@ -104,6 +104,7 @@ assemblers:
      command_pe: __BUGBUILDER_BIN__/run_abyss --tmpdir __TMPDIR__ --fastq1 __FASTQ1__ --fastq2 __FASTQ2__ --read_length __READ_LENGTH__
      contig_output: __TMPDIR__/abyss/abyss-contigs.fa
      scaffold_output: __TMPDIR__/abyss/abyss-scaffolds.fa
+     insert_size_required: 0
      downsample_reads: 1
    - name: spades
      create_dir: 0
@@ -116,6 +117,7 @@ assemblers:
      contig_output: __TMPDIR__/spades/contigs.fasta
      scaffold_output: __TMPDIR__/spades/scaffolds.fasta
      default_args: -t __THREADS__ --careful
+     insert_size_required: 0
      downsample_reads: 1
    - name: celera
      create_dir: 1
@@ -126,6 +128,7 @@ assemblers:
      contig_output: __TMPDIR__/celera/output/9-terminator/BugBuilder.ctg.fasta
      scaffold_output: __TMPDIR__/celera/output/9-terminator/BugBuilder.scf.fasta
      downsample_reads: 0
+     insert_size_required: 0
    - name: PBcR
      create_dir: 1
      min_length: 500
@@ -134,6 +137,7 @@ assemblers:
      contig_output: __TMPDIR__/PBcR/BugBuilder/9-terminator/asm.ctg.fasta
      scaffold_output: __TMPDIR__/PBcR/BugBuilder/9-terminator/asm.scf.fasta
      downsample_reads: 0
+     insert_size_required: 0
      # masurca works best with untrimmed reads, so use __ORIG_FASTQ1__ nad __ORIG_FASTQ2__
    - name: masurca
      create_dir: 1
@@ -208,34 +212,34 @@ varcallers:
      ref_required: 1
      create_dir: 1
      priority: 1
-R: /usr/bin/R
-abyss: /usr/bin/abyss
+R: /usr/local/bin/R
+abyss: null
 amos: null
 aragorn: null
-asn2gb: /usr/bin/asn2gb
-barrnap: /home/nicholas/GitHub/barrnap/bin/barrnap
+asn2gb: null
+barrnap: null
 blast: null
-bwa: /home/nicholas/miniconda3/bin/bwa
+bwa: /Users/nicholas/miniconda3/bin/bwa
 celera: null
 cgview: null
-fastqc: /home/nicholas/miniconda3/bin/fastqc
+fastqc: /Users/nicholas/miniconda3/bin/fastqc
 gapfiller: null
 gfinisher: null
 hmmer3: null
 infernal: null
 masurca: null
 mauve: null
-mummer: /home/nicholas/kSNP3.021_Linux_package/kSNP3/mummer
-picard: null
+mummer: null
+picard: /Users/nicholas/miniconda3/bin/picard
 pilon: null
-prodigal: /usr/bin/prodigal
+prodigal: null
 prokka: null
 rnammer: null
-samtools: /home/nicholas/miniconda3/bin/samtools
-seqtk: /home/nicholas/bin/seqtk
-sickle: /home/nicholas/bin/sickle
+samtools: /Users/nicholas/miniconda3/bin/samtools
+seqtk: /Users/nicholas/miniconda3/bin/seqtk
+sickle: /Users/nicholas/miniconda3/bin/sickle
 sis: null
-spades: /home/nicholas/miniconda3/bin/spades
+spades: /Users/nicholas/miniconda3/bin/spades
 sspace: null
-tbl2asn: /usr/bin/tbl2asn
+tbl2asn: null
 vcflib: null

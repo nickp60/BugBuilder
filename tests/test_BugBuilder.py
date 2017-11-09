@@ -184,7 +184,6 @@ class test_BugBuilder(unittest.TestCase):
         config = bb.parse_config(self.filled_config)
         reads_ns = bb.assess_reads(args=test_args, config=config,
                                 platform="illumina", logger=logger)
-        print(reads_ns)
         self.assertEqual(9.996, reads_ns.coverage)
         self.assertEqual("sanger", reads_ns.encoding)
         self.assertEqual("long_illumina", reads_ns.lib_type)
@@ -206,7 +205,7 @@ class test_BugBuilder(unittest.TestCase):
                                 platform="illumina", logger=logger)
         test_args.assemblers = ["notAnAssembler"]
         with self.assertRaises(ValueError):
-            bb.check_assemblers(args=test_args, config=config, paired=False,
+            bb.check_assemblers(args=test_args, config=config,
                                 reads_ns=reads_ns, logger=logger)
 
     def test_check_assemblers_none_provided(self):
@@ -218,9 +217,36 @@ class test_BugBuilder(unittest.TestCase):
                                    platform="illumina", logger=logger)
         test_args.assemblers = []
         reads_ns.lib_type = "hybrid"
-        bb.check_assemblers(args=test_args, config=config, paired=False,
+        bb.check_assemblers(args=test_args, config=config,
                             reads_ns=reads_ns, logger=logger)
-        self.assertEqual(test_args.assemblers, ["mascura", "spades"])
+        self.assertEqual(test_args.assemblers, ["masurca", "spades"])
+
+    def test_check_assemblers_too_long_reads(self):
+        test_args = Namespace(
+            fastq1=self.fastq1, fastq2=self.fastq2, long_fastq=None,
+            de_fere_contigs=None, reference=self.ref_fasta, genome_size=0)
+        config = bb.parse_config(self.filled_config)
+        reads_ns = bb.assess_reads(args=test_args, config=config,
+                                   platform="illumina", logger=logger)
+        test_args.assemblers = ["spades"]
+        reads_ns.mean_read_length = 500
+        with self.assertRaises(ValueError):
+            bb.check_assemblers(args=test_args, config=config,
+                                reads_ns=reads_ns, logger=logger)
+
+    def test_check_assemblers_need_insertsize(self):
+        pass
+
+    def test_check_assemblers_too_short(self):
+        pass
+
+    def test_get_scaffolder_and_linkage(self):
+        test_args = Namespace(
+            scaffolder="sis", reference=self.ref_fasta)
+        config = bb.parse_config(self.filled_config)
+        bb.get_scaffolder_and_linkage(args=test_args, config=config,
+                                      paired=True, logger=logger)
+
 
     def tearDown(self):
         """ delete temp files if no errors, and report elapsed time

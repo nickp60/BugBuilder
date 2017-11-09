@@ -78,7 +78,7 @@ assembler_categories:
       - SIS
   - name: 'long'
     min_length: 500
-    max_length: 50000
+    max_length: 500000
     long_fastq: 'required'
     platforms:
       - 'PacBio'
@@ -120,6 +120,7 @@ assemblers:
      command_pe: __BUGBUILDER_BIN__/run_abyss --tmpdir __TMPDIR__ --fastq1 __FASTQ1__ --fastq2 __FASTQ2__ --read_length __READ_LENGTH__
      contig_output: __TMPDIR__/abyss/abyss-contigs.fa
      scaffold_output: __TMPDIR__/abyss/abyss-scaffolds.fa
+     insert_size_required: 0
      downsample_reads: 1
    - name: spades
      create_dir: 0
@@ -132,6 +133,7 @@ assemblers:
      contig_output: __TMPDIR__/spades/contigs.fasta
      scaffold_output: __TMPDIR__/spades/scaffolds.fasta
      default_args: -t __THREADS__ --careful
+     insert_size_required: 0
      downsample_reads: 1
    - name: celera
      create_dir: 1
@@ -142,6 +144,7 @@ assemblers:
      contig_output: __TMPDIR__/celera/output/9-terminator/BugBuilder.ctg.fasta
      scaffold_output: __TMPDIR__/celera/output/9-terminator/BugBuilder.scf.fasta
      downsample_reads: 0
+     insert_size_required: 0
    - name: PBcR
      create_dir: 1
      min_length: 500
@@ -150,6 +153,7 @@ assemblers:
      contig_output: __TMPDIR__/PBcR/BugBuilder/9-terminator/asm.ctg.fasta
      scaffold_output: __TMPDIR__/PBcR/BugBuilder/9-terminator/asm.scf.fasta
      downsample_reads: 0
+     insert_size_required: 0
      # masurca works best with untrimmed reads, so use __ORIG_FASTQ1__ nad __ORIG_FASTQ2__
    - name: masurca
      create_dir: 1
@@ -973,6 +977,7 @@ def assess_reads(args, config, platform, logger=None):
                      mean_long_read_length=long_mean,
                      long_read_length_stddev=long_stddev,
                      # set these later
+                     paired=True if args.fastq2 is not None else False,
                      insert_mean=None, insert_stddev=None,
                      coverage=coverage, long_read_coverage=long_coverage,
                      read_bases=tot_length)
@@ -1004,9 +1009,10 @@ def parse_config(config_file):
     return(newns)
 
 
-def check_assemblers(args, config, paired, reads_ns, logger):
+def check_assemblers(args, config, reads_ns, logger):
     """
     """
+    logger.info("Requested assemblers: %s", " ".join(args.assemblers))
     if len(args.assemblers) > 2:
         raise ValueError("A maximum of 2 assemblers can be requested")
     # sanity check assemblers where these have been manually requested...
@@ -1017,6 +1023,8 @@ def check_assemblers(args, config, paired, reads_ns, logger):
     # If no assembler is requested, we need to select one based on the
     # 'assembly_type' from the configuration file....
     if len(args.assemblers) == 0:
+        logger.info("No assemblers selected; we will choose based " +
+                    " on library type: %s", reads_ns.lib_type)
         for category in config.assembler_categories:
             if category['name'] == reads_ns.lib_type:
                 args.assemblers = category['assemblers']
@@ -1026,28 +1034,30 @@ def check_assemblers(args, config, paired, reads_ns, logger):
         for conf_assembler in config.assemblers:
             if conf_assembler['name'] != assembler:
                 continue
-            print(conf_assembler)
-            if not paired and 'command_se' not in conf_assembler.keys():
+            if not reads_ns.paired and 'command_se' not in conf_assembler.keys():
                 logger.warning(str("%s requires paired reads, but you only " +
-                               "specified one fastq file..."), assembler)
+                               "specified one fastq file. Removing from list" +
+                                   " of assemblers..."), assembler)
                 args.assemblers = [x for x in args.assemblers if x != assembler]
                 if len(args.assemblers) == 0:
                     raise ValueError("No valid assemblers chosen!")
-            # if conf_assembler['min_length'] and reads_ns.mean_read_length < conf_assembler['min_length']:
-            #     raise ValueError("%s does not support reads less than %d" % \
-            #                      (assembler, conf_assembler.min_length))
+            if conf_assembler['min_length'] and reads_ns.mean_read_length < conf_assembler['min_length']:
+                raise ValueError("%s does not support reads less than %d" % \
+                                 (assembler, conf_assembler.min_length))
             if conf_assembler['max_length'] and reads_ns.mean_read_length > conf_assembler['max_length']:
                 raise ValueError("%s does not support reads greather than %d" % \
-                                 (assembler, conf_assembler.max_length))
-            if conf_assembler['max_length'] and reads_ns.mean_read_length > conf_assembler['max_length']:
+                                 (assembler, conf_assembler['max_length']))
+            if conf_assembler['insert_size_required'] and not reads_ns.insert_mean and not args.reference:
                 raise ValueError(str("%s requires the library insert size and " +
                                  "stddev to be provided. Please add the " +
                                  "--insert-size and --insert-stddev " +
                                  "parameters, or provide a reference " +
                                  "sequence") % assembler)
+    logger.info(str("Approved assembler(s) based on library type and " +
+                    "availability: %s"), " ".join(args.assemblers))
 
 
-def get_scaffolder_and_linkage(args, config, paired):
+def get_scaffolder_and_linkage(args, config, paired, logger):
     if args.scaffolder is None:
         return None
     logger.debug(config.scaffolders)
@@ -1103,7 +1113,7 @@ def get_varcaller(args, config, paired):
                                  args.varcaller)
 
 
-def select_tools(args, paired, config, reads_ns, logger):
+def select_tools(args, config, reads_ns, logger):
     """
     options, while checking for validity of selections...
 
@@ -1122,14 +1132,14 @@ def select_tools(args, paired, config, reads_ns, logger):
                  $ (name of scaffolder to use)
 
     """
-    check_assemblers(args=args, config=config, paired=paired, reads_ns=reads_ns)
+    check_assemblers(args=args, config=config, reads_ns=reads_ns)
     logger.debug("get scaffolder")
     linkage_evidence = get_scaffolder_and_linkage(
-        args=args, config=config, paired=paired)
+        args=args, config=config, paired=reads_ns.paired)
     logger.debug("getting merger")
-    get_merger_and_linkage(args, config, paired)
-    get_finisher(args, config, paired)
-    get_varcaller(args, config, paired)
+    get_merger_and_linkage(args, config, paired=reads_ns.paired)
+    get_finisher(args, config, paired=reads_ns.paired)
+    get_varcaller(args, config, paired=reads_ns.paired)
 
     logger.info("linkage: %s" % linkage_evidence)
     return Namespace(assemblers=args.assemblers,
@@ -1716,8 +1726,7 @@ def main(args=None, logger=None):
     for k, v in sorted(vars(args).items()):
         logger.debug("%s: %s", k, str(v))
 
-    # are we dealing with a paired library
-    PAIRED = True if args.fastq2 is not None else False
+    # are we dealing with a paired library?  set that within assess_reads
     logger.info("Welcome to BugBuilder")
     logger.info("Preparing to build your bug...")
     config_path = get_config_path()
@@ -1740,7 +1749,7 @@ def main(args=None, logger=None):
     logger.info("Determining if a reference is needed")
     check_ref_needed(args=args, lib_type=reads_ns.lib_type)
     logger.info("preparing config and tools; lol not really but we will be")
-    tools = select_tools(args, paired=PAIRED, config=config, reads_ns=reads_ns, logger=logger)
+    tools = select_tools(args, config=config, reads_ns=reads_ns, logger=logger)
 
     downsample_reads = get_downsampling(args, config)
     if not args.skip_fastqc and config.fastqc is not None:
