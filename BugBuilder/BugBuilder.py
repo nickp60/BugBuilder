@@ -382,7 +382,7 @@ def configure(config_path):
     mand_programs = [
         'fastqc', 'sickle', 'seqtk', 'samtools', 'picard', 'blastn', 'makeblastdb', "nucmer",
         'R', 'barrnap', 'prokka', 'aragorn', 'prodigal', 'hmmer3', 'rnammer',
-        'mummer', 'infernal', 'bwa', 'tbl2asn', 'abyss', 'spades',
+        'mummer', "delta-filter",  "show-coords", "sis", "multifasta", 'infernal', 'bwa', 'tbl2asn', 'abyss', 'spades',
         'celera','gapfiller', 'sspace', 'asn2gb', 'amos' , 'masurca',
         'gfinisher', 'pilon', 'vcflib', 'cgview']
     opt_programs = ['sis', 'mauve']
@@ -390,7 +390,8 @@ def configure(config_path):
     program_dict = dict((k, None) for k in programs)
     for prog in programs:
         if shutil.which(prog):
-            program_dict[prog] = shutil.which(prog)
+            # replace dashes with underscores in config names but not in prog
+            program_dict[prog.replace("-", "_")] = shutil.which(prog)
     with open(config_path, 'w') as outfile:  # write header and config params
         for line in __config_data__:
             outfile.write(line)
@@ -434,7 +435,7 @@ def get_args():  # pragma: no cover
                                "try to select an appropriate assembler " +
                                "automatically",
                                choices=parse_available_assemblers(),
-                               nargs="*",
+                               nargs="*", default=[],
                                type=str, required=True)
 
     optional = parser.add_argument_group('optional arguments')
@@ -476,7 +477,7 @@ def get_args():  # pragma: no cover
                           "assembler_args should be specified twice, once " +
                           "for each assemler, in the same order than the " +
                           "assemblers are specified.",
-                          nargs="*",
+                          nargs="*", default=[],
                           type=str)
     #  These are depreciated in favour of the --already-assembled_dirs arg
     # optional.add_argument("--assemblies_contigs", dest='assemblies_contigs',
@@ -582,7 +583,7 @@ def get_args():  # pragma: no cover
                           action="store",
                           help="dir(s) with existing assembler results; must" +
                           " specify assembler(s), and lists much match " +
-                          "length",
+                          "length", default=[],
                           nargs="*", type=str)
     # optional.add_argument("--scratchdir", dest='scratchdir', action="store",
     #                       help="dir for results",
@@ -677,16 +678,16 @@ def match_assembler_args(args):
         list: [assembler_name, assembler_argument_string]
     """
     assembler_list = []
-    if len(args.assembler) == 0:
+    if len(args.assemblers) == 0:
         return [None, None]
     if len(args.assembler_args) != 0:
         if len(args.assembler) != len(args.assembler_args):
             raise ValueError("length of assemblers must equal " +
                              "length of assembler args")
-        for i, v in enumerate(args.assembler):
+        for i, v in enumerate(args.assemblers):
             assembler_list.append([v, args.assembler_args[i]])
     else:
-        for i, v in enumerate(args.assembler):
+        for i, v in enumerate(args.assemblers):
             assembler_list.append([v, None])
     return assembler_list
 
@@ -1138,10 +1139,10 @@ def select_tools(args, config, reads_ns, logger):
                  $ (name of scaffolder to use)
 
     """
-    check_assemblers(args=args, config=config, reads_ns=reads_ns)
+    check_assemblers(args=args, config=config, reads_ns=reads_ns, logger=logger)
     logger.debug("get scaffolder")
     linkage_evidence = get_scaffolder_and_linkage(
-        args=args, config=config, paired=reads_ns.paired)
+        args=args, config=config, paired=reads_ns.paired, logger=logger)
     logger.debug("getting merger")
     get_merger_and_linkage(args, config, paired=reads_ns.paired)
     get_finisher(args, config, paired=reads_ns.paired)
@@ -1814,7 +1815,7 @@ def main(args=None, logger=None):
                                  config=config, downsample=True, args=args, logger=logger)
         reads_ns.insert_mean, reads_ns.insert_stddev = get_insert_stats(
             bam=sorted_bam, config=config, args=args, reads_ns=reads_ns, logger=logger)
-    paired_str = "Paired" if PAIRED else "Fragment"
+    paired_str = "Paired" if reads_ns.paired else "Fragment"
     read_table=[
         ["Mean Read Length", reads_ns.mean_read_length],
         ["Read Length Standard Deviation", reads_ns.read_length_stddev ],
