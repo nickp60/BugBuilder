@@ -533,7 +533,9 @@ def get_args():  # pragma: no cover
                           help="size of the genome ",
                           type=int, default=0) # 0 is better than None for addition :)
     optional.add_argument("--downsample", dest='downsample', action="store_true",
-                          help="size of the genome ", default=False)
+                          help="Downsample depth; set to 0 to skip " +
+                          "downsampling. default is 100x ",
+                          type=int, default=None)
     optional.add_argument("--species", dest='species', action="store",
                           help="species of your bug", default="unknown_species",
                           type=str)
@@ -983,11 +985,12 @@ def assess_reads(args, config, platform, logger=None):
                      read_length_stddev=stddev,
                      mean_long_read_length=long_mean,
                      long_read_length_stddev=long_stddev,
+                     read_bases=tot_length,
                      # set these later
                      paired=True if args.fastq2 is not None else False,
                      insert_mean=None, insert_stddev=None,
                      coverage=coverage, long_read_coverage=long_coverage,
-                     read_bases=tot_length)
+                     downsampled_coverage=None)
 
 
 def check_ref_needed(args, lib_type):
@@ -1157,7 +1160,7 @@ def select_tools(args, config, reads_ns, logger):
                      varcall=args.varcaller)
 
 
-def get_downsampling(args, config):
+def assembler_needs_downsampling(args, config):
     assembler_conf = config.assemblers
     for conf_assembler in config.assemblers:
         if conf_assembler['name'] in args.assemblers:
@@ -1476,10 +1479,13 @@ def get_insert_stats(bam, reads_ns, args, config, logger):
     return (mean_insert, stddev_insert)
 
 def replace_placeholders(string, config, reads_ns, args):
+    # key is the name of placholder, and value is a list [object, attr]
+    # if object is None, just use attribute string
     replace_dict = {
-        "__BUGBUILDER_BIN__": "/$FindBin::Bin/g",
+        # assembler placeholders
+        "__BUGBUILDER_BIN__": [None, "/$FindBin::Bin/g"],
         # "__ASMDIR__": os.path.dirname(config.assemblers[assembler['name']]),
-        "__MEMORY__": args.memory,
+        "__MEMORY__": [args, "memory"],
         "__TMPDIR__": args.tmp_dir,
         "__FASTQ1__": args.fastq1,
         "__FASTQ2__": args.fastq2,
@@ -1495,7 +1501,9 @@ def replace_placeholders(string, config, reads_ns, args):
         "__READ_LENGTH__": reads_ns.mean_read_length,
         "__INSSIZE__": reads_ns.insert_mean,
         "__INSSD__": reads_ns.insert_stddev,
-        "__THREADS__": args.threads
+        "__THREADS__": args.threads,
+        # scaffolder placeholders
+        "__reference__":None,
     }
     for k,v in replace_dict.items():
         string = string.replace(k, str(v) if v is not None else "")
@@ -1541,6 +1549,58 @@ def standardize_fasta_output(infile, outfile, ctype):
                 rec.id = "%s_%06d" % (ctype, count)
                 rec.description = ""
                 SeqIO.write(rec, outf, "fasta")
+
+
+def get_L50_N50(lengths):
+    lengths.sort()
+    tot = sum(lengths)
+    fifty = float(tot / 2)
+    progress, N50 = 0, 0
+    for L50 in lengths:
+        N50 = N50 + 1
+        progress = progress + L50
+        if progress >= fifty:
+            return (L50, N50)
+
+
+def get_contig_stats(contigs, ctype):
+    """
+    Reports contig statistics on assembly. Reports on scaffolds or
+    contigs depending upon 2nd argument passed - contigs gives values
+    for all contigs and those >200bp
+
+    required params: $ (path to contigs)
+                 $ ('scaffolds'|'contigs')
+
+    returns          $ (0)
+    """
+    assert ctype in ['scaffolds', 'contigs'], "invalid contig type"
+    count, count_200 = 0, 0
+    all_lengths, all_lengths_200 = [], []
+    lengths, lengths_200 = [], []
+    with open(contigs, "r") as inf:
+        for rec in SeqIO.parse(contigs, "fasta"):
+            length = len(rec.seq)
+            count = count + 1
+            all_lengths.append(length)
+            if length > 200:
+                lengths_200.append(length)
+                count_200 = count_200 + 1
+                all_lengths_200.append(length)
+
+    sorted_lengths     = sorted(all_lengths)
+    sorted_lengths_200 = sorted(all_lengths_200)
+    L50, N50 = get_L50_N50(all_lengths)
+    L50_200, N50_200 = get_L50_N50(all_lengths_200)
+    return [
+        ["", "All $type", "$type >200bp"],
+        [ctype + " count", count, count_200],
+        ["Max Length", max(all_lengths), max(all_lengths_200)],
+        ["Assembly size", sum(all_lengths), sum(all_lengths_200)],
+        ["L50", L50, L50_200],
+        ["N50", N50, N50_200 ]
+    ]
+
 
 def run_assembler(assembler, assembler_args, args, reads_ns,config, logger):
     """
@@ -1729,92 +1789,29 @@ def check_already_assembled_dirs(args, config, logger):
                 res_dict[f].append(res)
     return (res_dict["contig"], res_dict["scaffold"])
 
-
-
-def main(args=None, logger=None):
-    if args is None:
-        args = get_args()
+def check_args(args):
     if args.merge_method is None and len(args.assemblers) > 1:
         raise ValueError("Must provide merge method if using multiple assemblers")
 
-    assemblers_list = match_assembler_args(args=args)
-    check_files_present(args)
 
-    seq_ids = None
-    if args.reference is not None:
-        seq_ids = [x.id for x in  list(SeqIO.parse(args.reference, "fasta"))]
+def make_empty_results_object():
+    """ returns a namepace containing both run history and paths of res files
+    This is to keep the args object from being mutilated over time, and to
+    Ensure that we have a way of looking back at a run to see what happened.
+    """
+    results = Namespace(
+        organism=None,
+        assemblers_list=None, # to be filled by match_assembler args
+        assemblers_results_dict_list=[], # {name:None, contigs:None, scaffold:None}
+        current_contigs=None, current_scaffolds=None, current_reference=None,
+        old_contigs=[[None, None]],  # [path, source]
+        old_scaffolds=[[None, None]],  # [path, source]
+        old_references=[[None, None]],  # [path, source]
+    )
+    return results
 
-    organism = "{0}{1}{2}".format(args.genus, " " + args.species, " sp. " + args.strain)
-    dt = arrow.utcnow()
-    if not args.outdir:
-        if "unknown" in organism:
-            args.outdir = "BugBuilder_" + dt.local.format('YYYY-MM-DD_HHmmss')
-        else:
-            args.outdir = "BugBuilder_" + organism.replace(" ", "_")
-    outdir = os.path.abspath(os.path.expanduser(args.outdir))
-    try:
-        os.makedirs(outdir, exist_ok=False)
-    except OSError:
-        print("output directory existsl Existing...")
-        sys.exit(1)
-    if logger is None:
-        logger = set_up_logging(
-            verbosity=args.verbosity,
-            outfile=os.path.join(outdir, "BugBuilder.log"),
-            name=__name__)
-    for k, v in sorted(vars(args).items()):
-        logger.debug("%s: %s", k, str(v))
 
-    # are we dealing with a paired library?  set that within assess_reads
-    logger.info("Welcome to BugBuilder")
-    logger.info("Preparing to build your bug...")
-    config_path = get_config_path()
-    config = return_config(config_path, force=args.configure, logger=logger)
-    logger.info("Using configuration from %s", config_path)
-    logger.debug(config)
-    setup_tmp_dir(args, output_root=outdir, logger=logger)
-    # if args.reference is None:
-    #     reference = None
-    # else:
-    #     reference = os.path.basename(args.reference)
-    #  need to know a bit about the provided reads so we can act appropriately
-    # copy paths to raw reads in case we need them for mascura
-    args.untrimmed_fastq1 = args.fastq1
-    args.untrimmed_fastq2 = args.fastq2
-    logger.info("Assessing reads and library type")
-    reads_ns  = assess_reads(args=args, config=config, platform=args.platform,
-                             logger=logger)
-    logger.debug(reads_ns)
-    logger.info("Determining if a reference is needed")
-    check_ref_needed(args=args, lib_type=reads_ns.lib_type)
-    logger.info("preparing config and tools; lol not really but we will be")
-    tools = select_tools(args, config=config, reads_ns=reads_ns, logger=logger)
-
-    downsample_reads = get_downsampling(args, config)
-    if not args.skip_fastqc and config.fastqc is not None:
-        logger.info("Running fastqc on reads")
-        run_fastqc(reads_ns, args, logger=logger)
-    if reads_ns.mean_read_length is not None:
-        if reads_ns.mean_read_length < 50 and reads_ns.mean_read_length < args.trim_length:
-            logger.info("trim-length reset to 25 due to mean read length: %i",
-                        reads_ns.mean_read_length)
-            args.trim_length = 25
-    if reads_ns.lib_type != "long" and not args.skip_trim:
-        logger.info("Trimming reads based on quality")
-        quality_trim_reads(args, config, reads_ns, logger)
-    if (reads_ns.coverage is not None and reads_ns.coverage > 100) and \
-       (downsample_reads or args.downsample):
-        logger.info("Downsampling reads to 100x coverage")
-        downsampled_coverage = downsample_reads(args=args, reads_ns=reads_ns,
-                                                config=config, new_cov=100)
-    else:
-        downsampled_coverage = None
-    if args.fastq2 and args.reference:
-        logger.info("Aligning reads to reference for determinging insert size")
-        sorted_bam = align_reads(dirname="align", reads_ns=reads_ns,
-                                 config=config, downsample=True, args=args, logger=logger)
-        reads_ns.insert_mean, reads_ns.insert_stddev = get_insert_stats(
-            bam=sorted_bam, config=config, args=args, reads_ns=reads_ns, logger=logger)
+def log_read_and_run_data(reads_ns, args, results):
     paired_str = "Paired" if reads_ns.paired else "Fragment"
     read_table=[
         ["Mean Read Length", reads_ns.mean_read_length],
@@ -1827,7 +1824,7 @@ def main(args=None, logger=None):
         ["Platform", args.platform],
         ["Quality Encoding", reads_ns.encoding],
         ["Projected Coverage", str(reads_ns.coverage) + "x"],
-        ["Projected Coverage (Downsampled)", str(downsampled_coverage) + "x"],
+        ["Projected Coverage (Downsampled)", str(reads_ns.downsampled_coverage) + "x"],
         ["Projected Long Read Coverage", str(reads_ns.long_read_coverage) + "x"]
         ]
     logger.info("LIBRARY DETAILS:\n" + tabulate.tabulate(read_table))
@@ -1844,370 +1841,6 @@ def main(args=None, logger=None):
         ["Split Origin",             not args.skip_split_origin]
     ]
     logger.info("ASSEMBLER DETAILS:\n" + tabulate.tabulate(run_table))
-    contig_scaffold_list = [] # holds pairs of (contigs_path, scaffolds_path)
-    if len(args.already_assembled_dirs) != 0:
-        ctgs, scafs = check_already_assembled_dirs(args, config, logger)
-        for idx, f  in ctgs:
-            contig_scaffold_list.append((f, scafs[idx]))
-    else:
-    #     pass
-    # if args.assemblies_contigs is None and args.assemblies_scaffolds is None:
-        for assembler, assembler_args in assemblers_list:
-            logger.info("Assembling with %s", assembler)
-            contigs_path, scaffolds_path  = run_assembler(
-                assembler=assembler, assembler_args=assembler_args,
-                args=args, reads_ns=reads_ns, config=config, logger=logger)
-            contig_scaffold_list.append((contigs_path, scaffolds_path))
-    # else:
-    #     for i, path  in enumerate(args.assemblies_contigs):
-    #         contig_scaffold_list.append((path, args.assemblies_scaffolds[i]))
-    if len(contig_scaffold_list) > 1:
-        #run merge
-        merged_contigs_path = merge_assemblies(args=args, config=config, reads_ns=reads_ns, logger=logger)
-        if args.scaffolder and args.reference:
-            ID_OK = check_id(args, contigs, logger)
-    if args.scaffolder is not None:
-        if \
-           (ID_OK and scaffolder_type == "paired_ends" or \
-             not ID_OK and scaffolder_type == "paired_ends"):
-            scaffolds = run_scaffolder()
-
-    if os.path.exists(args.tmp_dir, "scaffolds.fasta"):
-        # we may have been given a reference for a long read assembly but no
-        # scaffolder is used for these by default
-        args.scaffolder = "mauve" if args.scaffolder is None else args.scaffolder
-
-    #     find_origin( $tmpdir, $scaffolder, $scaffolder_args, "$tmpdir/reference_parsed_ids.fasta",
-    #                  $insert_size, $stddev, $mean_read_length, $threads )
-    #       if ($split_origin);
-    #     order_scaffolds( $tmpdir, basename($reference) ) if ($id_ok);
-
-    #     finish_assembly( $tmpdir, $finisher, $insert_size, $stddev, $encoding, $threads ) if ( $finisher && $id_ok );
-
-    # }
-
-#     my $gaps;
-
-#     if ( -e "$tmpdir/scaffolds.fasta" ) {
-#         $gaps = build_agp( $tmpdir, $organism, $mode, $scaffold_type );
-#     }
-
-#     # sequence stable from this point, only annotations altered
-#     for my $i (qw(1 2)) {
-# 	print "pm: $i \n";
-#         $pm->start and next();
-#         if ( $i == 1 ) {
-
-#             ##amosvalidate fails if we don't have mate-pairs
-#             if ( -e "$tmpdir/read2.fastq" && ( $mode eq 'draft' ) ) {
-#                 my $seq_file;
-#                 ( -e "$tmpdir/scaffolds.fasta" ) ? ( $seq_file = 'scaffolds.fasta' ) : ( $seq_file = 'contigs.fasta' );
-
-#                 align_reads( $tmpdir, $seq_file, $mean_read_length );
-#                 amosvalidate( $tmpdir, $insert_size, $stddev );
-#             }
-#         }
-#         elsif ( $i == 2 ) {
-
-#             run_prokka( $tmpdir, $genus, $species, $strain, $locustag, $centre );
-#         }
-
-#         $pm->finish();
-#     }
-
-#     $pm->wait_all_children();
-
-#     my $amosvalidate_results;
-#     if ( -e "$tmpdir/read2.fastq" && ( $mode eq 'draft' ) ) {
-#         get_contig_to_iid_mapping($tmpdir);
-#         $amosvalidate_results = summarise_amosvalidate($tmpdir);
-#     }
-
-#     run_varcaller( $tmpdir, $varcall, $threads, $mean_read_length ) if ($varcall);
-#     merge_annotations( $tmpdir, $amosvalidate_results, $gaps, $genus, $species, $strain );
-#     #  This kept throwing an error about Bio::SeqIO
-#     # run_cgview($tmpdir);
-
-#     build_comparisons( $tmpdir, basename($reference), $organism ) if ($reference);
-
-#     message("Final Assembly Statistics...");
-#     get_contig_stats( "$tmpdir/contigs.fasta", 'contigs' );
-#     get_contig_stats( "$tmpdir/scaffolds.fasta", 'scaffolds' ) if ( -e "$tmpdir/scaffolds.fasta" );
-#     my $emblfile;
-#     ( -e "$tmpdir/scaffolds.embl" ) ? ( $emblfile = "$tmpdir/scaffolds.embl" ) : ( $emblfile = "$tmpdir/contigs.embl" );
-
-#     my $io = Bio::SeqIO->new( -format => 'embl', -file => "$emblfile" );
-#     my ( $cds, $tRNA, $rRNA );
-#     while ( my $contig = $io->next_seq() ) {
-#         foreach my $feature ( $contig->get_SeqFeatures() ) {
-#             $cds++  if ( $feature->primary_tag eq 'CDS' );
-#             $tRNA++ if ( $feature->primary_tag eq 'tRNA' );
-#             $rRNA++ if ( $feature->primary_tag eq 'rRNA' );
-#         }
-#     }
-
-#     $tb = Text::ASCIITable->new();
-#     $tb->setCols( "Feature Type", "Number" );
-#     $tb->addRow( "CDS",  $cds );
-#     $tb->addRow( "tRNA", $tRNA );
-#     $tb->addRow( "rRNA", $rRNA );
-#     print "\nAnnotated features\n==================\n\n";
-#     print $tb, "\n";
-
-#     return_results( $tmpdir, $out_dir, $prefix, $keepall, $mode );
-#     chdir $orig_dir or warn "Failed to chdir:$ !";
-
-#     message("All done...");
-
-# }
-
-# ######################################################################
-# #
-# # set_paths
-# #
-# # Setups the PATH, PYTHONPATH and PERL5LIB environmental variables
-# # according to the specifications in the config...
-# #
-# # required arguments: $ (config hashref)
-# #
-# # returns:            0
-# #
-# ######################################################################
-
-# sub set_paths {
-
-#     my $config = shift;
-
-#     # Although we execute tools using fully qualified paths,
-#     # some of these expect certain things to be on path...
-#     $ENV{'PATH'} = $ENV{'PATH'} . ':' . $FindBin::Bin;
-#     $ENV{'PATH'} = $ENV{'PATH'} . ":" . "$FindBin::Bin/../packages/bin";
-#     $ENV{'PATH'} = $ENV{'PATH'} . ':' . $config->{'R_dir'} . '/bin'
-#       if ( $config->{'R_dir'} );
-#     $ENV{'PATH'} = $ENV{'PATH'} . ':' . $config->{'blast_dir'}
-#       if ( $config->{'blast_dir'} );
-#     $ENV{'PATH'} = $ENV{'PATH'} . ':' . $config->{'mummer_dir'}
-#       if ( $config->{'mummer_dir'} );
-#     $ENV{'PATH'} = $ENV{'PATH'} . ':' . $config->{'ncbi_utils_dir'}
-#       if ( $config->{'ncbi_utils_dir'} );
-#     $ENV{'PATH'} = $ENV{'PATH'} . ':' . $config->{'tbl2asn_dir'}
-#       if ( $config->{'tbl2asn_dir'} );
-#     $ENV{'PATH'} = $ENV{'PATH'} . ':' . $config->{'asn2gb_dir'}
-#       if ( $config->{'asn2gb_dir'} );
-#     $ENV{'PATH'} = $ENV{'PATH'} . ':' . $config->{'aragorn_dir'} . '/bin'
-#       if ( $config->{'aragorn_dir'} );
-#     $ENV{'PATH'} = $ENV{'PATH'} . ':' . $config->{'prodigal_dir'}
-#       if ( $config->{'prodigal_dir'} );
-#     $ENV{'PATH'} = $ENV{'PATH'} . ':' . $config->{'hmmer3_dir'} . '/bin'
-#       if ( $config->{'hmmer3_dir'} );
-
-#     #$ENV{'PATH'} = $ENV{'PATH'} . ':' . $config->{'rnammer_dir'}
-#     #  if ( $config->{'rnammer_dir'} );
-#     $ENV{'PATH'} = $ENV{'PATH'} . ':' . $config->{'infernal_dir'} . '/bin'
-#       if ( $config->{'infernal_dir'} );
-#     $ENV{'PATH'} = $ENV{'PATH'} . ':' . $config->{'prokka_dir'}
-#       if ( $config->{'prokka_dir'} );
-#     $ENV{'PATH'} = $ENV{'PATH'} . ':' . $config->{'barrnap_dir'}
-#       if ( $config->{'barrnap_dir'} );
-#     $ENV{'PATH'} = $ENV{'PATH'} . ":" . $config->{'mauve_dir'} . '/linux-x64'
-#       if ( $config->{'mauve_dir'} );
-#     $ENV{'PATH'} = $ENV{'PATH'} . ':' . $config->{'abyss_sealer_dir'}
-#       if ( $config->{'abyss_sealer_dir'} );
-
-#     if ( $config->{'python_lib_path'} ) {
-#         if ( defined( $ENV{'PYTHONPATH'} ) ) {
-#             $ENV{'PYTHONPATH'} = "$ENV{'PYTHONPATH'}:" . $config->{'python_lib_path'};
-#         }
-#         else {
-#             $ENV{'PYTHONPATH'} = $config->{'python_lib_path'};
-#         }
-#     }
-
-#     if ( $config->{'perl_lib_path'} ) {
-#         if ( $ENV{'PERL5LIB'} ) {
-#             $ENV{'PERL5LIB'} = "$ENV{'PERL5LIB'}:" . $config->{'perl_lib_path'};
-#         }
-#         else {
-#             $ENV{'PERL5LIB'} = $config->{'perl_lib_path'};
-#         }
-#     }
-#     return;
-# }
-
-
-# #######################################################################
-# #
-# ######################################################################
-# ######################################################################
-# #
-# # return_results
-# #
-# # Copies results back from tmpdir, returning full working directory
-# # if dircopy argument specified
-# #
-# # required params: $ (tmpdir)
-# #                  $ (strain)
-# #                  $ (dircopy - flag to indicate entire directory
-# #                     should be returned)
-# #                  $ (mode - draft mode also needs amos bank copying)
-# #
-# # returns        : $ (0)
-# #
-# ######################################################################
-
-# sub return_results {
-
-#     my $tmpdir  = shift;
-#     my $dir     = shift;
-#     my $prefix  = shift;
-#     my $dircopy = shift;
-#     my $mode    = shift;
-
-#     if ($dircopy) {
-#         dircopy( $tmpdir, "$dir" )
-#           or die "Error copying $tmpdir: $!";
-#     }
-#     else {
-#         my @files = qw(annotated.embl contigs.fasta scaffolds.fasta scaffolds.embl scaffolds.agp
-#           unplaced_contigs.fasta BugBuilder.log read1_fastqc.html read2_fastqc.html
-#           scaffolds_cgview.png contigs_cgview.png circleator.png circleator.svg reference.variants.vcf
-#           );
-
-#         opendir TMP, "$tmpdir" or die "Error opening $tmpdir: $!";
-#         my @all_files = readdir TMP;
-#         close TMP;
-
-#         foreach my $pattern (qw(blastout png)) {
-#             my @found = grep /$pattern/, @all_files;
-#             push @files, @found;
-#         }
-
-#         mkdir "$dir"
-#           or die "Error creating $dir: $!";
-
-#         foreach my $file (@files) {
-#             my $outfile;
-#             if ($prefix) {
-#                 $outfile = "$dir/${prefix}_${file}";
-#             }
-#             else {
-#                 $outfile = "$dir/$file";
-#             }
-#             my $target;
-#             if ( -l "$tmpdir/$file" ) {
-#                 $target = readlink("$tmpdir/$file");
-#             }
-#             else {
-#                 $target = "$tmpdir/$file";
-#             }
-#             copy( "$target", "$outfile" )
-#               or die "Error copying $file: $!"
-#               if ( -e "$tmpdir/$file" );
-#         }
-#         if ( $mode eq 'draft' ) {
-#             my $outfile;
-#             if ($prefix) {
-#                 $outfile = "$dir/${prefix}_assembly.bnk";
-#             }
-#             else {
-#                 $outfile = "$dir/assembly.bnk";
-#             }
-#             dircopy( "$tmpdir/amos/assembly.bnk", "$outfile" )
-#               or die "Error copying $tmpdir/amos/assembly.bnk: $!";
-#         }
-
-#     }
-
-# }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# ######################################################################
-# #
-# # finish_assembly
-# #
-# # Carried out assembly finishing using selected method
-# #
-# # required params: $ (tmpdir)
-# #                  $ (finisher)
-# #                  $ (insert size)
-# #                  $ (insert stddev)
-# #                  $ (base quality encoding)
-# #                  $ (no. threads)
-# #
-# # returns        : $ (0)
-# #
-# ######################################################################
-
-# sub finish_assembly {
-
-#     my $tmpdir        = shift;
-#     my $finisher      = shift;
-#     my $insert_size   = shift;
-#     my $insert_stddev = shift;
-#     my $encoding      = shift;
-#     my $threads       = shift;
-
-#     message("Finishing assembly ($finisher)...");
-
-#     my ( $cmd, $create_dir );
-#     my $finishers = $config->{'finishers'};
-#     foreach my $tool (@$finishers) {
-#         my $name = $tool->{'name'};
-#         if ( $name eq $finisher ) {
-#             $cmd        = $tool->{'command'};
-#             $create_dir = $tool->{'create_dir'};
-#         }
-#     }
-#     if ($create_dir) {
-#         mkdir "$tmpdir/$finisher" or die "Error creating $tmpdir/$finisher: $! ";
-#         chdir "$tmpdir/$finisher" or die "Error chdiring to $tmpdir/$finisher: $!";
-#     }
-
-#     $cmd =~ s/__BUGBUILDER_BIN__/$FindBin::Bin/;
-#     $cmd =~ s/__TMPDIR__/$tmpdir/;
-#     $cmd =~ s/__REFERENCE__/${tmpdir}\/reference.fasta/;
-#     $cmd =~ s/__INSSIZE__/$insert_size/;
-#     $cmd =~ s/__INSSD__/$insert_stddev/;
-#     $cmd =~ s/__ENCODING__/$encoding/;
-#     $cmd =~ s/__THREADS__/$threads/;
-
-#     system("perl $cmd") == 0 or die "Error running $cmd: $!";
-#     chdir $tmpdir     or die " Error chdiring to $tmpdir: $! ";
-
-#     print "Finished assembly statistics : \n============================\n";
-#     get_contig_stats( "$tmpdir/scaffolds.fasta", 'scaffolds' );
-
-#     return (0);
-# }
-
-
-
-
-
-
-
-#     chdir $tmpdir or die "Error chdiring to $tmpdir: $!";
-
-#     return ( $insert, $stddev );
-
-# }
-
-
-
-
 
 
 def run_scaffolder(scaffolder_name, args, config, reads_ns, run_id,
@@ -2488,6 +2121,466 @@ def run_scaffolder(scaffolder_name, args, config, reads_ns, run_id,
     return linkage_evidence
 
 # }
+
+def make_nucmer_origin_cmds(config, ref, query, out_dir, prefix="out", header=True):
+    # nucmer
+    nucmer_cmd = "{0} {1} {2} -p {3}/{4} 2>&1 > {3}/nucmer.log".format(
+        config.nucmer, ref, query, out_dir, prefix)
+    # delta-filter
+    delta_filter_cmd = \
+        "{0} -1 {1}/{2}.delta 2>{1}/delta-filter.log > {1}/{2}.filter".format(
+            config.delta_filter, out_dir, prefix)
+    #show-coords
+    show_coords_cmd = \
+        "{0} {3}{1}/{2}.filter 2>{1}/show-coords.log > {1}/{2}.coords".format(
+            config.show_coords, out_dir, prefix,
+            "" if header else "-H ")
+    return [nucmer_cmd, delta_filter_cmd, show_coords_cmd]
+
+
+def find_origin(args, logger):
+    """
+    Attempts to identify location of origin based upon contig overlapping
+    base 1 of the reference sequence. This assumes  each reference sequence
+    is a complete circular molecular i.e.a chromosome or a plasmid
+
+    required params: $ (tmpdir)
+                 $ (scaffolder)
+                 $ (scaffolder_args)
+                 $ (reference)
+                 $ (insert_size)
+                 $ (insert_stddev)
+                 $ (mean_read_length)
+
+    returns: $ (0)
+
+    """
+    ori_dir = os.path.join(args.tmp_dir, "origin")
+    os.path.mkdirs(ori_dir)
+    logger.info("Attempting to identify origin...");
+    cmds = make_nucmer_origin_cmds(config, ref, query, out_dir=ori_dir, prefix="ori", header=False)
+    origin = None
+    with open(os.path.join(ori_dir, ori.coords), "r") as coords:
+        for line in coords:
+            line = line.strip()
+            line = line.replace("|", "")
+            fields = re.split("\s*", line)
+            if not origin and fields[0] ==1:
+                origin = "{0}:{1}".format(fields[8], fields[2])
+                logger.info("Potential origin found at %s", origin )
+
+    if origin is not None:
+        ori_scaffold, pos = origin.split(":")
+        with open(scaffolds, "r") as inscaff, open(scaffols_ori_scaff.fasta, "w") as splitscaff :
+            for rec in SeqIO.parse(inscaff, "fasta"):
+                if ori_scaffold == rec.id:
+                    part_a = rec.seq[0: pos]
+                    part_b = rec.seq[pos + 1: ]
+                    ori_a = SeqRecord(id=rec.id + "_A",
+                                      seq=Seq(part_a))
+                    ori_b = SeqRecord(id=rec.id + "_B",
+                                      seq=Seq(part_b))
+                    SeqIO.write(ori_a, splitscaff, "fasta")
+                    SeqIO.write(ori_b, splitscaff, "fasta")
+                    #  now, rerun scaffolder on our split origins
+                    run_scaffolder(run_id=2)
+                    run_scaffolder(
+                        ori_dir,          "tmpdir/reference_parsed_ids.fasta",
+                        scaffolder,       scaffolder_args,
+                        insert_size,      stddev,
+                        2,                 "tmpdir/origin/split_ori_scaff.fasta",
+                        mean_read_length, threads
+                    )
+                    with open($ori_dir/${scaffolder}_2/scaffolds.fasta, "r") as infile, open(scaffolds_ori_split.fasta "a") as outfile:
+                        for new_rec in SeqIO.parse(infile):
+                            SeqIO.write(new_rec, outfile, "fasta")
+                else:
+                    with open(scaffolds_ori_split.fasta "a") as outfile:
+                        SeqIO.write(rec, outfile, "fasta")
+
+    #renumber scaffolds to ensure they are unique...
+    counter = 1
+    with open(scaffolds_ori_split.fasta "r") as inf, open(scaffolds_renumbered.fasta, "w") as outf:
+        for rec in SeqIO.parse():
+            rec.id = "scaffold_%05d" % counter
+            counter = counter + 1
+            SeqIO.write(rec, outf, fasta)
+
+
+
+def main(args=None, logger=None):
+    if args is None:
+        args = get_args()
+    check_args(args)
+    check_files_present(args)
+    results = make_empty_results_object()
+    results.assemblers_list = match_assembler_args(args=args)
+    # seq_ids = None
+    # if args.reference is not None:
+    #     seq_ids = [x.id for x in  list(SeqIO.parse(args.reference, "fasta"))]
+
+    results.organism = "{0}{1}{2}".format(args.genus, " " + args.species, " sp. " + args.strain)
+    dt = arrow.utcnow()
+    if not args.outdir:
+        if "unknown" in results.organism:
+            args.outdir = "BugBuilder_" + dt.local.format('YYYY-MM-DD_HHmmss')
+        else:
+            args.outdir = "BugBuilder_" + results.organism.replace(" ", "_")
+    args.outdir = os.path.abspath(os.path.expanduser(args.outdir))
+    try:
+        os.makedirs(args.outdir, exist_ok=False)
+    except OSError:
+        print("output directory existsl Existing...")
+        sys.exit(1)
+    if logger is None:
+        logger = set_up_logging(
+            verbosity=args.verbosity,
+            outfile=os.path.join(args.outdir, "BugBuilder.log"),
+            name=__name__)
+    for k, v in sorted(vars(args).items()):
+        logger.debug("%s: %s", k, str(v))
+
+    # are we dealing with a paired library?  set that within assess_reads
+    logger.info("Welcome to BugBuilder")
+    logger.info("Preparing to build your bug...")
+    config_path = get_config_path()
+    config = return_config(config_path, force=args.configure, logger=logger)
+    logger.info("Using configuration from %s", config_path)
+    logger.debug(config)
+    setup_tmp_dir(args, output_root=args.outdir, logger=logger)
+    # if args.reference is None:
+    #     reference = None
+    # else:
+    #     reference = os.path.basename(args.reference)
+    #  need to know a bit about the provided reads so we can act appropriately
+
+    # copy paths to raw reads in case we need them for mascura
+    args.untrimmed_fastq1 = args.fastq1
+    args.untrimmed_fastq2 = args.fastq2
+    logger.info("Assessing reads and library type")
+    reads_ns  = assess_reads(args=args, config=config, platform=args.platform,
+                             logger=logger)
+    logger.debug(reads_ns)
+    logger.info("Determining if a reference is needed")
+    check_ref_needed(args=args, lib_type=reads_ns.lib_type)
+    logger.info("preparing config and tools; lol not really but we will be")
+    tools = select_tools(args, config=config, reads_ns=reads_ns, logger=logger)
+
+    if not args.skip_fastqc and config.fastqc is not None:
+        logger.info("Running fastqc on reads")
+        run_fastqc(reads_ns, args, logger=logger)
+    if reads_ns.mean_read_length is not None:
+        if reads_ns.mean_read_length < 50 and reads_ns.mean_read_length < args.trim_length:
+            logger.info("trim-length reset to 25 due to mean read length: %i",
+                        reads_ns.mean_read_length)
+            args.trim_length = 25
+    if reads_ns.lib_type != "long" and not args.skip_trim:
+        logger.info("Trimming reads based on quality")
+        quality_trim_reads(args, config, reads_ns, logger)
+    if (reads_ns.coverage is not None and reads_ns.coverage > 100) and \
+       (assembler_needs_downsampling(args, config) or args.downsample != 0):
+        logger.info("Downsampling reads to %dx coverage", args.downsample)
+        reads_ns.downsampled_coverage = downsample_reads(args=args, reads_ns=reads_ns,
+                                                         config=config, new_cov=args.downsample)
+    if args.fastq2 and args.reference:
+        logger.info("Aligning reads to reference for determinging insert size")
+        sorted_bam = align_reads(dirname="align", reads_ns=reads_ns,
+                                 config=config, downsample=True, args=args, logger=logger)
+        reads_ns.insert_mean, reads_ns.insert_stddev = get_insert_stats(
+            bam=sorted_bam, config=config, args=args, reads_ns=reads_ns, logger=logger)
+    log_read_and_run_data(reads_ns, args, results, logger)
+    # contig_scaffold_list = [] # holds pairs of (contigs_path, scaffolds_path)
+    if len(args.already_assembled_dirs) != 0:
+        ctgs, scafs = check_already_assembled_dirs(args, config, logger)
+        for assembler, assembler_args in results.assemblers_list:
+            for idx, contigs  in enumerate(ctgs):
+                results.assemblers_results_dict_list.append(
+                    {"name": assembler, "contigs":contigs, "scaffolds": scafs[idx]})
+    else:
+        for assembler, assembler_args in results.assemblers_list:
+            logger.info("Assembling with %s", assembler)
+            contigs_path, scaffolds_path  = run_assembler(
+                assembler=assembler, assembler_args=assembler_args,
+                args=args, reads_ns=reads_ns, config=config, logger=logger)
+            results.assemblers_results_dict_list.append(
+                {"name": assembler, "contigs":contigs_path, "scaffolds": scaffolds_path})
+    if len(results.assemblers_results_dict_list) > 1:
+        #run merge
+        merged_contigs_path = merge_assemblies(args=args, config=config, reads_ns=reads_ns, logger=logger)
+        results.current_contigs = merged_contigs_path
+    if args.scaffolder and args.reference:
+        ID_OK = check_id(args, contigs, logger)
+    if args.scaffolder is not None:
+        if \
+           (ID_OK and scaffolder_type == "paired_ends" or \
+             not ID_OK and scaffolder_type == "paired_ends"):
+            scaffolds = run_scaffolder()
+
+    if os.path.exists(args.tmp_dir, "scaffolds.fasta"):
+        # we may have been given a reference for a long read assembly but no
+        # scaffolder is used for these by default
+        args.scaffolder = "mauve" if args.scaffolder is None else args.scaffolder
+        if not args.skip_split_origin:
+        find_origin( $tmpdir, $scaffolder, $scaffolder_args, "$tmpdir/reference_parsed_ids.fasta",
+                     $insert_size, $stddev, $mean_read_length, $threads )
+        order_scaffolds( $tmpdir, basename($reference) ) if ($id_ok);
+
+        finish_assembly( $tmpdir, $finisher, $insert_size, $stddev, $encoding, $threads ) if ( $finisher && $id_ok );
+
+    }
+
+#     my $gaps;
+
+#     if ( -e "$tmpdir/scaffolds.fasta" ) {
+#         $gaps = build_agp( $tmpdir, $organism, $mode, $scaffold_type );
+#     }
+
+#     # sequence stable from this point, only annotations altered
+#     for my $i (qw(1 2)) {
+# 	print "pm: $i \n";
+#         $pm->start and next();
+#         if ( $i == 1 ) {
+
+#             ##amosvalidate fails if we don't have mate-pairs
+#             if ( -e "$tmpdir/read2.fastq" && ( $mode eq 'draft' ) ) {
+#                 my $seq_file;
+#                 ( -e "$tmpdir/scaffolds.fasta" ) ? ( $seq_file = 'scaffolds.fasta' ) : ( $seq_file = 'contigs.fasta' );
+
+#                 align_reads( $tmpdir, $seq_file, $mean_read_length );
+#                 amosvalidate( $tmpdir, $insert_size, $stddev );
+#             }
+#         }
+#         elsif ( $i == 2 ) {
+
+#             run_prokka( $tmpdir, $genus, $species, $strain, $locustag, $centre );
+#         }
+
+#         $pm->finish();
+#     }
+
+#     $pm->wait_all_children();
+
+#     my $amosvalidate_results;
+#     if ( -e "$tmpdir/read2.fastq" && ( $mode eq 'draft' ) ) {
+#         get_contig_to_iid_mapping($tmpdir);
+#         $amosvalidate_results = summarise_amosvalidate($tmpdir);
+#     }
+
+#     run_varcaller( $tmpdir, $varcall, $threads, $mean_read_length ) if ($varcall);
+#     merge_annotations( $tmpdir, $amosvalidate_results, $gaps, $genus, $species, $strain );
+#     #  This kept throwing an error about Bio::SeqIO
+#     # run_cgview($tmpdir);
+
+#     build_comparisons( $tmpdir, basename($reference), $organism ) if ($reference);
+
+#     message("Final Assembly Statistics...");
+#     get_contig_stats( "$tmpdir/contigs.fasta", 'contigs' );
+#     get_contig_stats( "$tmpdir/scaffolds.fasta", 'scaffolds' ) if ( -e "$tmpdir/scaffolds.fasta" );
+#     my $emblfile;
+#     ( -e "$tmpdir/scaffolds.embl" ) ? ( $emblfile = "$tmpdir/scaffolds.embl" ) : ( $emblfile = "$tmpdir/contigs.embl" );
+
+#     my $io = Bio::SeqIO->new( -format => 'embl', -file => "$emblfile" );
+#     my ( $cds, $tRNA, $rRNA );
+#     while ( my $contig = $io->next_seq() ) {
+#         foreach my $feature ( $contig->get_SeqFeatures() ) {
+#             $cds++  if ( $feature->primary_tag eq 'CDS' );
+#             $tRNA++ if ( $feature->primary_tag eq 'tRNA' );
+#             $rRNA++ if ( $feature->primary_tag eq 'rRNA' );
+#         }
+#     }
+
+#     $tb = Text::ASCIITable->new();
+#     $tb->setCols( "Feature Type", "Number" );
+#     $tb->addRow( "CDS",  $cds );
+#     $tb->addRow( "tRNA", $tRNA );
+#     $tb->addRow( "rRNA", $rRNA );
+#     print "\nAnnotated features\n==================\n\n";
+#     print $tb, "\n";
+
+#     return_results( $tmpdir, $out_dir, $prefix, $keepall, $mode );
+#     chdir $orig_dir or warn "Failed to chdir:$ !";
+
+#     message("All done...");
+
+# }
+
+
+
+# #######################################################################
+# #
+# ######################################################################
+# ######################################################################
+# #
+# # return_results
+# #
+# # Copies results back from tmpdir, returning full working directory
+# # if dircopy argument specified
+# #
+# # required params: $ (tmpdir)
+# #                  $ (strain)
+# #                  $ (dircopy - flag to indicate entire directory
+# #                     should be returned)
+# #                  $ (mode - draft mode also needs amos bank copying)
+# #
+# # returns        : $ (0)
+# #
+# ######################################################################
+
+# sub return_results {
+
+#     my $tmpdir  = shift;
+#     my $dir     = shift;
+#     my $prefix  = shift;
+#     my $dircopy = shift;
+#     my $mode    = shift;
+
+#     if ($dircopy) {
+#         dircopy( $tmpdir, "$dir" )
+#           or die "Error copying $tmpdir: $!";
+#     }
+#     else {
+#         my @files = qw(annotated.embl contigs.fasta scaffolds.fasta scaffolds.embl scaffolds.agp
+#           unplaced_contigs.fasta BugBuilder.log read1_fastqc.html read2_fastqc.html
+#           scaffolds_cgview.png contigs_cgview.png circleator.png circleator.svg reference.variants.vcf
+#           );
+
+#         opendir TMP, "$tmpdir" or die "Error opening $tmpdir: $!";
+#         my @all_files = readdir TMP;
+#         close TMP;
+
+#         foreach my $pattern (qw(blastout png)) {
+#             my @found = grep /$pattern/, @all_files;
+#             push @files, @found;
+#         }
+
+#         mkdir "$dir"
+#           or die "Error creating $dir: $!";
+
+#         foreach my $file (@files) {
+#             my $outfile;
+#             if ($prefix) {
+#                 $outfile = "$dir/${prefix}_${file}";
+#             }
+#             else {
+#                 $outfile = "$dir/$file";
+#             }
+#             my $target;
+#             if ( -l "$tmpdir/$file" ) {
+#                 $target = readlink("$tmpdir/$file");
+#             }
+#             else {
+#                 $target = "$tmpdir/$file";
+#             }
+#             copy( "$target", "$outfile" )
+#               or die "Error copying $file: $!"
+#               if ( -e "$tmpdir/$file" );
+#         }
+#         if ( $mode eq 'draft' ) {
+#             my $outfile;
+#             if ($prefix) {
+#                 $outfile = "$dir/${prefix}_assembly.bnk";
+#             }
+#             else {
+#                 $outfile = "$dir/assembly.bnk";
+#             }
+#             dircopy( "$tmpdir/amos/assembly.bnk", "$outfile" )
+#               or die "Error copying $tmpdir/amos/assembly.bnk: $!";
+#         }
+
+#     }
+
+# }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# ######################################################################
+# #
+# # finish_assembly
+# #
+# # Carried out assembly finishing using selected method
+# #
+# # required params: $ (tmpdir)
+# #                  $ (finisher)
+# #                  $ (insert size)
+# #                  $ (insert stddev)
+# #                  $ (base quality encoding)
+# #                  $ (no. threads)
+# #
+# # returns        : $ (0)
+# #
+# ######################################################################
+
+# sub finish_assembly {
+
+#     my $tmpdir        = shift;
+#     my $finisher      = shift;
+#     my $insert_size   = shift;
+#     my $insert_stddev = shift;
+#     my $encoding      = shift;
+#     my $threads       = shift;
+
+#     message("Finishing assembly ($finisher)...");
+
+#     my ( $cmd, $create_dir );
+#     my $finishers = $config->{'finishers'};
+#     foreach my $tool (@$finishers) {
+#         my $name = $tool->{'name'};
+#         if ( $name eq $finisher ) {
+#             $cmd        = $tool->{'command'};
+#             $create_dir = $tool->{'create_dir'};
+#         }
+#     }
+#     if ($create_dir) {
+#         mkdir "$tmpdir/$finisher" or die "Error creating $tmpdir/$finisher: $! ";
+#         chdir "$tmpdir/$finisher" or die "Error chdiring to $tmpdir/$finisher: $!";
+#     }
+
+#     $cmd =~ s/__BUGBUILDER_BIN__/$FindBin::Bin/;
+#     $cmd =~ s/__TMPDIR__/$tmpdir/;
+#     $cmd =~ s/__REFERENCE__/${tmpdir}\/reference.fasta/;
+#     $cmd =~ s/__INSSIZE__/$insert_size/;
+#     $cmd =~ s/__INSSD__/$insert_stddev/;
+#     $cmd =~ s/__ENCODING__/$encoding/;
+#     $cmd =~ s/__THREADS__/$threads/;
+
+#     system("perl $cmd") == 0 or die "Error running $cmd: $!";
+#     chdir $tmpdir     or die " Error chdiring to $tmpdir: $! ";
+
+#     print "Finished assembly statistics : \n============================\n";
+#     get_contig_stats( "$tmpdir/scaffolds.fasta", 'scaffolds' );
+
+#     return (0);
+# }
+
+
+
+
+
+
+
+#     chdir $tmpdir or die "Error chdiring to $tmpdir: $!";
+
+#     return ( $insert, $stddev );
+
+# }
+
+
+
+
+
+
 
 # ######################################################################
 # #
@@ -2876,256 +2969,149 @@ def run_scaffolder(scaffolder_name, args, config, reads_ns, run_id,
 # }
 
 
-def make_nucmer_origin_cmds(config, ref, query, out_dir, prefix="out", header=True):
-    # nucmer
-    nucmer_cmd = "{0} {1} {2} -p {3}/{4} 2>&1 > {3}/nucmer.log".format(
-        config.nucmer, ref, query, out_dir, prefix)
-    # delta-filter
-    delta_filter_cmd = \
-        "{0} -1 {1}/{2}.delta 2>{1}/delta-filter.log > {1}/{2}.filter".format(
-            config.delta_filter, out_dir, prefix)
-    #show-coords
-    show_coords_cmd = \
-        "{0} {3}{1}/{2}.filter 2>{1}/show-coords.log > {1}/{2}.coords".format(
-            config.show_coords, out_dir, prefix,
-            "" if header else "-H ")
-    return [nucmer_cmd, delta_filter_cmd, show_coords_cmd]
 
 
-    # my $cmd = $config->{'mummer_dir'}
-    #   . "/nucmer $tmpdir/reference_parsed_ids.fasta $tmpdir/scaffolds.fasta -p $ori_dir/ori > $ori_dir/nucmer.log 2>&1";
-    # system($cmd) == 0 or die "Error executing $cmd: $!";
-    # $cmd =
-    #   $config->{'mummer_dir'} . "/delta-filter -1 $ori_dir/ori.delta 2>$ori_dir/delta-filter.log > $ori_dir/ori.filter";
-    # system($cmd) == 0 or die "Error executing $cmd: $!";
-    # $cmd =
-    #   $config->{'mummer_dir'} . "/show-coords -H $ori_dir/ori.filter 2>$ori_dir/show-coords.log > $ori_dir/ori.coords";
-    # system($cmd) == 0 or die "Error executing $cmd: $!";
-def find_origin(args, logger):
+
+
+
+def order_scaffolds():
     """
-    Attempts to identify location of origin based upon contig overlapping
-    base 1 of the reference sequence. This assumes  each reference sequence
-    is a complete circular molecular i.e.a chromosome or a plasmid
+    Identifies origin based on homology with reference.
+    Resulting scaffolds are then ordered and oriented relative to the reference...
 
     required params: $ (tmpdir)
-                 $ (scaffolder)
-                 $ (scaffolder_args)
-                 $ (reference)
-                 $ (insert_size)
-                 $ (insert_stddev)
-                 $ (mean_read_length)
+                 $ (fasta reference)
 
-    returns: $ (0)
-
+    returns        : $ (0)
     """
-    ori_dir = os.path.join(args.tmp_dir, "origin")
-    os.path.mkdirs(ori_dir)
-    logger.info("Attempting to identify origin...");
-    cmds = make_nucmer_origin_cmds(config, ref, query, out_dir=ori_dir, prefix="ori", header=False)
-    with open(os.path.join(ori_dir, ori.coords), "r") as coords:
-        origin = None
-        for line in coords:
-            line = line.strip()
-            line = line.replace("|", "")
-            fields = re.split("\s*", line)
-            if not origin and fields[0] ==1:
-                origin = "{0}:{1}".format(fields[8], fields[2])
-                logger.info("Potential origin found at %s", origin )
+    pass
 
-#     if ($origin) {
-#         my $io      = Bio::SeqIO->new( -file => "$tmpdir/scaffolds.fasta",    -format => 'fasta' );
-#         my $outIO   = Bio::SeqIO->new( -file => '>scaffolds_ori_split.fasta', -format => 'fasta' );
-#         my $splitIO = Bio::SeqIO->new( -file => ">split_ori_scaff.fasta",     -format => 'fasta' );
-#       SCAFFOLD: while ( my $scaffold = $io->next_seq() ) {
-#             my ( $ori_scaffold, $pos ) = split( /:/, $origin );
-#             if ( $ori_scaffold eq $scaffold->display_id() ) {
-#                 my $part_a = $scaffold->subseq( 1, $pos );
-#                 my $part_b = $scaffold->subseq( $pos + 1, $scaffold->length() );
-#                 my $ori_a = Bio::Seq->new( -display_id => $scaffold->display_id . "_A", -seq => $part_a );
-#                 my $ori_b = Bio::Seq->new( -display_id => $scaffold->display_id . "_B", -seq => $part_b );
+"""
+sub order_scaffolds {
 
-#                 $splitIO->write_seq($ori_a);
-#                 $splitIO->write_seq($ori_b);
-#                 undef($splitIO);
+    my $tmpdir    = shift;
+    my $reference = shift;
 
-#                 # Now rerun scaffolder on split sequence containing origin.
-#                 run_scaffolder(
-#                                 $ori_dir,          "$tmpdir/reference_parsed_ids.fasta",
-#                                 $scaffolder,       $scaffolder_args,
-#                                 $insert_size,      $stddev,
-#                                 2,                 "$tmpdir/origin/split_ori_scaff.fasta",
-#                                 $mean_read_length, $threads
-#                               );
-#                 my $scaffIO =
-#                   Bio::SeqIO->new( -format => 'fasta', -file => "$ori_dir/${scaffolder}_2/scaffolds.fasta" );
-#                 while ( my $scaffold = $scaffIO->next_seq() ) {
-#                     $outIO->write_seq($scaffold);
-#                 }
-#                 next SCAFFOLD;
-#             }
-#             else {
-#                 $outIO->write_seq($scaffold);
-#             }
-#         }
+    mkdir "$tmpdir/orientating" or die "Error creating $tmpdir/orientating: $!";
+    chdir "$tmpdir/orientating"
+      or die "Error changing to $tmpdir/orientating: $!";
 
-#         #renumber scaffolds to ensure they are unique...
-#         my $count = 0;
-#         my $inIO = Bio::SeqIO->new( -file => "$tmpdir/origin/scaffolds_ori_split.fasta", -format => "fasta" );
-#         $outIO = Bio::SeqIO->new( -file => ">$tmpdir/origin/scaffolds_renumbered.fasta", -format => "fasta" );
+    message("Orienting scaffolds vs. reference...");
 
-#         while ( my $seq = $inIO->next_seq() ) {
-#             $seq->display_id( "scaffold_" . ++$count );
-#             $outIO->write_seq($seq);
-#         }
+    my $cmd = $config->{'mummer_dir'}
+      . "/nucmer $tmpdir/$reference $tmpdir/scaffolds.fasta -p $tmpdir/orientating/ori2 > $tmpdir/orientating/nucmer2.log 2>&1";
+    system($cmd) == 0 or die "Error executing $cmd: $!";
+    $cmd = $config->{'mummer_dir'}
+      . "/delta-filter -1 $tmpdir/orientating/ori2.delta 2>$tmpdir/orientating/delta-filter2.log > $tmpdir/orientating/ori2.filter";
+    system($cmd) == 0 or die "Error executing $cmd: $!";
+    $cmd = $config->{'mummer_dir'}
+      . "/show-coords -H $tmpdir/orientating/ori2.filter 2>$tmpdir/orientating/show-coords2.log > $tmpdir/orientating/ori2.coords";
+    system($cmd) == 0 or die "Error executing $cmd: $!";
 
-#         chdir $tmpdir                     or die "Error changing to $tmpdir: $!";
-#         unlink("$tmpdir/scaffolds.fasta") or die "Error unlinking $tmpdir/scaffolds.fasta:$!";
-#         symlink( "$tmpdir/origin/scaffolds_renumbered.fasta", "$tmpdir/scaffolds.fasta" )
-#           or die "Error symlinking scaffolds_ori_split.fasta:$!";
-#     }
+    open COORDS, "$tmpdir/orientating/ori2.coords"
+      or die "Error opening ori.coords: $!";
+    my ( %orientations, $start, $end, $orient );
+    my %orient_count = ( '+' => 0, '-' => 0 );
+    my $contig = '';
+  LINE: while ( my $line = <COORDS> ) {
+        chomp $line;
+        $line =~ s/\|//g;
+        $line =~ s/^ *//;
+        my @fields = split( /\s+/, $line );
 
-#     return (0);
-# }
+        if ( ( $contig ne $fields[8] ) ) {
+            if ( $contig ne '' ) {    #end of previous contig
+                store_orientation( \%orientations, $contig, \%orient_count );
+            }
+        }
+        $contig = $fields[8];
+        $start  = $fields[2];
+        $end    = $fields[3];
+        my $length;
+        if ( $start < $end ) {
+            $orient = '+';
+            $length = $end - $start;
+        }
+        else {
+            $orient = '-';
+            $length = $start - $end;
+        }
+        if ( $orient_count{$orient} ) {
+            $orient_count{$orient} = $orient_count{$orient} + $length;
+        }
+        else {
+            $orient_count{$orient} = $length;
+        }
+    }
 
-# ######################################################################
-# #
-# # order_scaffolds
-# #
-# # Identifies origin based on homology with reference.
-# # Resulting scaffolds are then ordered and oriented relative to the reference...
-# #
-# # required params: $ (tmpdir)
-# #                  $ (fasta reference)
-# #
-# # returns        : $ (0)
-# #
-# ######################################################################
+    close COORDS;
 
-# sub order_scaffolds {
+    # record data for last contig...
+    store_orientation( \%orientations, $contig, \%orient_count );
 
-#     my $tmpdir    = shift;
-#     my $reference = shift;
+    my $orig_length     = 0;
+    my $oriented_length = 0;    #track how much sequence we align ok...
+    my $unplaced_length = 0;
+    my @unplaced;
 
-#     mkdir "$tmpdir/orientating" or die "Error creating $tmpdir/orientating: $!";
-#     chdir "$tmpdir/orientating"
-#       or die "Error changing to $tmpdir/orientating: $!";
+    my $io    = Bio::SeqIO->new( -file => '../scaffolds.fasta', -format => 'fasta' );
+    my $outIO = Bio::SeqIO->new( -file => '>scaffolds.fasta',   -format => 'fasta' );
 
-#     message("Orienting scaffolds vs. reference...");
+    # Reorientate contigs and break origin, rewriting to a new file...
+    my $i = 0;                  #for renumbering scaffolds...
+    while ( my $scaffold = $io->next_seq() ) {
+        $orig_length += $scaffold->length();
 
-#     my $cmd = $config->{'mummer_dir'}
-#       . "/nucmer $tmpdir/$reference $tmpdir/scaffolds.fasta -p $tmpdir/orientating/ori2 > $tmpdir/orientating/nucmer2.log 2>&1";
-#     system($cmd) == 0 or die "Error executing $cmd: $!";
-#     $cmd = $config->{'mummer_dir'}
-#       . "/delta-filter -1 $tmpdir/orientating/ori2.delta 2>$tmpdir/orientating/delta-filter2.log > $tmpdir/orientating/ori2.filter";
-#     system($cmd) == 0 or die "Error executing $cmd: $!";
-#     $cmd = $config->{'mummer_dir'}
-#       . "/show-coords -H $tmpdir/orientating/ori2.filter 2>$tmpdir/orientating/show-coords2.log > $tmpdir/orientating/ori2.coords";
-#     system($cmd) == 0 or die "Error executing $cmd: $!";
+        my $id = "scaffold_" . ++$i;
+        if ( $orientations{ $scaffold->display_id() } ) {
+            if ( $orientations{ $scaffold->display_id() } eq '+' ) {
+                $scaffold->display_id($id);
+                $outIO->write_seq($scaffold);
+                $oriented_length += $scaffold->length();
+            }
+            else {
+                my $rev = $scaffold->revcom();
+                $rev->display_id($id);
+                $outIO->write_seq($rev);
+                $oriented_length += $scaffold->length();
+            }
+        }
+        else {
+            push @unplaced, $scaffold;
+        }
 
-#     open COORDS, "$tmpdir/orientating/ori2.coords"
-#       or die "Error opening ori.coords: $!";
-#     my ( %orientations, $start, $end, $orient );
-#     my %orient_count = ( '+' => 0, '-' => 0 );
-#     my $contig = '';
-#   LINE: while ( my $line = <COORDS> ) {
-#         chomp $line;
-#         $line =~ s/\|//g;
-#         $line =~ s/^ *//;
-#         my @fields = split( /\s+/, $line );
+    }
 
-#         if ( ( $contig ne $fields[8] ) ) {
-#             if ( $contig ne '' ) {    #end of previous contig
-#                 store_orientation( \%orientations, $contig, \%orient_count );
-#             }
-#         }
-#         $contig = $fields[8];
-#         $start  = $fields[2];
-#         $end    = $fields[3];
-#         my $length;
-#         if ( $start < $end ) {
-#             $orient = '+';
-#             $length = $end - $start;
-#         }
-#         else {
-#             $orient = '-';
-#             $length = $start - $end;
-#         }
-#         if ( $orient_count{$orient} ) {
-#             $orient_count{$orient} = $orient_count{$orient} + $length;
-#         }
-#         else {
-#             $orient_count{$orient} = $length;
-#         }
-#     }
+    foreach my $scaffold (@unplaced) {
+        $outIO->write_seq($scaffold);
+        $unplaced_length += $scaffold->length();
+    }
 
-#     close COORDS;
+    my $ref_length;
+    my $refIO = Bio::SeqIO->new( -format => 'fasta', -file => "$tmpdir/$reference" );
+    while ( my $seq = $refIO->next_seq() ) {
+        $ref_length += $seq->length();
+    }
 
-#     # record data for last contig...
-#     store_orientation( \%orientations, $contig, \%orient_count );
+    my $tb = Text::ASCIITable->new();
+    $tb->setCols( "", "Length (bp)" );
+    $tb->addRow( "Reference Sequence", $ref_length );
+    $tb->addRow( "Assembly",           $orig_length );
+    $tb->addRow( "Orientated contigs", $oriented_length );
+    $tb->addRow( "Unaligned contigs",  $unplaced_length );
 
-#     my $orig_length     = 0;
-#     my $oriented_length = 0;    #track how much sequence we align ok...
-#     my $unplaced_length = 0;
-#     my @unplaced;
+    print $tb, "\n";
 
-#     my $io    = Bio::SeqIO->new( -file => '../scaffolds.fasta', -format => 'fasta' );
-#     my $outIO = Bio::SeqIO->new( -file => '>scaffolds.fasta',   -format => 'fasta' );
+    chdir $tmpdir or die "Error changing to $tmpdir: $!";
+    unlink("scaffolds.fasta")
+      or die "Error removing scaffolds.fasta symlink";
+    symlink( "orientating/scaffolds.fasta", "scaffolds.fasta" )
+      or die "Error linking orientating/scaffolds.fasta: $!";
 
-#     # Reorientate contigs and break origin, rewriting to a new file...
-#     my $i = 0;                  #for renumbering scaffolds...
-#     while ( my $scaffold = $io->next_seq() ) {
-#         $orig_length += $scaffold->length();
+    return (0);
 
-#         my $id = "scaffold_" . ++$i;
-#         if ( $orientations{ $scaffold->display_id() } ) {
-#             if ( $orientations{ $scaffold->display_id() } eq '+' ) {
-#                 $scaffold->display_id($id);
-#                 $outIO->write_seq($scaffold);
-#                 $oriented_length += $scaffold->length();
-#             }
-#             else {
-#                 my $rev = $scaffold->revcom();
-#                 $rev->display_id($id);
-#                 $outIO->write_seq($rev);
-#                 $oriented_length += $scaffold->length();
-#             }
-#         }
-#         else {
-#             push @unplaced, $scaffold;
-#         }
-
-#     }
-
-#     foreach my $scaffold (@unplaced) {
-#         $outIO->write_seq($scaffold);
-#         $unplaced_length += $scaffold->length();
-#     }
-
-#     my $ref_length;
-#     my $refIO = Bio::SeqIO->new( -format => 'fasta', -file => "$tmpdir/$reference" );
-#     while ( my $seq = $refIO->next_seq() ) {
-#         $ref_length += $seq->length();
-#     }
-
-#     my $tb = Text::ASCIITable->new();
-#     $tb->setCols( "", "Length (bp)" );
-#     $tb->addRow( "Reference Sequence", $ref_length );
-#     $tb->addRow( "Assembly",           $orig_length );
-#     $tb->addRow( "Orientated contigs", $oriented_length );
-#     $tb->addRow( "Unaligned contigs",  $unplaced_length );
-
-#     print $tb, "\n";
-
-#     chdir $tmpdir or die "Error changing to $tmpdir: $!";
-#     unlink("scaffolds.fasta")
-#       or die "Error removing scaffolds.fasta symlink";
-#     symlink( "orientating/scaffolds.fasta", "scaffolds.fasta" )
-#       or die "Error linking orientating/scaffolds.fasta: $!";
-
-#     return (0);
-
-# }
-
+}
+"""
 # ######################################################################
 # #
 # # store_orientation
@@ -3655,55 +3641,6 @@ def find_origin(args, logger):
 #     return (0);
 # }
 
-def get_L50_N50(lengths):
-    lengths.sort()
-    tot = sum(lengths)
-    fifty = float(tot / 2)
-    progress, N50 = 0, 0
-    for L50 in lengths:
-        N50 = N50 + 1
-        progress = progress + L50
-        if progress >= fifty:
-            return (L50, N50)
-
-
-def get_contig_stats(contigs, ctype):
-    """
-    Reports contig statistics on assembly. Reports on scaffolds or
-    contigs depending upon 2nd argument passed - contigs gives values
-    for all contigs and those >200bp
-
-    required params: $ (path to contigs)
-                 $ ('scaffolds'|'contigs')
-
-    returns          $ (0)
-    """
-    assert ctype in ['scaffolds', 'contigs'], "invalid contig type"
-    count, count_200 = 0, 0
-    all_lengths, all_lengths_200 = [], []
-    lengths, lengths_200 = [], []
-    with open(contigs, "r") as inf:
-        for rec in SeqIO.parse(contigs, "fasta"):
-            length = len(rec.seq)
-            count = count + 1
-            all_lengths.append(length)
-            if length > 200:
-                lengths_200.append(length)
-                count_200 = count_200 + 1
-                all_lengths_200.append(length)
-
-    sorted_lengths     = sorted(all_lengths)
-    sorted_lengths_200 = sorted(all_lengths_200)
-    L50, N50 = get_L50_N50(all_lengths)
-    L50_200, N50_200 = get_L50_N50(all_lengths_200)
-    return [
-        ["", "All $type", "$type >200bp"],
-        [ctype + " count", count, count_200],
-        ["Max Length", max(all_lengths), max(all_lengths_200)],
-        ["Assembly size", sum(all_lengths), sum(all_lengths_200)],
-        ["L50", L50, L50_200],
-        ["N50", N50, N50_200 ]
-    ]
 
 # ######################################################################
 # #
