@@ -38,6 +38,10 @@ class test_BugBuilder(unittest.TestCase):
         os.makedirs(self.test_dir, exist_ok=True)
         self.startTime = time.time() # for timing
         self.to_be_removed = []
+        #  I wish there was a way around this
+        sis_path = os.path.join(self.test_dir, "sis_1")
+        if os.path.exists(sis_path):
+            shutil.rmtree(sis_path)
 
     def test_parse_config(self):
         """ test pandas import
@@ -235,10 +239,30 @@ class test_BugBuilder(unittest.TestCase):
                                 reads_ns=reads_ns, logger=logger)
 
     def test_check_assemblers_need_insertsize(self):
-        pass
+        test_args = Namespace(assemblers=['mascura'],
+            fastq1=self.fastq1, fastq2=self.fastq2, long_fastq=None,
+            de_fere_contigs=None, reference=None, genome_size=0)
+        config = bb.parse_config(self.filled_config)
+        reads_ns = bb.assess_reads(args=test_args, config=config,
+                                   platform="illumina", logger=logger)
+        test_args.assemblers = ["spades"]
+        reads_ns.mean_read_length = 500
+        with self.assertRaises(ValueError):
+            bb.check_assemblers(args=test_args, config=config,
+                                reads_ns=reads_ns, logger=logger)
 
     def test_check_assemblers_too_short(self):
-        pass
+        test_args = Namespace(assemblers=['PBcR'],
+            fastq1=self.fastq1, fastq2=self.fastq2, long_fastq=None,
+            de_fere_contigs=None, reference=None, genome_size=0)
+        config = bb.parse_config(self.filled_config)
+        reads_ns = bb.assess_reads(args=test_args, config=config,
+                                   platform="illumina", logger=logger)
+        test_args.assemblers = ["spades"]
+        reads_ns.mean_read_length = 400
+        with self.assertRaises(ValueError):
+            bb.check_assemblers(args=test_args, config=config,
+                                reads_ns=reads_ns, logger=logger)
 
     def test_get_scaffolder_and_linkage(self):
         test_args = Namespace(
@@ -287,7 +311,27 @@ class test_BugBuilder(unittest.TestCase):
             ([already_ctg], [already_scf]))
 
 
+    def test_check_args(self):
+        test_args = Namespace(
+            merge_method=None, assemblers=["spades", "shovels"])
+        with self.assertRaises(ValueError):
+            bb.check_args(test_args)
 
+    def test_make_empty_results_object(self):
+        key_list = [
+            "organism",
+            "assemblers_list",
+            "assemblers_results_dict_list",
+            "current_contigs",
+            "current_scaffolds",
+            "current_reference",
+            "old_contigs",
+            "old_scaffolds",
+            "old_references"]
+        results = bb.make_empty_results_object()
+        for k, v in sorted(vars(results).items()):
+            if k not in key_list:
+                raise KeyError
 
 
     ###########################################################################

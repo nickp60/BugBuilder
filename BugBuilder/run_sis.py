@@ -81,24 +81,12 @@ use File::Basename;
 
 """
 import glob
-def make_nucmer_delta_show_cmds(config, args, contigs, scaff_dir):
-    # nucmer
-    nucmer_cmd = "{0} {1} {2} -p {3}/sis 2>&1 > {3}/nucmer.log".format(
-        config.nucmer, args.reference, contigs, scaff_dir)
-    # delta-filter
-    delta_filter_cmd = \
-        "{0} -1 {1}/sis.delta 2>{1}/delta-filter.log > {1}/sis.filter".format(
-            config.delta_filter, scaff_dir)
-    #show-coords
-    show_coords_cmd = \
-        "{0} {1}/sis.filter 2>{1}/show-coords.log > {1}/sis.coords".format(
-            config.show_coords, scaff_dir)
-    return [nucmer_cmd, delta_filter_cmd, show_coords_cmd]
-
+from .shared_methods import make_nucmer_delta_show_cmds
 
 
 def make_sis_etc_cmds(config, args, contigs, scaff_dir):
-    cmds = make_nucmer_delta_show_cmds(config, args, contigs, scaff_dir)
+    cmds = make_nucmer_delta_show_cmds(config, ref=args.reference, query=contigs,
+                        out_dir=scaff_dir, prefix="sis", header=False)
     # sis
     sis_cmd = "{0} {1}/sis.coords > {1}/sis.sis".format(
         config.sis, scaff_dir)

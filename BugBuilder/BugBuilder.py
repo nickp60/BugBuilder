@@ -345,6 +345,7 @@ import tabulate
 from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
 from argparse import Namespace
+from .shared_methods import make_nucmer_delta_show_cmds
 # def parse_config():
 #     pass
 
@@ -1811,7 +1812,7 @@ def make_empty_results_object():
     return results
 
 
-def log_read_and_run_data(reads_ns, args, results):
+def log_read_and_run_data(reads_ns, args, results):  # pragma nocover
     paired_str = "Paired" if reads_ns.paired else "Fragment"
     read_table=[
         ["Mean Read Length", reads_ns.mean_read_length],
@@ -2122,22 +2123,6 @@ def run_scaffolder(scaffolder_name, args, config, reads_ns, run_id,
 
 # }
 
-def make_nucmer_origin_cmds(config, ref, query, out_dir, prefix="out", header=True):
-    # nucmer
-    nucmer_cmd = "{0} {1} {2} -p {3}/{4} 2>&1 > {3}/nucmer.log".format(
-        config.nucmer, ref, query, out_dir, prefix)
-    # delta-filter
-    delta_filter_cmd = \
-        "{0} -1 {1}/{2}.delta 2>{1}/delta-filter.log > {1}/{2}.filter".format(
-            config.delta_filter, out_dir, prefix)
-    #show-coords
-    show_coords_cmd = \
-        "{0} {3}{1}/{2}.filter 2>{1}/show-coords.log > {1}/{2}.coords".format(
-            config.show_coords, out_dir, prefix,
-            "" if header else "-H ")
-    return [nucmer_cmd, delta_filter_cmd, show_coords_cmd]
-
-
 def find_origin(args, logger):
     """
     Attempts to identify location of origin based upon contig overlapping
@@ -2158,7 +2143,7 @@ def find_origin(args, logger):
     ori_dir = os.path.join(args.tmp_dir, "origin")
     os.path.mkdirs(ori_dir)
     logger.info("Attempting to identify origin...");
-    cmds = make_nucmer_origin_cmds(config, ref, query, out_dir=ori_dir, prefix="ori", header=False)
+    cmds = make_nucmer_delta_show_cmds(config, ref, query, out_dir=ori_dir, prefix="ori", header=False)
     origin = None
     with open(os.path.join(ori_dir, ori.coords), "r") as coords:
         for line in coords:
@@ -2191,16 +2176,16 @@ def find_origin(args, logger):
                         2,                 "tmpdir/origin/split_ori_scaff.fasta",
                         mean_read_length, threads
                     )
-                    with open($ori_dir/${scaffolder}_2/scaffolds.fasta, "r") as infile, open(scaffolds_ori_split.fasta "a") as outfile:
+                    with open("$ori_dir/${scaffolder}_2/scaffolds.fasta", "r") as infile, open("scaffolds_ori_split.fasta", "a") as outfile:
                         for new_rec in SeqIO.parse(infile):
                             SeqIO.write(new_rec, outfile, "fasta")
                 else:
-                    with open(scaffolds_ori_split.fasta "a") as outfile:
+                    with open("scaffolds_ori_split.fasta", "a") as outfile:
                         SeqIO.write(rec, outfile, "fasta")
 
     #renumber scaffolds to ensure they are unique...
     counter = 1
-    with open(scaffolds_ori_split.fasta "r") as inf, open(scaffolds_renumbered.fasta, "w") as outf:
+    with open(scaffolds_ori_split.fasta, "r") as inf, open(scaffolds_renumbered.fasta, "w") as outf:
         for rec in SeqIO.parse():
             rec.id = "scaffold_%05d" % counter
             counter = counter + 1
@@ -2321,13 +2306,13 @@ def main(args=None, logger=None):
         # scaffolder is used for these by default
         args.scaffolder = "mauve" if args.scaffolder is None else args.scaffolder
         if not args.skip_split_origin:
-        find_origin( $tmpdir, $scaffolder, $scaffolder_args, "$tmpdir/reference_parsed_ids.fasta",
-                     $insert_size, $stddev, $mean_read_length, $threads )
-        order_scaffolds( $tmpdir, basename($reference) ) if ($id_ok);
+            find_origin(args, logger )
+        if ID_OK:
+            order_scaffolds(args, logger)
+        if args.finisher and  ID_OK:
+            finish_assembly(args)
+            # finish_assembly( $tmpdir, $finisher, $insert_size, $stddev, $encoding, $threads ) ;
 
-        finish_assembly( $tmpdir, $finisher, $insert_size, $stddev, $encoding, $threads ) if ( $finisher && $id_ok );
-
-    }
 
 #     my $gaps;
 
