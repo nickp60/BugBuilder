@@ -14,3 +14,8 @@ man
 *.egg-info/
 /tests/tmp_tests/
 *__pycache__*
+*.amb
+*.bwt
+*.pac
+*.sa
+*.ann

@@ -294,10 +294,12 @@ class test_BugBuilder(unittest.TestCase):
     @unittest.skipIf("TRAVIS" in os.environ and os.environ["TRAVIS"] == "true",
                      "Skipping this test on Travis CI. Too hard to debug")
     def test_run_scaffolder_sis(self):
+        # need all these args because the replace_placeholders function
         test_args = Namespace(
             fastq1=self.fastq1, fastq2=self.fastq2, long_fastq=None,
             de_fere_contigs=None, reference=self.ref_fasta, genome_size=0,
-            tmp_dir=self.test_dir)
+            tmp_dir=self.test_dir,
+            memory=8, untrimmed_fastq1=None, untrimmed_fastq2=None, platform="illumina", threads=1)
         config = bb.parse_config(self.filled_config)
         reads_ns = bb.assess_reads(args=test_args, config=config,
                                    platform="illumina", logger=logger)

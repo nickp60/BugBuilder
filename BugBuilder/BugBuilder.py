@@ -1866,55 +1866,25 @@ def main(args=None, logger=None):
         merged_contigs_path = merge_assemblies(args=args, config=config, reads_ns=reads_ns, logger=logger)
         if args.scaffolder and args.reference:
             ID_OK = check_id(args, contigs, logger)
-    sys.exit(0)
-
-    # } else { # end if already assembled
-#     	print "using assemblies from another directory\n";
-#     	$id_ok = 1;  # it better be, that is
-# 	$tmpdir = $scratchdir;
-# 	my $oridir = $tmpdir . "/origin";
-# 	rmtree "$tmpdir/origin" or print "Unable to remove origin dir: $!\n";
-# 	rmtree "$tmpdir/agp" or print "Unable to remove agp dir: $!\n";
-# 	unlink "$tmpdir/scaffolds.agp" or print "unable to delete scaffolds.agp\n";
-# 	unlink "$tmpdir/contigs.embl" or print "unable to delete contigs.embl\n";
-# 	unlink "$tmpdir/scaffolds.embl" or print "unable to delete scaffolds.embl\n";
-# 	# unlink "$tmpdir/scaffolds.fasta" or print "unable to delete scaffolds.fasta\n";
-# 	# unlink "$tmpdir/contigs.fasta" or print "unable to delete scaffolds.contigs\n";
-# 	rmtree "$tmpdir/annotation_merge" or print "unable to delete merge\n";
-# 	rmtree "$tmpdir/cgview" or print "unable to delete cgview\n";
-# 	rmtree "$tmpdir/comparisons" or print "unable to delete comparisons\n";
-# 	unlink "$tmpdir/contigs_cgview.png" or print "unable to delete contigs_cgview.png\n";
-# 	unlink "$tmpdir/scaffolds_cgview.png" or print "unable to delete scaffolds_cgview.png\n";
-# 	unlink glob "$tmpdir/comparison_vs*" or print "unable to delete comparisons";
-#     	print "idok: $id_ok\n";
-#     }
     if args.scaffolder is not None:
         if \
            (ID_OK and scaffolder_type == "paired_ends" or \
              not ID_OK and scaffolder_type == "paired_ends"):
             scaffolds = run_scaffolder()
 
-#     run_scaffolder( $tmpdir, "$tmpdir/reference_parsed_ids.fasta",
-#                     $scaffolder, $scaffolder_args, $insert_size, $stddev, 1, "$tmpdir/contigs.fasta", $mean_read_length,
-#                     $threads )
-#       if ( $scaffolder && ( $id_ok && $scaffold_type eq 'align_genus' )
-#            || ( $id_ok && $scaffold_type eq 'paired-ends' )
-#            # why is that id_ok negated?
-#            || ( !$id_ok && $scaffold_type eq 'paired-ends' ) );
+    if os.path.exists(args.tmp_dir, "scaffolds.fasta"):
+        # we may have been given a reference for a long read assembly but no
+        # scaffolder is used for these by default
+        args.scaffolder = "mauve" if args.scaffolder is None else args.scaffolder
 
-#     if ( -e "$tmpdir/scaffolds.fasta" && $reference ) {
+    #     find_origin( $tmpdir, $scaffolder, $scaffolder_args, "$tmpdir/reference_parsed_ids.fasta",
+    #                  $insert_size, $stddev, $mean_read_length, $threads )
+    #       if ($split_origin);
+    #     order_scaffolds( $tmpdir, basename($reference) ) if ($id_ok);
 
-#         #we may have been given a reference for a long read assembly but no scaffolder is used for these by default
-#         $scaffolder = "mauve" if ( !$scaffolder );
+    #     finish_assembly( $tmpdir, $finisher, $insert_size, $stddev, $encoding, $threads ) if ( $finisher && $id_ok );
 
-#         find_origin( $tmpdir, $scaffolder, $scaffolder_args, "$tmpdir/reference_parsed_ids.fasta",
-#                      $insert_size, $stddev, $mean_read_length, $threads )
-#           if ($split_origin);
-#         order_scaffolds( $tmpdir, basename($reference) ) if ($id_ok);
-
-#         finish_assembly( $tmpdir, $finisher, $insert_size, $stddev, $encoding, $threads ) if ( $finisher && $id_ok );
-
-#     }
+    # }
 
 #     my $gaps;
 
@@ -2286,10 +2256,6 @@ def run_scaffolder(scaffolder_name, args, config, reads_ns, run_id,
     scaffold_output = replace_placeholders(string=conf_scaffolder['scaffold_output'],
                                            config=config,
                                            reads_ns=reads_ns, args=args)
-    if scaffolder_args:
-        exec_cmd = exec_cmd + scaffolder_args
-    else:
-        exec_cmd = exec_cmd + default_args
 
     unscaffolded_output = None
     if conf_scaffolder['unscaffolded_output']:
@@ -2298,6 +2264,11 @@ def run_scaffolder(scaffolder_name, args, config, reads_ns, run_id,
     linkage_evidence = conf_scaffolder['linkage_evidence']
     # no default args are currently implemeted
     default_args = conf_scaffolder['default_args']
+    if scaffolder_args:
+        exec_cmd = exec_cmd + scaffolder_args
+    else:
+        if default_args is not None:
+            exec_cmd = exec_cmd + default_args
     run_dir = os.path.join(args.tmp_dir, tool_name + "_" + str(run_id))
     os.makedirs(run_dir)
     # Treat reference-based scaffolder separately from paired-read scaffolders,
@@ -2904,70 +2875,62 @@ def run_scaffolder(scaffolder_name, args, config, reads_ns, run_id,
 
 # }
 
-# ######################################################################
-# #
-# # find_origin
-# #
-# # Attempts to identify location of origin based upon contig overlapping
-# # base 1 of the reference sequence. This assumes  each reference sequence
-# # is a complete circular molecular i.e.a chromosome or a plasmid
-# #
-# # required params: $ (tmpdir)
-# #                  $ (scaffolder)
-# #                  $ (scaffolder_args)
-# #                  $ (reference)
-# #                  $ (insert_size)
-# #                  $ (insert_stddev)
-# #                  $ (mean_read_length)
-# #
-# # returns: $ (0)
-# #
-# ######################################################################
 
-# sub find_origin {
+def make_nucmer_origin_cmds(config, ref, query, out_dir, prefix="out", header=True):
+    # nucmer
+    nucmer_cmd = "{0} {1} {2} -p {3}/{4} 2>&1 > {3}/nucmer.log".format(
+        config.nucmer, ref, query, out_dir, prefix)
+    # delta-filter
+    delta_filter_cmd = \
+        "{0} -1 {1}/{2}.delta 2>{1}/delta-filter.log > {1}/{2}.filter".format(
+            config.delta_filter, out_dir, prefix)
+    #show-coords
+    show_coords_cmd = \
+        "{0} {3}{1}/{2}.filter 2>{1}/show-coords.log > {1}/{2}.coords".format(
+            config.show_coords, out_dir, prefix,
+            "" if header else "-H ")
+    return [nucmer_cmd, delta_filter_cmd, show_coords_cmd]
 
-#     my $tmpdir           = shift;
-#     my $scaffolder       = shift;
-#     my $scaffolder_args  = shift;
-#     my $reference        = shift;
-#     my $insert_size      = shift;
-#     my $stddev           = shift;
-#     my $mean_read_length = shift;
-#     my $threads          = shift;
 
-#     my $ori_dir = $tmpdir . "/origin";
-#     mkdir "$ori_dir" or die "Error creating $ori_dir: $!";
-#     chdir "$ori_dir" or die "Error changing to $ori_dir: $!";
-#     symlink( "$tmpdir/read1.fastq", "read1.fastq" ) or die "Error creating read1.fastq symlink: $!";
-#     symlink( "$tmpdir/read2.fastq", "read2.fastq" ) or die "Error creating read1.fastq symlink: $!";
+    # my $cmd = $config->{'mummer_dir'}
+    #   . "/nucmer $tmpdir/reference_parsed_ids.fasta $tmpdir/scaffolds.fasta -p $ori_dir/ori > $ori_dir/nucmer.log 2>&1";
+    # system($cmd) == 0 or die "Error executing $cmd: $!";
+    # $cmd =
+    #   $config->{'mummer_dir'} . "/delta-filter -1 $ori_dir/ori.delta 2>$ori_dir/delta-filter.log > $ori_dir/ori.filter";
+    # system($cmd) == 0 or die "Error executing $cmd: $!";
+    # $cmd =
+    #   $config->{'mummer_dir'} . "/show-coords -H $ori_dir/ori.filter 2>$ori_dir/show-coords.log > $ori_dir/ori.coords";
+    # system($cmd) == 0 or die "Error executing $cmd: $!";
+def find_origin(args, logger):
+    """
+    Attempts to identify location of origin based upon contig overlapping
+    base 1 of the reference sequence. This assumes  each reference sequence
+    is a complete circular molecular i.e.a chromosome or a plasmid
 
-#     message("Attempting to identify origin...");
+    required params: $ (tmpdir)
+                 $ (scaffolder)
+                 $ (scaffolder_args)
+                 $ (reference)
+                 $ (insert_size)
+                 $ (insert_stddev)
+                 $ (mean_read_length)
 
-#     my $cmd = $config->{'mummer_dir'}
-#       . "/nucmer $tmpdir/reference_parsed_ids.fasta $tmpdir/scaffolds.fasta -p $ori_dir/ori > $ori_dir/nucmer.log 2>&1";
-#     system($cmd) == 0 or die "Error executing $cmd: $!";
-#     $cmd =
-#       $config->{'mummer_dir'} . "/delta-filter -1 $ori_dir/ori.delta 2>$ori_dir/delta-filter.log > $ori_dir/ori.filter";
-#     system($cmd) == 0 or die "Error executing $cmd: $!";
-#     $cmd =
-#       $config->{'mummer_dir'} . "/show-coords -H $ori_dir/ori.filter 2>$ori_dir/show-coords.log > $ori_dir/ori.coords";
-#     system($cmd) == 0 or die "Error executing $cmd: $!";
+    returns: $ (0)
 
-#     open COORDS, "$ori_dir/ori.coords"
-#       or die "Error opening ori.coords: $!";
-
-#     my $origin;
-#   LINE: while ( my $line = <COORDS> ) {
-#         chomp $line;
-#         $line =~ s/\|//g;
-#         $line =~ s/^ *//;
-#         my @fields = split( /\s+/, $line );
-#         if ( !$origin && $fields[0] == 1 ) {
-#             $origin = "$fields[8]:$fields[2]";
-#             print "Potential origin found at $origin...\n\n";
-#         }
-#     }
-#     close COORDS;
+    """
+    ori_dir = os.path.join(args.tmp_dir, "origin")
+    os.path.mkdirs(ori_dir)
+    logger.info("Attempting to identify origin...");
+    cmds = make_nucmer_origin_cmds(config, ref, query, out_dir=ori_dir, prefix="ori", header=False)
+    with open(os.path.join(ori_dir, ori.coords), "r") as coords:
+        origin = None
+        for line in coords:
+            line = line.strip()
+            line = line.replace("|", "")
+            fields = re.split("\s*", line)
+            if not origin and fields[0] ==1:
+                origin = "{0}:{1}".format(fields[8], fields[2])
+                logger.info("Potential origin found at %s", origin )
 
 #     if ($origin) {
 #         my $io      = Bio::SeqIO->new( -file => "$tmpdir/scaffolds.fasta",    -format => 'fasta' );

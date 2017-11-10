@@ -81,7 +81,7 @@ use File::Basename;
 
 """
 import glob
-def make_sis_etc_cmds(config, args, contigs, scaff_dir):
+def make_nucmer_delta_show_cmds(config, args, contigs, scaff_dir):
     # nucmer
     nucmer_cmd = "{0} {1} {2} -p {3}/sis 2>&1 > {3}/nucmer.log".format(
         config.nucmer, args.reference, contigs, scaff_dir)
@@ -93,15 +93,21 @@ def make_sis_etc_cmds(config, args, contigs, scaff_dir):
     show_coords_cmd = \
         "{0} {1}/sis.filter 2>{1}/show-coords.log > {1}/sis.coords".format(
             config.show_coords, scaff_dir)
+    return [nucmer_cmd, delta_filter_cmd, show_coords_cmd]
+
+
+
+def make_sis_etc_cmds(config, args, contigs, scaff_dir):
+    cmds = make_nucmer_delta_show_cmds(config, args, contigs, scaff_dir)
     # sis
     sis_cmd = "{0} {1}/sis.coords > {1}/sis.sis".format(
         config.sis, scaff_dir)
+    cmds.append(sis_cmd)
     # multifasta
     multifasta_cmd = "{0} {1}/sis.sis {2}".format(
         config.multifasta, scaff_dir, contigs)
-
-    return [nucmer_cmd, delta_filter_cmd, show_coords_cmd,
-            sis_cmd, multifasta_cmd]
+    cmds.append(multifasta_cmd)
+    return cmds
 
 
 def run_sis(config, args, contigs, scaff_dir):
