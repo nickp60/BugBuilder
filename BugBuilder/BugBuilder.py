@@ -681,7 +681,7 @@ def match_assembler_args(args):
     if len(args.assemblers) == 0:
         return [None, None]
     if len(args.assembler_args) != 0:
-        if len(args.assembler) != len(args.assembler_args):
+        if len(args.assemblers) != len(args.assembler_args):
             raise ValueError("length of assemblers must equal " +
                              "length of assembler args")
         for i, v in enumerate(args.assemblers):
