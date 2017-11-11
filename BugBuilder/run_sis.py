@@ -99,7 +99,7 @@ def make_sis_etc_cmds(config, args, contigs, scaff_dir):
     return cmds
 
 
-def run_sis(config, args, contigs, scaff_dir):
+def run(config, args, contigs, scaff_dir):
     cmd_list = make_sis_etc_cmds(config, args, contigs, scaff_dir)
 
     ref_id = os.path.basename(scaff_dir)

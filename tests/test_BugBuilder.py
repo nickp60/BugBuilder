@@ -343,6 +343,19 @@ class test_BugBuilder(unittest.TestCase):
                               reads_ns=Namespace(mean_read_length=45),
                               logger=logger))
 
+    def test_replace_placeholders(self):
+        test_args = Namespace(memory=1)
+        string = "executable __MEMORY__"
+        self.assertEqual(
+            "executable 1",
+            bb.replace_placeholders(string, args=test_args))
+
+    def test_replace_placeholders_fail(self):
+        string = "executable __MEMORY__ __CONTIGS__"
+        test_args = Namespace(memory=1)
+        with self.assertRaises(ValueError):
+            bb.replace_placeholders(string, args=test_args)
+
     ###########################################################################
     @unittest.skipIf("TRAVIS" in os.environ and os.environ["TRAVIS"] == "true",
                      "Skipping this test on Travis CI. Too hard to debug")
@@ -350,11 +363,18 @@ class test_BugBuilder(unittest.TestCase):
         # need all these args because the replace_placeholders function
         test_args = Namespace(
             fastq1=self.fastq1, fastq2=self.fastq2, long_fastq=None,
-            de_fere_contigs=None, reference=self.ref_fasta, genome_size=0,
-            tmp_dir=self.test_dir, scaffolder="sis", scaffolder_args=None,
-            memory=8, untrimmed_fastq1=None, untrimmed_fastq2=None, platform="illumina", threads=1)
+            # de_fere_contigs=None,
+            reference=self.ref_fasta,
+            genome_size=0,
+            # tmp_dir=self.test_dir,
+            scaffolder="sis",
+            #scaffolder_args=None,
+            # memory=8, untrimmed_fastq1=None, untrimmed_fastq2=None, platform="illumina", threads=1
+        )
         config = bb.parse_config(self.filled_config)
         results = bb.make_empty_results_object()
+        results.current_contigs = "contigs"
+        results.current_scaffolds = "scaffs"
         reads_ns = bb.assess_reads(args=test_args, config=config,
                                    platform="illumina", logger=logger)
         bb.run_scaffolder(

@@ -346,6 +346,7 @@ from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
 from argparse import Namespace
 from .shared_methods import make_nucmer_delta_show_cmds
+from .run_sis import run
 # def parse_config():
 #     pass
 
@@ -1482,12 +1483,15 @@ def get_insert_stats(bam, reads_ns, args, config, logger):
                 get_next=True
     return (mean_insert, stddev_insert)
 
-def replace_placeholders(string, config, reads_ns, args, results):
+def replace_placeholders(string, config=None, reads_ns=None, args=None, results=None):
     # key is the name of placholder, and value is a list [object, attr]
     # if object is None, just use attribute string
+    #
+    # none of the objects are mandatory
+    print(string)
     replace_dict = {
         # assembler placeholders
-        "__BUGBUILDER_BIN__": [None, "/$FindBin::Bin/g"],
+        # "__BUGBUILDER_BIN__": [None, "/$FindBin::Bin/g"],
         # "__ASMDIR__": os.path.dirname(config.assemblers[assembler['name']]),
         "__MEMORY__": [args, "memory"],
         "__TMPDIR__": [args, "tmp_dir"],
@@ -1507,18 +1511,23 @@ def replace_placeholders(string, config, reads_ns, args, results):
         "__INSSD__": [reads_ns, "insert_stddev"],
         "__THREADS__": [args, "threads"],
         # scaffolder placeholders
-        "__CONTIGS__": [results, "current_contigs"],
-        "__SCAFFOLDS__": [results, "current_scaffolds"]
+        "__CONTIGS__": [results, "current_scaffolds"],
+        "__SCAFFOLDS__": [results, "current_scaffolds"],
+        "__SCAFFDIR__": [results, "current_scaffolds"]
 
     }
     for k, v in replace_dict.items():
-        try:
-            string = string.replace(k, getattr(v[0], v[1]) if v is not None else "")
-        except: # so many ways this could go wrong: IndexError, KeyError
-            string = string.replace(k, "")
+        if v[0] is not None:
+            try:
+                string = string.replace(
+                    k, str(getattr(v[0], v[1])) if v is not None else "")
+            except: # so many ways this could go wrong: IndexError, KeyError
+                string = string.replace(k, "")
 
     # for k,v in replace_dict.items():
     #     string = string.replace(k, str(v) if v is not None else "")
+    if re.match(".*(__.*?__).*", string):
+        raise ValueError("Unsubstituted placeholder found! \n%s" % string)
     return string
 
 
@@ -1914,10 +1923,10 @@ def run_scaffolder(args, config, reads_ns, results, run_id, logger=None):
     except IndexError:
         raise ValueError("Scaffolder %s is not defined" % tool_name)
     exec_cmd = replace_placeholders(string=conf_scaffolder['command'],
-                                    config=config,
+                                    config=config, results=results,
                                     reads_ns=reads_ns, args=args)
     scaffold_output = replace_placeholders(string=conf_scaffolder['scaffold_output'],
-                                           config=config,
+                                           config=config, results=results,
                                            reads_ns=reads_ns, args=args)
 
     unscaffolded_output = None
