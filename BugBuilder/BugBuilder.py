@@ -480,27 +480,6 @@ def get_args():  # pragma: no cover
                           "assemblers are specified.",
                           nargs="*", default=[],
                           type=str)
-    #  These are depreciated in favour of the --already-assembled_dirs arg
-    # optional.add_argument("--assemblies_contigs", dest='assemblies_contigs',
-    #                       action="store",
-    #                       help="path to contig file(s) if assembler(s) " +
-    #                       "have already been run; this helps save time when " +
-    #                       "rerunning analyses. If running multiple assemble" +
-    #                       "rs, assemblies should be specified twice, once " +
-    #                       "for each assemler, in the same order than the " +
-    #                       "assemblers are specified.",
-    #                       nargs="*",
-    #                       type=str)
-    # optional.add_argument("--assemblies_scaffolds", dest='assemblies_scaffolds',
-    #                       action="store",
-    #                       help="path to scafoold file(s) if  assembler(s) " +
-    #                       "have already been run; this helps save time when " +
-    #                       "rerunning analyses. If running multiple assemble" +
-    #                       "rs, assemblies should be specified twice, once " +
-    #                       "for each assemler, in the same order than the " +
-    #                       "assemblers are specified.",
-    #                       nargs="*",
-    #                       type=str)
     optional.add_argument("--scaffolder", dest='scaffolder', action="store",
                           help="scaffolder to use",
                           choices=parse_available_scaffolders(),
@@ -565,7 +544,8 @@ def get_args():  # pragma: no cover
                           help="quality threshold to trim  ", default=20,
                           type=int)
     optional.add_argument("--trim-length", dest='trim_length', action="store",
-                          help="min read klength to retain", default=50,
+                          help="min read klength to retain;" +
+                          "50 (25 for reads <50bp)", default=50,
                           type=int)
     optional.add_argument("--skip-split-origin", dest='skip_split_origin',
                           action="store_true",
@@ -588,6 +568,29 @@ def get_args():  # pragma: no cover
                           " specify assembler(s), and lists much match " +
                           "length", default=[],
                           nargs="*", type=str)
+     # These can be used instead of the --already-assembled_dirs arg
+    optional.add_argument("--contigs",
+                          dest='already_assembled_contigs',
+                          action="store",
+                          help="path to contig file(s) if assembler(s) " +
+                          "have already been run; this helps save time when " +
+                          "rerunning analyses. If running multiple assemble" +
+                          "rs, assemblies should be specified twice, once " +
+                          "for each assemler, in the same order than the " +
+                          "assemblers are specified.",
+                          nargs="*",
+                          type=str)
+    optional.add_argument("--scaffolds",
+                          dest='already_assembled_scaffolds',
+                          action="store",
+                          help="path to scafoold file(s) if  assembler(s) " +
+                          "have already been run; this helps save time when " +
+                          "rerunning analyses. If running multiple assemble" +
+                          "rs, assemblies should be specified twice, once " +
+                          "for each assemler, in the same order than the " +
+                          "assemblers are specified.",
+                          nargs="*",
+                          type=str)
     # optional.add_argument("--scratchdir", dest='scratchdir', action="store",
     #                       help="dir for results",
     #                       type=str)
@@ -1479,7 +1482,7 @@ def get_insert_stats(bam, reads_ns, args, config, logger):
                 get_next=True
     return (mean_insert, stddev_insert)
 
-def replace_placeholders(string, config, reads_ns, args):
+def replace_placeholders(string, config, reads_ns, args, results):
     # key is the name of placholder, and value is a list [object, attr]
     # if object is None, just use attribute string
     replace_dict = {
@@ -1487,27 +1490,35 @@ def replace_placeholders(string, config, reads_ns, args):
         "__BUGBUILDER_BIN__": [None, "/$FindBin::Bin/g"],
         # "__ASMDIR__": os.path.dirname(config.assemblers[assembler['name']]),
         "__MEMORY__": [args, "memory"],
-        "__TMPDIR__": args.tmp_dir,
-        "__FASTQ1__": args.fastq1,
-        "__FASTQ2__": args.fastq2,
-        "__ORIG_FASTQ1__": args.untrimmed_fastq1,
-        "__ORIG_FASTQ2__": args.untrimmed_fastq2,
-        "__DE_FERE_CONTIGS__": args.de_fere_contigs,
-        "__LONGFASTQ__": args.long_fastq,
-        "__REFERENCE__": args.reference,
-        "__CATEGORY__": reads_ns.lib_type,
-        "__ENCODING__": reads_ns.encoding,
-        "__GENOME_SIZE__": args.genome_size,
-        "__PLATFORM__": args.platform,
-        "__READ_LENGTH__": reads_ns.mean_read_length,
-        "__INSSIZE__": reads_ns.insert_mean,
-        "__INSSD__": reads_ns.insert_stddev,
-        "__THREADS__": args.threads,
+        "__TMPDIR__": [args, "tmp_dir"],
+        "__FASTQ1__": [args, "fastq1"],
+        "__FASTQ2__": [args, "fastq2"],
+        "__ORIG_FASTQ1__": [args, "untrimmed_fastq1"],
+        "__ORIG_FASTQ2__": [args, "untrimmed_fastq2"],
+        "__DE_FERE_CONTIGS__": [args, "de_fere_contigs"],
+        "__LONGFASTQ__": [args, "long_fastq"],
+        "__REFERENCE__": [args, "reference"],
+        "__CATEGORY__": [reads_ns, "lib_type"],
+        "__ENCODING__": [reads_ns, "encoding"],
+        "__GENOME_SIZE__": [args, "genome_size"],
+        "__PLATFORM__": [args, "platform"],
+        "__READ_LENGTH__": [reads_ns, "mean_read_length"],
+        "__INSSIZE__": [reads_ns, "insert_mean"],
+        "__INSSD__": [reads_ns, "insert_stddev"],
+        "__THREADS__": [args, "threads"],
         # scaffolder placeholders
-        "__reference__":None,
+        "__CONTIGS__": [results, "current_contigs"],
+        "__SCAFFOLDS__": [results, "current_scaffolds"]
+
     }
-    for k,v in replace_dict.items():
-        string = string.replace(k, str(v) if v is not None else "")
+    for k, v in replace_dict.items():
+        try:
+            string = string.replace(k, getattr(v[0], v[1]) if v is not None else "")
+        except: # so many ways this could go wrong: IndexError, KeyError
+            string = string.replace(k, "")
+
+    # for k,v in replace_dict.items():
+    #     string = string.replace(k, str(v) if v is not None else "")
     return string
 
 
@@ -1773,6 +1784,7 @@ def check_already_assembled_dirs(args, config, logger):
             "You must explicity specify the assemblers used to generate " +
             "the already-assembled results.  The lengths of those lists do " +
             "not match")
+    outlist = []
     for i in range(0, len(args.assemblers)):
         assembler = args.assemblers[i]
         for f in ["contig", "scaffold"]:
@@ -1788,7 +1800,36 @@ def check_already_assembled_dirs(args, config, logger):
                     "check files and  re-assemble") %(args.assemblers[i], res))
             else:
                 res_dict[f].append(res)
-    return (res_dict["contig"], res_dict["scaffold"])
+        outlist.append(
+            {"name": assembler,
+             "contigs": res_dict["contig"][i],
+             "scaffolds": res_dict["scaffold"][i]})
+    return outlist
+
+
+def check_already_assembled_args(args, config, logger):
+    """Ensure that the args providded have the expect output files
+    retuns a list of {assembler, contigs, scaffolds} dictionaries
+    """
+    res_dict = {"contig": [],
+                "scaffold": []}
+    for path in [args.already_assembled_contigs, args.already_assembled_scaffolds]:
+        if not os.path.exists(path):
+            raise FileNotFoundError("Could not find directory: %s" % path)
+    if len(args.assemblers) != len(args.already_assembled_contigs) or\
+        len(args.assemblers) != len(args.already_assembled_scaffolds):
+        raise ValueError(
+            "You must explicity specify the assemblers used to generate " +
+            "the already-assembled results.  The lengths of those lists do " +
+            "not match")
+    outlist = []
+    for i in range(0, len(args.assemblers)):
+        assembler = args.assemblers[i]
+        outlist.append(
+            {"name": assembler,
+             "contigs": args.already_assembled_contigs[i],
+             "scaffolds": args.already_assembled_scaffolds[i]})
+    return outlist
 
 def check_args(args):
     if args.merge_method is None and len(args.assemblers) > 1:
@@ -1804,6 +1845,7 @@ def make_empty_results_object():
         organism=None,
         assemblers_list=None, # to be filled by match_assembler args
         assemblers_results_dict_list=[], # {name:None, contigs:None, scaffold:None}
+        ID_OK=False, # to be set by check_id
         current_contigs=None, current_scaffolds=None, current_reference=None,
         old_contigs=[[None, None]],  # [path, source]
         old_scaffolds=[[None, None]],  # [path, source]
@@ -1844,8 +1886,7 @@ def log_read_and_run_data(reads_ns, args, results):  # pragma nocover
     logger.info("ASSEMBLER DETAILS:\n" + tabulate.tabulate(run_table))
 
 
-def run_scaffolder(scaffolder_name, args, config, reads_ns, run_id,
-                   scaffolder_args=None, logger=None):
+def run_scaffolder(args, config, reads_ns, results, run_id, logger=None):
     """
     Runs specified scaffolder....
 
@@ -1866,22 +1907,10 @@ def run_scaffolder(scaffolder_name, args, config, reads_ns, run_id,
 
     returns        : $ (linkage evidence type)
     """
-    # my $tmpdir           = shift;
-    # my $reference        = shift;
-    # my $scaffolder       = shift;
-    # my $scaffolder_args  = shift;
-    # my $insert_size      = shift;
-    # my $insert_sd        = shift;
-    # my $run_id           = shift;
-    # my $contigs          = shift;
-    # my $mean_read_length = shift;
-    # my $threads          = shift;
     logger.info(" Starting $scaffolder");
-
-    # blast_dir = config.blast_dir
-    tool_name = scaffolder_name
+    tool_name = args.scaffolder
     try:
-        conf_scaffolder = [x for x in config.scaffolders if x['name'].lower() == tool_name][0]
+        conf_scaffolder = [x for x in config.scaffolders if x['name'].lower() == args.scaffolder][0]
     except IndexError:
         raise ValueError("Scaffolder %s is not defined" % tool_name)
     exec_cmd = replace_placeholders(string=conf_scaffolder['command'],
@@ -1898,8 +1927,8 @@ def run_scaffolder(scaffolder_name, args, config, reads_ns, run_id,
     linkage_evidence = conf_scaffolder['linkage_evidence']
     # no default args are currently implemeted
     default_args = conf_scaffolder['default_args']
-    if scaffolder_args:
-        exec_cmd = exec_cmd + scaffolder_args
+    if args.scaffolder_args:
+        exec_cmd = exec_cmd + args.scaffolder_args
     else:
         if default_args is not None:
             exec_cmd = exec_cmd + default_args
@@ -1998,7 +2027,7 @@ def run_scaffolder(scaffolder_name, args, config, reads_ns, run_id,
             # moved scaf_args out of if statement as well!
             exec_cmd = exec_cmd + " 2>&1 > " + os.path.join(
                 args.tmpdir,
-                scaffolder_name + "_" + str(run_id) + "_" + ref_id + ".log")
+                args.scaffolder + "_" + str(run_id) + "_" + ref_id + ".log")
             scaffolder_cmd_list.append(exec_cmd)
             merge_these_scaffolds.append(os.path.join(run_scaffold_output, "scaffolds.fasta"))
 #             mkdir("$run_dir/${scaffolder}_${ref_id}") or die "Error creating $run_dir/${scaffolder}_${ref_id}: $! ";
@@ -2043,7 +2072,7 @@ def run_scaffolder(scaffolder_name, args, config, reads_ns, run_id,
         # moved scaf_args out of if statement as well!
         exec_cmd = exec_cmd + " 2>&1 > " + os.path.join(
             args.tmpdir,
-            scaffolder_name + "_" + str(run_id) + ".log")
+        args.scaffolder + "_" + str(run_id) + ".log")
         scaffolder_cmd_list.append(exec_cmd)
         merge_these_scaffolds.append(os.path.join(run_scaffold_output, "scaffolds.fasta"))
 
@@ -2061,7 +2090,7 @@ def run_scaffolder(scaffolder_name, args, config, reads_ns, run_id,
                    stdout=subprocess.PIPE,
                    stderr=subprocess.PIPE,
                    check=True)
-    resulting_scaffold = os.path.join(args.tmp_dir, scaffolder_name + run_id,
+    resulting_scaffold = os.path.join(args.tmp_dir, args.scaffolder + run_id,
                                       "scaffolds.fasta")
     if len(merge_these_scaffolds) != 0:
         counter = 1
@@ -2192,6 +2221,21 @@ def find_origin(args, logger):
             SeqIO.write(rec, outf, fasta)
 
 
+def check_and_set_trim_length(reads_ns, args, logger):
+    if reads_ns.mean_read_length is not None:
+        if reads_ns.mean_read_length < 50 and reads_ns.mean_read_length < args.trim_length:
+            logger.info("trim-length set to minimum of 25 due to mean read length: %d",
+                        reads_ns.mean_read_length)
+            return 25
+    return args.trim_length
+
+def use_already_assembled(args):
+    for atr in ["already_assembled_dirs",
+                "already_assembled_contigs",
+                "already_assembled_scaffolds"]:
+        if len(getattr(args, atr)) > 0:
+            return True
+    return False
 
 def main(args=None, logger=None):
     if args is None:
@@ -2242,66 +2286,106 @@ def main(args=None, logger=None):
     # copy paths to raw reads in case we need them for mascura
     args.untrimmed_fastq1 = args.fastq1
     args.untrimmed_fastq2 = args.fastq2
+
     logger.info("Assessing reads and library type")
-    reads_ns  = assess_reads(args=args, config=config, platform=args.platform,
-                             logger=logger)
+    reads_ns  = assess_reads(args=args, config=config,
+                             platform=args.platform, logger=logger)
     logger.debug(reads_ns)
+
     logger.info("Determining if a reference is needed")
     check_ref_needed(args=args, lib_type=reads_ns.lib_type)
-    logger.info("preparing config and tools; lol not really but we will be")
+
+    logger.info("preparing config and tools")
     tools = select_tools(args, config=config, reads_ns=reads_ns, logger=logger)
 
+    logger.debug("Determining if fastqc will be run")
     if not args.skip_fastqc and config.fastqc is not None:
         logger.info("Running fastqc on reads")
         run_fastqc(reads_ns, args, logger=logger)
-    if reads_ns.mean_read_length is not None:
-        if reads_ns.mean_read_length < 50 and reads_ns.mean_read_length < args.trim_length:
-            logger.info("trim-length reset to 25 due to mean read length: %i",
-                        reads_ns.mean_read_length)
-            args.trim_length = 25
+    else:
+        logger.info("Skipping fastqc")
+
+    logger.debug("Ensuring appropriate trim length")
+    args.trim_length = check_and_set_trim_length(reads_ns, args, logger)
+
+    logger.debug("Determining whether to perfrom trimming")
     if reads_ns.lib_type != "long" and not args.skip_trim:
         logger.info("Trimming reads based on quality")
         quality_trim_reads(args, config, reads_ns, logger)
+
+    logger.debug("Determining whether to downsample")
     if (reads_ns.coverage is not None and reads_ns.coverage > 100) and \
        (assembler_needs_downsampling(args, config) or args.downsample != 0):
         logger.info("Downsampling reads to %dx coverage", args.downsample)
-        reads_ns.downsampled_coverage = downsample_reads(args=args, reads_ns=reads_ns,
-                                                         config=config, new_cov=args.downsample)
+        reads_ns.downsampled_coverage = downsample_reads(
+            args=args, reads_ns=reads_ns,
+            config=config, new_cov=args.downsample)
+
     if args.fastq2 and args.reference:
         logger.info("Aligning reads to reference for determinging insert size")
         sorted_bam = align_reads(dirname="align", reads_ns=reads_ns,
                                  config=config, downsample=True, args=args, logger=logger)
         reads_ns.insert_mean, reads_ns.insert_stddev = get_insert_stats(
             bam=sorted_bam, config=config, args=args, reads_ns=reads_ns, logger=logger)
+
+    # print out the run data we have so far
     log_read_and_run_data(reads_ns, args, results, logger)
-    # contig_scaffold_list = [] # holds pairs of (contigs_path, scaffolds_path)
-    if len(args.already_assembled_dirs) != 0:
-        ctgs, scafs = check_already_assembled_dirs(args, config, logger)
-        for assembler, assembler_args in results.assemblers_list:
-            for idx, contigs  in enumerate(ctgs):
-                results.assemblers_results_dict_list.append(
-                    {"name": assembler, "contigs":contigs, "scaffolds": scafs[idx]})
+
+    # Righto, now the fun starts. First up, we assemble with 1 or 2 assemblers
+    # (or check and read in results from a prior assembly)
+
+    if use_already_assembled(args):
+        logger.info("Using provided assembly(s) results")
+        # if provided contigs and scaffolds
+        if len(args.already_assembled_dirs) == 0:
+            results.assemblers_results_dict_list = check_already_assembled_args(
+                args, config, logger)
+        # if provided dir(s)
+        else:
+            results.assemblers_results_dict_list = check_already_assembled_dirs(
+                args, config, logger)
     else:
+        logger.info("Running Assembler(s)")
         for assembler, assembler_args in results.assemblers_list:
             logger.info("Assembling with %s", assembler)
             contigs_path, scaffolds_path  = run_assembler(
                 assembler=assembler, assembler_args=assembler_args,
                 args=args, reads_ns=reads_ns, config=config, logger=logger)
             results.assemblers_results_dict_list.append(
-                {"name": assembler, "contigs":contigs_path, "scaffolds": scaffolds_path})
+                {"name": assembler,
+                 "contigs":contigs_path,
+                 "scaffolds": scaffolds_path})
+
+    # if we have more than one assembler, run merge and point results to merged
     if len(results.assemblers_results_dict_list) > 1:
         #run merge
-        merged_contigs_path = merge_assemblies(args=args, config=config, reads_ns=reads_ns, logger=logger)
+        merged_contigs_path = merge_assemblies(args=args, config=config,
+                                               reads_ns=reads_ns, logger=logger)
         results.current_contigs = merged_contigs_path
+        results.current_scaffolds = None
+
+    else:
+        results.current_contigs = \
+            results.assemblers_results_dict_list[0]['contigs']
+        results.current_scaffolds = \
+            results.assemblers_results_dict_list[0]['scaffolds']
+
+
+    #TODO why do we check scaffolder here?
     if args.scaffolder and args.reference:
-        ID_OK = check_id(args, contigs, logger)
+        results.ID_OK = check_id(args, contigs=results.current_contigs,
+                                 logger=logger)
     if args.scaffolder is not None:
         if \
            (ID_OK and scaffolder_type == "paired_ends" or \
              not ID_OK and scaffolder_type == "paired_ends"):
-            scaffolds = run_scaffolder()
+            results.old_scaffolds.append(["either nowhere or straight from assembler",
+                                         results.current_scaffolds])
+            results.current_scaffolds = run_scaffolder(
+                args=args, config=config, reads_ns=reads_ns, results=results,
+                run_id=1, logger=None)
 
-    if os.path.exists(args.tmp_dir, "scaffolds.fasta"):
+    if results.current_scaffolds is not None:
         # we may have been given a reference for a long read assembly but no
         # scaffolder is used for these by default
         args.scaffolder = "mauve" if args.scaffolder is None else args.scaffolder

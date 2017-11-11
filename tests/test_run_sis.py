@@ -44,8 +44,8 @@ class test_run_sis(unittest.TestCase):
         """
         ref_cmds = [
             "nucmer reffy contig.fa -p sisdir/sis 2>&1 > sisdir/nucmer.log",
-            "delta-filter -1 sisdir/sis.delta 2>sisdir/delta-filter.log > sisdir/sis.filter",
-            "show-coords sisdir/sis.filter 2>sisdir/show-coords.log > sisdir/sis.coords",
+            "delta-filter -1 sisdir/sis.delta 2> sisdir/delta-filter.log > sisdir/sis.filter",
+            "show-coords sisdir/sis.filter 2> sisdir/show-coords.log > sisdir/sis.coords",
             "sis.py sisdir/sis.coords > sisdir/sis.sis",
              "multifasta.py sisdir/sis.sis contig.fa"
             ]

@@ -308,7 +308,9 @@ class test_BugBuilder(unittest.TestCase):
         self.assertEqual(
             bb.check_already_assembled_dirs(
                 args=test_args, config=config, logger=logger),
-            ([already_ctg], [already_scf]))
+            [{"name": "spades",
+             "contigs": already_ctg,
+              "scaffolds": already_scf}])
 
 
     def test_check_args(self):
@@ -325,6 +327,7 @@ class test_BugBuilder(unittest.TestCase):
             "current_contigs",
             "current_scaffolds",
             "current_reference",
+            "ID_OK",
             "old_contigs",
             "old_scaffolds",
             "old_references"]
@@ -333,6 +336,12 @@ class test_BugBuilder(unittest.TestCase):
             if k not in key_list:
                 raise KeyError
 
+    def test_check_trim_length(self):
+        self.assertEqual(
+            25,
+            bb.check_and_set_trim_length(args=Namespace(trim_length=50),
+                              reads_ns=Namespace(mean_read_length=45),
+                              logger=logger))
 
     ###########################################################################
     @unittest.skipIf("TRAVIS" in os.environ and os.environ["TRAVIS"] == "true",
@@ -342,15 +351,17 @@ class test_BugBuilder(unittest.TestCase):
         test_args = Namespace(
             fastq1=self.fastq1, fastq2=self.fastq2, long_fastq=None,
             de_fere_contigs=None, reference=self.ref_fasta, genome_size=0,
-            tmp_dir=self.test_dir,
+            tmp_dir=self.test_dir, scaffolder="sis", scaffolder_args=None,
             memory=8, untrimmed_fastq1=None, untrimmed_fastq2=None, platform="illumina", threads=1)
         config = bb.parse_config(self.filled_config)
+        results = bb.make_empty_results_object()
         reads_ns = bb.assess_reads(args=test_args, config=config,
                                    platform="illumina", logger=logger)
-        bb.run_scaffolder(scaffolder_name="sis",
-                       scaffolder_args=None, args=test_args, config=config, reads_ns=reads_ns,
-                       run_id=1, logger=logger)
+        bb.run_scaffolder(
+            args=test_args, config=config, results=results, reads_ns=reads_ns,
+            run_id=1, logger=logger)
         self.to_be_removed.append(os.path.join(self.test_dir, "sis_1"))
+
 
     def tearDown(self):
         """ delete temp files if no errors, and report elapsed time

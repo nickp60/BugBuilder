@@ -85,8 +85,9 @@ from .shared_methods import make_nucmer_delta_show_cmds
 
 
 def make_sis_etc_cmds(config, args, contigs, scaff_dir):
-    cmds = make_nucmer_delta_show_cmds(config, ref=args.reference, query=contigs,
-                        out_dir=scaff_dir, prefix="sis", header=False)
+    cmds = make_nucmer_delta_show_cmds(
+        config, ref=args.reference, query=contigs,
+        out_dir=scaff_dir, prefix="sis", header=True)
     # sis
     sis_cmd = "{0} {1}/sis.coords > {1}/sis.sis".format(
         config.sis, scaff_dir)

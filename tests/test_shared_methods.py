@@ -40,7 +40,7 @@ class test_shared_methods(unittest.TestCase):
         ref_cmds = [
             "nuc genome contigs -p res/sis 2>&1 > res/nucmer.log",
             "df -1 res/sis.delta 2> res/delta-filter.log > res/sis.filter",
-            "sc -H res/sis.filter 2>res/show-coords.log > res/sis.coords"
+            "sc -H res/sis.filter 2> res/show-coords.log > res/sis.coords"
         ]
         for idx, cmd in enumerate(cmds):
             self.assertEqual(ref_cmds[idx], cmd)
