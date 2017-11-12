@@ -345,8 +345,8 @@ import tabulate
 from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
 from argparse import Namespace
-from .shared_methods import make_nucmer_delta_show_cmds
-from .run_sis import run
+#from .shared_methods import make_nucmer_delta_show_cmds
+#from .run_sis import run
 # def parse_config():
 #     pass
 
@@ -513,7 +513,7 @@ def get_args():  # pragma: no cover
     optional.add_argument("--genome-size", dest='genome_size', action="store",
                           help="size of the genome ",
                           type=int, default=0) # 0 is better than None for addition :)
-    optional.add_argument("--downsample", dest='downsample', action="store_true",
+    optional.add_argument("--downsample", dest='downsample', action="store",
                           help="Downsample depth; set to 0 to skip " +
                           "downsampling. default is 100x ",
                           type=int, default=None)
@@ -579,7 +579,7 @@ def get_args():  # pragma: no cover
                           "rs, assemblies should be specified twice, once " +
                           "for each assemler, in the same order than the " +
                           "assemblers are specified.",
-                          nargs="*",
+                          nargs="*",  default=[],
                           type=str)
     optional.add_argument("--scaffolds",
                           dest='already_assembled_scaffolds',
@@ -590,7 +590,7 @@ def get_args():  # pragma: no cover
                           "rs, assemblies should be specified twice, once " +
                           "for each assemler, in the same order than the " +
                           "assemblers are specified.",
-                          nargs="*",
+                          nargs="*",  default=[],
                           type=str)
     # optional.add_argument("--scratchdir", dest='scratchdir', action="store",
     #                       help="dir for results",
@@ -1863,7 +1863,7 @@ def make_empty_results_object():
     return results
 
 
-def log_read_and_run_data(reads_ns, args, results):  # pragma nocover
+def log_read_and_run_data(reads_ns, args, results, logger):  # pragma nocover
     paired_str = "Paired" if reads_ns.paired else "Fragment"
     read_table=[
         ["Mean Read Length", reads_ns.mean_read_length],

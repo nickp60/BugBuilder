@@ -40,13 +40,13 @@ setup(
     license='Artistic License 2.0',
     classifiers=[
         'Development Status :: 3 - Alpha',
-        'Intended Audience :: Bioinformaticians',
+        'Intended Audience :: Developers',
         'License :: OSI Approved :: Artistic License 2.0',
         'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.6',
     ],
     keywords='bioinformatics assembly genomics development',
-    packages=['BugBuilder', 'tests'],
+    packages=['BugBuilder'],
     install_requires=requirements,
     include_package_data=True,
     package_data={
@@ -57,8 +57,8 @@ setup(
            'BugBuilder=BugBuilder.BugBuilder:main',
        ],
     },
-    scripts=[
-        "scripts/sis/multifasta.py",
-        "scripts/sis/sis.py"
-    ],
+    # scripts=[
+    #     "scripts/sis/multifasta.py",
+    #     "scripts/sis/sis.py"
+    # ],
 )
