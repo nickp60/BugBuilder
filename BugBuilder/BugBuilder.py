@@ -169,6 +169,7 @@ assemblers:
 
 scaffolders:
    - name: SIS
+     ref_required: 1
      linkage_evidence: align_genus
      command: __BUGBUILDER_BIN__/run_sis --reference __REFERENCE__ --contigs __CONTIGS__ --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__
      scaffold_output: scaffolds.fasta
@@ -177,6 +178,7 @@ scaffolders:
      create_dir: 1
      priority: 2
    - name: mauve
+     ref_required: 1
      linkage_evidence: align_genus
      command: __BUGBUILDER_BIN__/run_mauve --reference __REFERENCE__ --run __RUN__ --contigs __CONTIGS__ --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__
      default_args: null
@@ -184,6 +186,7 @@ scaffolders:
      priority: 1
      scaffold_output: scaffolds.fasta
    - name: sspace
+     ref_required: 0
      linkage_evidence: paired-ends
      command: __BUGBUILDER_BIN__/run_sspace --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__ --contigs __CONTIGS__ --insert_size __INSSIZE__ --insert_sd __INSSD__
      scaffold_output: BugBuilder.scaffolds.fasta
@@ -382,18 +385,21 @@ def parse_available_varcaller():
 
 def configure(config_path):
     mand_programs = [
-        'fastqc', 'sickle', 'seqtk', 'samtools', 'picard', 'blastn', 'makeblastdb', "nucmer",
-        'R', 'barrnap', 'prokka', 'aragorn', 'prodigal', 'hmmer3', 'rnammer',
-        'mummer', "delta-filter",  "show-coords", "sis", "multifasta", 'infernal', 'bwa', 'tbl2asn', 'abyss', 'spades',
+        'seqtk', 'samtools', 'picard', 'blastn', 'makeblastdb', "nucmer",
+        'R',
+        'mummer', "delta-filter",  "show-coords",  'bwa']
+    opt_programs = ['fastqc', 'sickle', "sis", "multifasta", 'mauve', 'barrnap', 'prokka', 'aragorn', 'prodigal', 'hmmer3', 'infernal', 'rnammer', 'tbl2asn', 'abyss', 'spades',
         'celera','gapfiller', 'sspace', 'asn2gb', 'amos' , 'masurca',
         'gfinisher', 'pilon', 'vcflib', 'cgview']
-    opt_programs = ['sis', 'mauve']
     programs = mand_programs + opt_programs
     program_dict = dict((k, None) for k in programs)
     for prog in programs:
         if shutil.which(prog):
             # replace dashes with underscores in config names but not in prog
             program_dict[prog.replace("-", "_")] = shutil.which(prog)
+        else:
+            if prog in mand_programs:
+                raise OSError("%s is a mandatory program; please install" % prog)
     with open(config_path, 'w') as outfile:  # write header and config params
         for line in __config_data__:
             outfile.write(line)
@@ -638,11 +644,16 @@ def set_up_logging(verbosity, outfile, name):
         "%H:%M:%S")
     console_err.setFormatter(console_err_format)
     # set some pretty colors, shorten names of loggers to keep lines aligned
-    logging.addLevelName(logging.DEBUG, "\u001b[30m%s\033[1;0m" % "..")
-    logging.addLevelName(logging.INFO,  "\u001b[32m%s\033[1;0m" % "--")
-    logging.addLevelName(logging.WARNING, "\u001b[33m%s\033[1;0m" % "!!")
-    logging.addLevelName(logging.ERROR, "\u001b[31m%s\033[1;0m" % "xx")
-    logging.addLevelName(logging.CRITICAL, "\u001b[31m%s\033[1;0m" % "XX")
+    # logging.addLevelName(logging.DEBUG, "\u001b[30m%s\033[1;0m" % "..")
+    # logging.addLevelName(logging.INFO,  "\u001b[32m%s\033[1;0m" % "--")
+    # logging.addLevelName(logging.WARNING, "\u001b[33m%s\033[1;0m" % "!!")
+    # logging.addLevelName(logging.ERROR, "\u001b[31m%s\033[1;0m" % "xx")
+    # logging.addLevelName(logging.CRITICAL, "\u001b[31m%s\033[1;0m" % "XX")
+    logging.addLevelName(logging.DEBUG, "..")
+    logging.addLevelName(logging.INFO,  "--")
+    logging.addLevelName(logging.WARNING, "!!")
+    logging.addLevelName(logging.ERROR, "xx")
+    logging.addLevelName(logging.CRITICAL,  "XX")
     logger.addHandler(console_err)
     # create debug file handler and set level to debug
     try:
@@ -1465,6 +1476,7 @@ def get_insert_stats(bam, reads_ns, args, config, logger):
     stat_dir = os.path.join(args.tmp_dir, "insert_stats")
     os.makedirs(stat_dir)
     pic_cmd, statfile = make_picard_stats_command(bam, config=config, picard_outdir=stat_dir)
+    logger.debug(pic_cmd)
     subprocess.run(pic_cmd,
                    shell=sys.platform != "win32",
                    stdout=subprocess.PIPE,
@@ -1841,9 +1853,25 @@ def check_already_assembled_args(args, config, logger):
              "scaffolds": args.already_assembled_scaffolds[i]})
     return outlist
 
-def check_args(args):
+def check_args(args, config):
+    # ensure reference-requiring things are accounted for
     if args.merge_method is None and len(args.assemblers) > 1:
         raise ValueError("Must provide merge method if using multiple assemblers")
+    for thing in ["scaffolder", "finisher"]:
+        for tool in getattr(config, thing + "s"):
+            if tool['name'].lower() == getattr(args, thing):
+                if args.reference is None and tool['ref_required']:
+                    raise ValueError("%s %s requires a reference." % \
+                                     (thing, getattr(args, thing)))
+    # ensure exes are there for fastqc, seqtk
+    if args.downsample != 0 and config.seqtk is None:
+        raise ValueError("Seqtk is needed for downsampling")
+    if not args.skip_fastqc != 0 and config.fastqc is None:
+        raise ValueError("fastqc not found; must enable --skip-fastqc")
+    if not args.skip_fastqc and config.fastqc is None:
+        raise ValueError("fastqc not found; must enable --skip-fastqc")
+    if not args.skip_trim  and config.sickle is None:
+        raise ValueError("sickle-trim not found; must enable --skip-trim")
 
 
 def make_empty_results_object():
@@ -2401,19 +2429,47 @@ def store_orientation(orientations, contig, or_count):
         orientations[contig] = '-'
 
 
+def finish_assembly(args, config, reads_ns, results, logger):
+    """
+    Carried out assembly finishing using selected method
+    required params: $ (tmpdir)
+                 $ (finisher)
+                 $ (insert size)
+                 $ (insert stddev)
+                 $ (base quality encoding)
+                 $ (no. threads)
+
+    returns        : $ (0)
+    """
+    logger.info("Finishing assembly with %s", args.finisher)
+    for tool in config.finishers:
+        if finisher == tool['name'].lower():
+            cmd        = tool['command']
+            create_dir = tool['create_dir']
+    outdir = os.path.join(args.tmp_dir, finisher)
+    if create_dir:
+        os.makedirs(outdir)
+    cmd = replace_placeholders(
+        string=cmd, config=config,
+        reads_ns=reads_ns, args=args)
+    logger.debug("running the following command:\n %s". cmd)
+    subprocess.run(cmd,
+                   shell=sys.platform != "win32",
+                   stdout=subprocess.PIPE,
+                   stderr=subprocess.PIPE,
+                   check=True)
+    print ("Finished assembly statistics : \n============================\n")
+    get_contig_stats( "$tmpdir/scaffolds.fasta", 'scaffolds' );
+
+
 def main(args=None, logger=None):
     if args is None:
         args = get_args()
-    check_args(args)
     check_files_present(args)
     results = make_empty_results_object()
     results.assemblers_list = match_assembler_args(args=args)
-    # seq_ids = None
-    # if args.reference is not None:
-    #     seq_ids = [x.id for x in  list(SeqIO.parse(args.reference, "fasta"))]
-
     results.organism = "{0}{1}{2}".format(args.genus, " " + args.species, " sp. " + args.strain)
-    dt = arrow.utcnow()
+    dt = arrow.now()
     if not args.outdir:
         if "unknown" in results.organism:
             args.outdir = "BugBuilder_" + dt.local.format('YYYY-MM-DD_HHmmss')
@@ -2440,6 +2496,8 @@ def main(args=None, logger=None):
     config = return_config(config_path, force=args.configure, logger=logger)
     logger.info("Using configuration from %s", config_path)
     logger.debug(config)
+    # lets not be hasty
+    check_args(args, config)
     setup_tmp_dir(args, output_root=args.outdir, logger=logger)
     # if args.reference is None:
     #     reference = None
@@ -2558,15 +2616,11 @@ def main(args=None, logger=None):
         if results.ID_OK:
             order_scaffolds(args, logger)
         if args.finisher and results.ID_OK:
-            finish_assembly(args)
-            # finish_assembly( $tmpdir, $finisher, $insert_size, $stddev, $encoding, $threads ) ;
+            finish_assembly(args, config, reads_ns, results, logger=logger)
 
-
-#     my $gaps;
-
-#     if ( -e "$tmpdir/scaffolds.fasta" ) {
-#         $gaps = build_agp( $tmpdir, $organism, $mode, $scaffold_type );
-#     }
+    if results.current_scaffolds is not None:
+        pass
+         # gaps = build_agp( $tmpdir, $organism, $mode, $scaffold_type );
 
 #     # sequence stable from this point, only annotations altered
 #     for my $i (qw(1 2)) {
@@ -2736,78 +2790,6 @@ def main(args=None, logger=None):
 
 
 
-
-
-# ######################################################################
-# #
-# # finish_assembly
-# #
-# # Carried out assembly finishing using selected method
-# #
-# # required params: $ (tmpdir)
-# #                  $ (finisher)
-# #                  $ (insert size)
-# #                  $ (insert stddev)
-# #                  $ (base quality encoding)
-# #                  $ (no. threads)
-# #
-# # returns        : $ (0)
-# #
-# ######################################################################
-
-# sub finish_assembly {
-
-#     my $tmpdir        = shift;
-#     my $finisher      = shift;
-#     my $insert_size   = shift;
-#     my $insert_stddev = shift;
-#     my $encoding      = shift;
-#     my $threads       = shift;
-
-#     message("Finishing assembly ($finisher)...");
-
-#     my ( $cmd, $create_dir );
-#     my $finishers = $config->{'finishers'};
-#     foreach my $tool (@$finishers) {
-#         my $name = $tool->{'name'};
-#         if ( $name eq $finisher ) {
-#             $cmd        = $tool->{'command'};
-#             $create_dir = $tool->{'create_dir'};
-#         }
-#     }
-#     if ($create_dir) {
-#         mkdir "$tmpdir/$finisher" or die "Error creating $tmpdir/$finisher: $! ";
-#         chdir "$tmpdir/$finisher" or die "Error chdiring to $tmpdir/$finisher: $!";
-#     }
-
-#     $cmd =~ s/__BUGBUILDER_BIN__/$FindBin::Bin/;
-#     $cmd =~ s/__TMPDIR__/$tmpdir/;
-#     $cmd =~ s/__REFERENCE__/${tmpdir}\/reference.fasta/;
-#     $cmd =~ s/__INSSIZE__/$insert_size/;
-#     $cmd =~ s/__INSSD__/$insert_stddev/;
-#     $cmd =~ s/__ENCODING__/$encoding/;
-#     $cmd =~ s/__THREADS__/$threads/;
-
-#     system("perl $cmd") == 0 or die "Error running $cmd: $!";
-#     chdir $tmpdir     or die " Error chdiring to $tmpdir: $! ";
-
-#     print "Finished assembly statistics : \n============================\n";
-#     get_contig_stats( "$tmpdir/scaffolds.fasta", 'scaffolds' );
-
-#     return (0);
-# }
-
-
-
-
-
-
-
-#     chdir $tmpdir or die "Error chdiring to $tmpdir: $!";
-
-#     return ( $insert, $stddev );
-
-# }
 
 
 

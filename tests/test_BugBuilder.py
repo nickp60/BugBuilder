@@ -325,7 +325,9 @@ class test_BugBuilder(unittest.TestCase):
             "assemblers_list",
             "assemblers_results_dict_list",
             "current_contigs",
+            "current_contigs_source",
             "current_scaffolds",
+            "current_scaffolds_source",
             "current_reference",
             "ID_OK",
             "old_contigs",
@@ -334,7 +336,7 @@ class test_BugBuilder(unittest.TestCase):
         results = bb.make_empty_results_object()
         for k, v in sorted(vars(results).items()):
             if k not in key_list:
-                raise KeyError
+                raise KeyError("%s not a valid results key!" %k)
 
     def test_check_trim_length(self):
         self.assertEqual(
@@ -356,7 +358,62 @@ class test_BugBuilder(unittest.TestCase):
         with self.assertRaises(ValueError):
             bb.replace_placeholders(string, args=test_args)
 
-    ###########################################################################
+    def check_get_merger_and_linkage(self):
+        pass
+    def parse_available_platforms():
+        pass
+    def parse_available_assemblers():
+        pass
+    def parse_available_scaffolders():
+        pass
+    def parse_available_mergers():
+        pass
+    def parse_available_finisher():
+        pass
+    def parse_available_varcaller():
+        pass
+    def get_scaffolder_and_linkage(args, config, paired, logger):
+        pass
+    def get_merger_and_linkage(args, config, paired):
+        pass
+    def get_finisher(args, config, paired):
+        pass
+    def get_varcaller(args, config, paired):
+        pass:
+    def select_tools(args, config, reads_ns, logger):
+    def assembler_needs_downsampling(args, config):
+    def make_fastqc_cmd(args, outdir):
+    def run_fastqc(reads_ns, args, logger=None):
+    def make_sickle_cmd(args, reads_ns, out_dir):
+    def quality_trim_reads(args, config, reads_ns, logger):
+    def make_seqtk_ds_cmd(args, reads_ns, new_coverage, outdir, config, logger):
+    def downsample_reads(args, reads_ns, config, new_cov=100):
+    def make_bwa_cmds(args, config, outdir, ref, reads_ns, fastq1, fastq2):
+    def make_samtools_cmds(config, sam, outdir, sorted_bam):
+    def align_reads(dirname, reads_ns,  downsample, args, config, logger):
+    def make_picard_stats_command(bam, config, picard_outdir):
+    def get_insert_stats(bam, reads_ns, args, config, logger):
+    def replace_placeholders(string, config=None, reads_ns=None, args=None, results=None):
+    def get_assembler_cmds(assembler, assembler_args, args, config, reads_ns):
+    def standardize_fasta_output(infile, outfile, ctype):
+    def get_L50_N50(lengths):
+    def get_contig_stats(contigs, ctype):
+    def run_assembler(assembler, assembler_args, args, reads_ns, config, logger):
+    def merge_assemblies(args, config, reads_ns, logger):
+    def check_id(args, contigs, logger):
+def check_already_assembled_dirs(args, config, logger):
+    def check_already_assembled_args(args, config, logger):
+    def check_args(args, config):
+    def make_empty_results_object():
+def log_read_and_run_data(reads_ns, args, results, logger):  # pragma nocover
+    def run_scaffolder(args, config, reads_ns, results, run_id, logger=None):
+    def find_origin(args, config, results, logger):
+def check_and_set_trim_length(reads_ns, args, logger):
+    def use_already_assembled(args):
+    def order_scaffolds():
+    def store_orientation(orientations, contig, or_count):
+    def finish_assembly(args, config, reads_ns, results, logger):
+
     @unittest.skipIf("TRAVIS" in os.environ and os.environ["TRAVIS"] == "true",
                      "Skipping this test on Travis CI. Too hard to debug")
     def test_run_scaffolder_sis(self):
