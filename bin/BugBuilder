@@ -277,7 +277,7 @@ set_paths($config);
     die "\n", RED, "ERROR: ", RESET, "fastq_1 ($fastq1) does not exist" if ( defined($fastq1) && ( !-e $fastq1 ) );
     die "\n", RED, "ERROR: ", RESET, "fastq_2 ($fastq2) does not exist" if ( defined($fastq2) && ( !-e $fastq2 ) );
     die "\n", RED, "ERROR: ", RESET, "--fastq1 and --fastq2 arguments may only be specified once..." if ($fastq_error);
-    die "\n", RED, "ERROR: ", RESET, "fastq_1 ($fastq1) and fastq2 ($fastq2) are the same" if ( $fastq1 eq $fastq2 );
+    die "\n", RED, "ERROR: ", RESET, "fastq_1 ($fastq1) and fastq2 ($fastq2) are the same" if ( $fastq1 eq $fastq2 &! $long_fastq);
     die "\n", RED, "ERROR: ", RESET, "Invalid mode: $mode" unless ( $mode eq 'submission' || $mode eq 'draft' );
     die "\n", RED, "ERROR: ", RESET, "Draft mode requires a reference genome to be provided"
       if ( $mode eq 'draft' & !$reference );
@@ -316,10 +316,8 @@ set_paths($config);
     print "\nPreparing to build your bug...\n\n";
 
     my $orig_dir = cwd();
-    $tmpdir = setup_tempdir( $fastq1, $fastq2, $long_fastq, $de_fere_contigs, $reference, $platform, $tmpdir );
 
-    #	$tmpdir = "/scratch/BugBuilder/FXF6dPu5x7";
-
+    $tmpdir = setup_tempdir( $fastq1, $fastq2, $long_fastq, $reference, $platform, $tmpdir );
     $reference = basename($reference) if ($reference);
 
     #  need to know a bit about the provided reads so we can act appropriately
@@ -414,49 +412,10 @@ set_paths($config);
 
     my $pm = new Parallel::ForkManager(2);
     my $id_ok = 1;
-    if ( !$already_assembled ){
-	print "Running in $mode mode\n";
-	my $ret;
-	my $link = 0;
+    #if ( $scaffolder && $reference ) {
+    #    $id_ok = check_id($tmpdir);
+    #}
 
-	#if we are running a single assembler we need to symlink its contig output
-	# into $tmpdir - pass a $link flag to run_assembler
-	$link = 1 if ( $#assemblers == 0 );
-	for ( my $i = 0 ; $i <= $#assemblers ; $i++ ) {
-
-	    my $assembler = $assemblers[$i];
-	    my $args      = $assembler_args[$i];
-
-	    run_assembler(
-		$tmpdir,      $assembler, $reference,   $args,     $link,
-		$type,        $encoding,  $genome_size, $platform, $mean_read_length,
-		$insert_size, $stddev,    $threads
-		);
-	}
-	merge_assemblies( $tmpdir, \@assemblers, $merge_method ) if ( $#assemblers == 1 );
-	if ( $scaffolder && $reference ) {
-	    $id_ok = check_id($tmpdir);
-	}
-    } else { # end if already assembled
-    	print "using assemblies from another directory\n";
-    	$id_ok = 1;  # it better be, that is
-	$tmpdir = $scratchdir;
-	my $oridir = $tmpdir . "/origin";
-	rmtree "$tmpdir/origin" or print "Unable to remove origin dir: $!\n";
-	rmtree "$tmpdir/agp" or print "Unable to remove agp dir: $!\n";
-	unlink "$tmpdir/scaffolds.agp" or print "unable to delete scaffolds.agp\n";
-	unlink "$tmpdir/contigs.embl" or print "unable to delete contigs.embl\n";
-	unlink "$tmpdir/scaffolds.embl" or print "unable to delete scaffolds.embl\n";
-	# unlink "$tmpdir/scaffolds.fasta" or print "unable to delete scaffolds.fasta\n";
-	# unlink "$tmpdir/contigs.fasta" or print "unable to delete scaffolds.contigs\n";
-	rmtree "$tmpdir/annotation_merge" or print "unable to delete merge\n";
-	rmtree "$tmpdir/cgview" or print "unable to delete cgview\n";
-	rmtree "$tmpdir/comparisons" or print "unable to delete comparisons\n";
-	unlink "$tmpdir/contigs_cgview.png" or print "unable to delete contigs_cgview.png\n";
-	unlink "$tmpdir/scaffolds_cgview.png" or print "unable to delete scaffolds_cgview.png\n";
-	unlink glob "$tmpdir/comparison_vs*" or print "unable to delete comparisons";
-    	print "idok: $id_ok\n";
-    }
     run_scaffolder( $tmpdir, "$tmpdir/reference_parsed_ids.fasta",
                     $scaffolder, $scaffolder_args, $insert_size, $stddev, 1, "$tmpdir/contigs.fasta", $mean_read_length,
                     $threads )
@@ -468,7 +427,10 @@ set_paths($config);
     if ( -e "$tmpdir/scaffolds.fasta" && $reference ) {
 
         #we may have been given a reference for a long read assembly but no scaffolder is used for these by default
-        $scaffolder = "mauve" if ( !$scaffolder );
+	if (!$scaffolder) {
+	    $scaffolder = "mauve";
+	    $scaffold_type = "align_genus";
+	}
 
         find_origin( $tmpdir, $scaffolder, $scaffolder_args, "$tmpdir/reference_parsed_ids.fasta",
                      $insert_size, $stddev, $mean_read_length, $threads )
@@ -740,6 +702,8 @@ sub select_tools {
             }
 
         }
+    } else {
+		$linkage_evidence = 'paired-ends';
     }
 
     my @available_mergers = map { $_->[0] }
@@ -1868,8 +1832,7 @@ sub align_reads {
     }
 
     $cmd = "$samtools_dir/samtools view -q 10 -Sb $tmpdir/bwa/$reference.sam 2>$tmpdir/bwa/samtoolsview.log"
-      # . "|$samtools_dir/samtools sort - $tmpdir/bwa/$reference";
-      . "|$samtools_dir/samtools sort - > $tmpdir/bwa/$reference.bam";
+      . "|$samtools_dir/samtools sort -o $tmpdir/bwa/$reference.bam -";
     system($cmd) == 0 or die "Error running $cmd";
 
     $cmd = "$samtools_dir/samtools index $tmpdir/bwa/$reference.bam 2>$tmpdir/bwa/samtools_index.log";
@@ -2602,7 +2565,6 @@ sub run_prokka {
     system($cmd);
     if ( $? != 0 ) { print "prokka exited with $?...\n" }
 
-    # my $inIO        = Bio::SeqIO->new( -file => "$tmpdir/prokka/prokka.gbf",     -format => 'genbank' );
     my $inIO        = Bio::SeqIO->new( -file => "$tmpdir/prokka/prokka.gbk",     -format => 'genbank' );
     my $embl_outIO  = Bio::SeqIO->new( -file => ">$tmpdir/prokka/prokka.embl",   -format => 'embl' );
     my $fasta_outIO = Bio::SeqIO->new( -file => ">$tmpdir/prokka/${type}.fasta", -format => 'fasta' );
@@ -3116,7 +3078,7 @@ sub run_varcaller {
     }
 
     $cmd = "$samtools_dir/samtools view -q 10 -Sb $vardir/reference.sam 2>$vardir/samtoolsview.log"
-      . "|$samtools_dir/samtools sort - $vardir/reference";
+      . "|$samtools_dir/samtools sort -o $vardir/reference -";
     system($cmd) == 0 or die "Error running $cmd";
 
     $cmd = "$samtools_dir/samtools index $vardir/reference.bam 2>$vardir/samtools_index.log";
