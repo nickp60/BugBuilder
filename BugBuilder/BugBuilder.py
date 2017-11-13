@@ -345,7 +345,7 @@ import tabulate
 from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
 from argparse import Namespace
-#from .shared_methods import make_nucmer_delta_show_cmds
+from .shared_methods import make_nucmer_delta_show_cmds
 #from .run_sis import run
 # def parse_config():
 #     pass
@@ -1488,7 +1488,6 @@ def replace_placeholders(string, config=None, reads_ns=None, args=None, results=
     # if object is None, just use attribute string
     #
     # none of the objects are mandatory
-    print(string)
     replace_dict = {
         # assembler placeholders
         # "__BUGBUILDER_BIN__": [None, "/$FindBin::Bin/g"],
@@ -1614,7 +1613,7 @@ def get_contig_stats(contigs, ctype):
     L50, N50 = get_L50_N50(all_lengths)
     L50_200, N50_200 = get_L50_N50(all_lengths_200)
     return [
-        ["", "All $type", "$type >200bp"],
+        ["", "All %s" % ctype, "%s >200bp" %ctype],
         [ctype + " count", count, count_200],
         ["Max Length", max(all_lengths), max(all_lengths_200)],
         ["Assembly size", sum(all_lengths), sum(all_lengths_200)],
@@ -1623,7 +1622,7 @@ def get_contig_stats(contigs, ctype):
     ]
 
 
-def run_assembler(assembler, assembler_args, args, reads_ns,config, logger):
+def run_assembler(assembler, assembler_args, args, reads_ns, config, logger):
     """
     Runs specified assembler on fastq files
 
@@ -1644,7 +1643,7 @@ def run_assembler(assembler, assembler_args, args, reads_ns,config, logger):
     conf_assembler = [x for x in config.assemblers if x['name'] == assembler]
     assert len(conf_assembler) == 1, "multiple matches for assemblers"
     conf_assembler = conf_assembler[0]
-    assembler_cmd, contigs_path, scaffold_path = get_assembler_cmds(
+    assembler_cmd, contigs_path, scaffolds_path = get_assembler_cmds(
         assembler=conf_assembler,
         assembler_args=assembler_args,
         args=args,
@@ -1661,9 +1660,11 @@ def run_assembler(assembler, assembler_args, args, reads_ns,config, logger):
     report = get_contig_stats( contigs_path, 'contigs' )
     logger.info("CONTIG STATS:\n" + tabulate.tabulate(report))
     # Only generate scaffold stats for paired read alignments...
-    if scaffold_output and args.fastq2:
+    if os.path.exists(scaffolds_path) and args.fastq2 is not None:
         report = get_contig_stats( scaffolds_path, 'scaffolds' )
         logger.info("SCAFFOLD STATS:\n" + tabulate.tabulate(report))
+    else:
+        logger.info("SCAFFOLD STATS: None")
 
     # rename contigs/scaffolds for consistent naming, since we need to retrieve by
     # id later, so it helps if we know what the ids look like...
@@ -1671,17 +1672,17 @@ def run_assembler(assembler, assembler_args, args, reads_ns,config, logger):
     #     my $outdir = dirname($contig_output);
     #     chdir $outdir or die " Error changing to dir $outdir: $! ";
     # }
-    renamed_contigs = os.path.join(os.path.basename(contigs_output),
+    renamed_contigs = os.path.join(os.path.dirname(contigs_path),
                                    "BugBuilder.contigs.fasta")
     standardize_fasta_output(
-        infile=contigs_output,
+        infile=contigs_path,
         outfile=renamed_contigs,
         ctype="contigs")
-    if os.path.exists(scaffolds_output):
-        renamed_scaffolds = os.path.join(os.path.basename(scaffolds_output),
+    if os.path.exists(scaffolds_path):
+        renamed_scaffolds = os.path.join(os.path.dirname(scaffolds_path),
                                            "BugBuilder.scaffolds.fasta")
         standardize_fasta_output(
-            infile=scaffolds_output,
+            infile=scaffolds_path,
             outfile=renamed_scaffolds,
             ctype="contigs")
     else:
@@ -1702,7 +1703,7 @@ def merge_assemblies(args, config, reads_ns, logger):
     """
     logger.info("Merging assemblies (%s)...", args.merge_tool)
     try:
-        too = getattr(config, args.merge_tool)
+        tool = getattr(config, args.merge_tool)
     except AttributeError:
         raise ValueError("%s merge tool not available" % args.merge_tool)
 
@@ -1856,6 +1857,7 @@ def make_empty_results_object():
         assemblers_results_dict_list=[], # {name:None, contigs:None, scaffold:None}
         ID_OK=False, # to be set by check_id
         current_contigs=None, current_scaffolds=None, current_reference=None,
+        current_contigs_source=None, current_scaffolds_source=None,
         old_contigs=[[None, None]],  # [path, source]
         old_scaffolds=[[None, None]],  # [path, source]
         old_references=[[None, None]],  # [path, source]
@@ -2161,7 +2163,7 @@ def run_scaffolder(args, config, reads_ns, results, run_id, logger=None):
 
 # }
 
-def find_origin(args, logger):
+def find_origin(args, config, results, logger):
     """
     Attempts to identify location of origin based upon contig overlapping
     base 1 of the reference sequence. This assumes  each reference sequence
@@ -2179,11 +2181,22 @@ def find_origin(args, logger):
 
     """
     ori_dir = os.path.join(args.tmp_dir, "origin")
-    os.path.mkdirs(ori_dir)
+    os.makedirs(ori_dir)
     logger.info("Attempting to identify origin...");
-    cmds = make_nucmer_delta_show_cmds(config, ref, query, out_dir=ori_dir, prefix="ori", header=False)
+    cmds =  make_nucmer_delta_show_cmds(config=config, ref=args.reference,
+                                       query=results.current_scaffolds,
+                                       out_dir=ori_dir, prefix="ori", header=False)
+    logger.debug("Running the following cmds:")
+    for cmd in cmds:
+        logger.debug(cmd)
+        subprocess.run(cmd,
+                   shell=sys.platform != "win32",
+                   stdout=subprocess.PIPE,
+                   stderr=subprocess.PIPE,
+                   check=True)
     origin = None
-    with open(os.path.join(ori_dir, ori.coords), "r") as coords:
+    ori_coords = os.path.join(ori_dir, "ori.coords")
+    with open(ori_coords, "r") as coords:
         for line in coords:
             line = line.strip()
             line = line.replace("|", "")
@@ -2191,43 +2204,55 @@ def find_origin(args, logger):
             if not origin and fields[0] ==1:
                 origin = "{0}:{1}".format(fields[8], fields[2])
                 logger.info("Potential origin found at %s", origin )
-
+    scaffolds_ori_split = os.path.join(ori_dir, "split_ori_scaff.fasta")  # OutIO
+    split_ori_scaff = os.path.join(ori_dir, "scaffolds_ori_split.fasta")  # SplitIO
     if origin is not None:
         ori_scaffold, pos = origin.split(":")
-        with open(scaffolds, "r") as inscaff, open(scaffols_ori_scaff.fasta, "w") as splitscaff :
+        with open(results.current_scaffolds, "r") as inscaff:
             for rec in SeqIO.parse(inscaff, "fasta"):
                 if ori_scaffold == rec.id:
-                    part_a = rec.seq[0: pos]
-                    part_b = rec.seq[pos + 1: ]
-                    ori_a = SeqRecord(id=rec.id + "_A",
-                                      seq=Seq(part_a))
-                    ori_b = SeqRecord(id=rec.id + "_B",
-                                      seq=Seq(part_b))
-                    SeqIO.write(ori_a, splitscaff, "fasta")
-                    SeqIO.write(ori_b, splitscaff, "fasta")
+                    # write out both parts after splitting
+                    with open(split_ori_scaff, "w") as splitscaff :
+                        part_a = rec.seq[0: pos]
+                        part_b = rec.seq[pos + 1: ]
+                        ori_a = SeqRecord(id=rec.id + "_A",
+                                          seq=Seq(part_a))
+                        ori_b = SeqRecord(id=rec.id + "_B",
+                                          seq=Seq(part_b))
+                        SeqIO.write(ori_a, splitscaff, "fasta")
+                        SeqIO.write(ori_b, splitscaff, "fasta")
                     #  now, rerun scaffolder on our split origins
-                    run_scaffolder(run_id=2)
-                    run_scaffolder(
-                        ori_dir,          "tmpdir/reference_parsed_ids.fasta",
-                        scaffolder,       scaffolder_args,
-                        insert_size,      stddev,
-                        2,                 "tmpdir/origin/split_ori_scaff.fasta",
-                        mean_read_length, threads
-                    )
-                    with open("$ori_dir/${scaffolder}_2/scaffolds.fasta", "r") as infile, open("scaffolds_ori_split.fasta", "a") as outfile:
+                    results.old_scaffolds.append([results.current_scaffolds,
+                                                  results.current_scaffolds_source])
+                    results.current_scaffolds = split_ori_scaff
+                    results.current_scaffolds_source = "split_orii_scaff"
+                    new_scaffolds = run_scaffolder(
+                        args=args, config=config, reads_ns=reads_ns, results=results,
+                        run_id=2, logger=logger)
+                    results.old_scaffolds.append([results.current_scaffolds,
+                                                  results.current_scaffolds_source])
+                    results.current_scaffolds = new_scaffolds
+                    results.current_scaffolds_source = "find_origin_rescaffolded"
+
+                    with open(new_scaffolds, "r") as infile, open(scaffolds_ori_split, "a") as outfile:
                         for new_rec in SeqIO.parse(infile):
                             SeqIO.write(new_rec, outfile, "fasta")
                 else:
-                    with open("scaffolds_ori_split.fasta", "a") as outfile:
+                    # these dont need splitting
+                    with open(scaffolds_ori_split, "a") as outfile:
                         SeqIO.write(rec, outfile, "fasta")
 
     #renumber scaffolds to ensure they are unique...
     counter = 1
-    with open(scaffolds_ori_split.fasta, "r") as inf, open(scaffolds_renumbered.fasta, "w") as outf:
+    renumbered_scaffs = os.path.dirname(scaffolds_ori_split, "scaffold.fasta")
+    with open(scaffolds_ori_split, "r") as inf, open(renumbered_scaffs, "w") as outf:
         for rec in SeqIO.parse():
             rec.id = "scaffold_%05d" % counter
             counter = counter + 1
             SeqIO.write(rec, outf, fasta)
+    results.old_scaffolds.append([results.current_scaffolds, results.current_scaffolds_source])
+    results.current_scaffolds = renumbered_scaffs
+    results.current_scaffolds_source = "renumbering_after_origin_split"
 
 
 def check_and_set_trim_length(reads_ns, args, logger):
@@ -2245,6 +2270,136 @@ def use_already_assembled(args):
         if len(getattr(args, atr)) > 0:
             return True
     return False
+
+
+def order_scaffolds():
+    """
+    Identifies origin based on homology with reference.
+    Resulting scaffolds are then ordered and oriented relative to the reference...
+
+    required params: $ (tmpdir)
+                 $ (fasta reference)
+
+    returns        : $ (0)
+    """
+    orient_dir = os.path.join(args.tmp_dir,  "orientating")
+    os.makedirs(orient_dir)
+    logger.info("Orienting scaffolds vs. reference...")
+    cmds =  make_nucmer_delta_show_cmds(config=config, ref=args.reference,
+                                       query=results.current_scaffolds,
+                                       out_dir=orient_dir, prefix="ori2", header=False)
+    logger.debug("Running the following cmds:")
+    for cmd in cmds:
+        logger.debug(cmd)
+        subprocess.run(cmd,
+                       shell=sys.platform != "win32",
+                       stdout=subprocess.PIPE,
+                       stderr=subprocess.PIPE,
+                       check=True)
+
+    # my $cmd = $config->{'mummer_dir'}
+    #   . "/nucmer $tmpdir/$reference $tmpdir/scaffolds.fasta -p $tmpdir/orientating/ori2 > $tmpdir/orientating/nucmer2.log 2>&1";
+    # system($cmd) == 0 or die "Error executing $cmd: $!";
+    # $cmd = $config->{'mummer_dir'}
+    #   . "/delta-filter -1 $tmpdir/orientating/ori2.delta 2>$tmpdir/orientating/delta-filter2.log > $tmpdir/orientating/ori2.filter";
+    # system($cmd) == 0 or die "Error executing $cmd: $!";
+    # $cmd = $config->{'mummer_dir'}
+    #   . "/show-coords -H $tmpdir/orientating/ori2.filter 2>$tmpdir/orientating/show-coords2.log > $tmpdir/orientating/ori2.coords";
+    # system($cmd) == 0 or die "Error executing $cmd: $!";
+    orient_coords = os.path.join(orient_dir, "ori2.coords")
+    orient_count = { '+': 0,
+                     '-': 0 }
+    with open(orient_coords, "r") as inf:
+        contig = '';
+        for line in inf:
+            line = line.strip()
+            line = line.replace("|", "")
+            fields = re.split("\s+", line)
+            if contig != fields[8]:
+                if contig != "":
+                    store_orientation(orientations, contig, orient_count )
+            contig = fields[8]
+            start  = fields[2]
+            end    = fields[3]
+            length = ""
+            if start < end:
+                orient = '+'
+                length = end - start;
+            else:
+                orient = '-'
+                length = start - end
+            if orient_count[orient]:
+                orient_count[orient] = orient_count[orient] + length
+            else:
+                orient_count[orient] = length
+    # record data for last contig...
+    store_orientation(orientations, contig, orient_count )
+
+    orig_length     = 0
+    oriented_length = 0    #track how much sequence we align ok...
+    unplaced_length = 0
+    unplaced = []
+
+
+    # Reorientate contigs and break origin, rewriting to a new file...
+    new_scaffolds = os.path.join(orient_dir, "scaffolds.fasta")
+    with open(results.current_scaffolds, "r") as inf, open(new_scaffolds, "r") as outf:
+        for i, rec in enumerate(SeqIO.parse(inf, "fasta")):
+            orig_length = orig_length + len(rec.seq)
+            rec.id = "scaffold_%5d"  % str(i + 1)
+            if orientations[rec.id]:
+                if orientations[rec.id] == '+':
+                    SeqIO.write(rec, outf, "fasta")
+                    oriented_length = oriented_length + len(rec.seq)
+                else:
+                    rc_rec = rec.reverse_complement()
+                    SeqIO.write(rc_rec, outf, "fasta")
+                    oriented_length = oriented_length + len(rec.seq)
+            else:
+                unplaced.append(rec)
+                unplaced_length = unplaced_length + len(rec.seq)
+        #  Now we have written the aligning contigs in order, write
+        # the unaligned to the end of the scaffolds file
+        # TODO check do these need names?
+        for unpl_rec in unplaced:
+            SeqIO.write(unpl_rec, outf, "fasta")
+    # now we ned the length of the reference
+    ref_length = 0
+    with open(args.reference, "r") as ref:
+        for rec in SeqIO.parse(ref, "fasta"):
+            ref_length = ref_length + len(rec.seq)
+    report = [
+        ["", "Length (bp)"]
+        ["Reference Sequence", ref_length],
+        ["Assembly",           orig_length],
+        ["Orientated contigs", oriented_length],
+        ["Unaligned contigs",  unplaced_length]
+    ]
+    logger.info("ORIENTATING SCAFFOLDS RESULTS:\n%s", "\n".join(report))
+    results.old_scaffolds.append([results.current_scaffolds, results.current_scaffolds_source])
+    results.current_scaffolds = new_scaffolds
+    results.current_scaffolds_source = "orient"
+
+
+def store_orientation(orientations, contig, or_count):
+    """
+    save correct contig orientation in hash passed as first parameter
+
+    since alignment fof scaffold can contain blocks in reverse orientation
+    need to use the 'prevailing' orientation based on number of +/- blocks
+
+    required parameters: $ (orientations hash)
+                     $ (contig)
+                     $ (hash of +/- base counts)
+
+    returns           : none
+    """
+    if ((or_count['+'] and or_count['-']) and (or_count['+'] > or_count['-'])) \
+       or (or_count['+'] and not or_count['-']):
+        orientations[contig] = '+'
+    else:
+        orientations[contig] = '-'
+
 
 def main(args=None, logger=None):
     if args is None:
@@ -2386,23 +2541,23 @@ def main(args=None, logger=None):
                                  logger=logger)
     if args.scaffolder is not None:
         if \
-           (ID_OK and scaffolder_type == "paired_ends" or \
-             not ID_OK and scaffolder_type == "paired_ends"):
+           (results.ID_OK and scaffolder_type == "paired_ends" or \
+             not results.ID_OK and scaffolder_type == "paired_ends"):
             results.old_scaffolds.append(["either nowhere or straight from assembler",
                                          results.current_scaffolds])
             results.current_scaffolds = run_scaffolder(
                 args=args, config=config, reads_ns=reads_ns, results=results,
-                run_id=1, logger=None)
+                run_id=1, logger=logger)
 
     if results.current_scaffolds is not None:
         # we may have been given a reference for a long read assembly but no
         # scaffolder is used for these by default
         args.scaffolder = "mauve" if args.scaffolder is None else args.scaffolder
-        if not args.skip_split_origin:
-            find_origin(args, logger )
-        if ID_OK:
+        if not args.skip_split_origin and args.reference is not None:
+            find_origin(args,config, results,  logger )
+        if results.ID_OK:
             order_scaffolds(args, logger)
-        if args.finisher and  ID_OK:
+        if args.finisher and results.ID_OK:
             finish_assembly(args)
             # finish_assembly( $tmpdir, $finisher, $insert_size, $stddev, $encoding, $threads ) ;
 
@@ -3051,183 +3206,6 @@ def main(args=None, logger=None):
 
 
 
-
-def order_scaffolds():
-    """
-    Identifies origin based on homology with reference.
-    Resulting scaffolds are then ordered and oriented relative to the reference...
-
-    required params: $ (tmpdir)
-                 $ (fasta reference)
-
-    returns        : $ (0)
-    """
-    pass
-
-"""
-sub order_scaffolds {
-
-    my $tmpdir    = shift;
-    my $reference = shift;
-
-    mkdir "$tmpdir/orientating" or die "Error creating $tmpdir/orientating: $!";
-    chdir "$tmpdir/orientating"
-      or die "Error changing to $tmpdir/orientating: $!";
-
-    message("Orienting scaffolds vs. reference...");
-
-    my $cmd = $config->{'mummer_dir'}
-      . "/nucmer $tmpdir/$reference $tmpdir/scaffolds.fasta -p $tmpdir/orientating/ori2 > $tmpdir/orientating/nucmer2.log 2>&1";
-    system($cmd) == 0 or die "Error executing $cmd: $!";
-    $cmd = $config->{'mummer_dir'}
-      . "/delta-filter -1 $tmpdir/orientating/ori2.delta 2>$tmpdir/orientating/delta-filter2.log > $tmpdir/orientating/ori2.filter";
-    system($cmd) == 0 or die "Error executing $cmd: $!";
-    $cmd = $config->{'mummer_dir'}
-      . "/show-coords -H $tmpdir/orientating/ori2.filter 2>$tmpdir/orientating/show-coords2.log > $tmpdir/orientating/ori2.coords";
-    system($cmd) == 0 or die "Error executing $cmd: $!";
-
-    open COORDS, "$tmpdir/orientating/ori2.coords"
-      or die "Error opening ori.coords: $!";
-    my ( %orientations, $start, $end, $orient );
-    my %orient_count = ( '+' => 0, '-' => 0 );
-    my $contig = '';
-  LINE: while ( my $line = <COORDS> ) {
-        chomp $line;
-        $line =~ s/\|//g;
-        $line =~ s/^ *//;
-        my @fields = split( /\s+/, $line );
-
-        if ( ( $contig ne $fields[8] ) ) {
-            if ( $contig ne '' ) {    #end of previous contig
-                store_orientation( \%orientations, $contig, \%orient_count );
-            }
-        }
-        $contig = $fields[8];
-        $start  = $fields[2];
-        $end    = $fields[3];
-        my $length;
-        if ( $start < $end ) {
-            $orient = '+';
-            $length = $end - $start;
-        }
-        else {
-            $orient = '-';
-            $length = $start - $end;
-        }
-        if ( $orient_count{$orient} ) {
-            $orient_count{$orient} = $orient_count{$orient} + $length;
-        }
-        else {
-            $orient_count{$orient} = $length;
-        }
-    }
-
-    close COORDS;
-
-    # record data for last contig...
-    store_orientation( \%orientations, $contig, \%orient_count );
-
-    my $orig_length     = 0;
-    my $oriented_length = 0;    #track how much sequence we align ok...
-    my $unplaced_length = 0;
-    my @unplaced;
-
-    my $io    = Bio::SeqIO->new( -file => '../scaffolds.fasta', -format => 'fasta' );
-    my $outIO = Bio::SeqIO->new( -file => '>scaffolds.fasta',   -format => 'fasta' );
-
-    # Reorientate contigs and break origin, rewriting to a new file...
-    my $i = 0;                  #for renumbering scaffolds...
-    while ( my $scaffold = $io->next_seq() ) {
-        $orig_length += $scaffold->length();
-
-        my $id = "scaffold_" . ++$i;
-        if ( $orientations{ $scaffold->display_id() } ) {
-            if ( $orientations{ $scaffold->display_id() } eq '+' ) {
-                $scaffold->display_id($id);
-                $outIO->write_seq($scaffold);
-                $oriented_length += $scaffold->length();
-            }
-            else {
-                my $rev = $scaffold->revcom();
-                $rev->display_id($id);
-                $outIO->write_seq($rev);
-                $oriented_length += $scaffold->length();
-            }
-        }
-        else {
-            push @unplaced, $scaffold;
-        }
-
-    }
-
-    foreach my $scaffold (@unplaced) {
-        $outIO->write_seq($scaffold);
-        $unplaced_length += $scaffold->length();
-    }
-
-    my $ref_length;
-    my $refIO = Bio::SeqIO->new( -format => 'fasta', -file => "$tmpdir/$reference" );
-    while ( my $seq = $refIO->next_seq() ) {
-        $ref_length += $seq->length();
-    }
-
-    my $tb = Text::ASCIITable->new();
-    $tb->setCols( "", "Length (bp)" );
-    $tb->addRow( "Reference Sequence", $ref_length );
-    $tb->addRow( "Assembly",           $orig_length );
-    $tb->addRow( "Orientated contigs", $oriented_length );
-    $tb->addRow( "Unaligned contigs",  $unplaced_length );
-
-    print $tb, "\n";
-
-    chdir $tmpdir or die "Error changing to $tmpdir: $!";
-    unlink("scaffolds.fasta")
-      or die "Error removing scaffolds.fasta symlink";
-    symlink( "orientating/scaffolds.fasta", "scaffolds.fasta" )
-      or die "Error linking orientating/scaffolds.fasta: $!";
-
-    return (0);
-
-}
-"""
-# ######################################################################
-# #
-# # store_orientation
-# #
-# # save correct contig orientation in hash passed as first parameter
-# #
-# # since alignment fof scaffold can contain blocks in reverse orientation
-# # need to use the 'prevailing' orientation based on number of +/- blocks
-# #
-# # required parameters: $ (orientations hash)
-# #                      $ (contig)
-# #                      $ (hash of +/- base counts)
-# #
-# # returns           : none
-# #
-# ######################################################################
-
-# sub store_orientation {
-
-#     my $orientations = shift;
-#     my $contig       = shift;
-#     my $orient_count = shift;
-
-#     if (
-#          (
-#               ( defined( $orient_count->{'+'} ) && defined( $orient_count->{'-'} ) )
-#            && ( $orient_count->{'+'} > $orient_count->{'-'} )
-#          )
-#          || ( defined( $orient_count->{'+'} ) && !defined( $orient_count->{'-'} ) )
-#        )
-#     {
-#         $orientations->{$contig} = '+';
-#     }
-#     else {
-#         $orientations->{$contig} = '-';
-#     }
-
-# }
 
 # ######################################################################
 # #
