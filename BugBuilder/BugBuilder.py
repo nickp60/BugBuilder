@@ -117,7 +117,7 @@ assemblers:
      create_dir: 1
      min_length: 200
      max_length: null
-     command_pe: __BUGBUILDER_BIN__/run_abyss --tmpdir __TMPDIR__ --fastq1 __FASTQ1__ --fastq2 __FASTQ2__ --read_length __READ_LENGTH__
+     command_pe: run_abyss --tmpdir __TMPDIR__ --fastq1 __FASTQ1__ --fastq2 __FASTQ2__ --read_length __READ_LENGTH__
      contig_output: __TMPDIR__/abyss/abyss-contigs.fa
      scaffold_output: __TMPDIR__/abyss/abyss-scaffolds.fa
      insert_size_required: 0
@@ -126,10 +126,10 @@ assemblers:
      create_dir: 0
      min_length: null
      max_length: 303
-     command_se: spades.py --memory __MEMORY__ -t __THREADS__ -s __FASTQ1__ -o __TMPDIR__/spades
-     command_pe: spades.py --memory __MEMORY__ -t __THREADS__ -1 __FASTQ1__ -2 __FASTQ2__ -o __TMPDIR__/spades
-     command_hybrid: spades.py --memory __MEMORY__ -t __THREADS__ -1 __FASTQ1__ -2 __FASTQ2__ --pacbio __LONGFASTQ__ -o __TMPDIR__/spades
-     command_de_fere: spades.py --memory __MEMORY__ -t __THREADS__ -1 __FASTQ1__ -2 __FASTQ2__ --trusted-contigs __DE_FERE_CONTIGS__ -o __TMPDIR__/spades
+     command_se: run_spades --memory __MEMORY__ -t __THREADS__ -s __FASTQ1__ -o __TMPDIR__/spades
+     command_pe: run_spades --memory __MEMORY__ -t __THREADS__ -1 __FASTQ1__ -2 __FASTQ2__ -o __TMPDIR__/spades
+     command_hybrid: run_spades --memory __MEMORY__ -t __THREADS__ -1 __FASTQ1__ -2 __FASTQ2__ --pacbio __LONGFASTQ__ -o __TMPDIR__/spades
+     command_de_fere: run_spades --memory __MEMORY__ -t __THREADS__ -1 __FASTQ1__ -2 __FASTQ2__ --trusted-contigs __DE_FERE_CONTIGS__ -o __TMPDIR__/spades
      contig_output: __TMPDIR__/spades/contigs.fasta
      scaffold_output: __TMPDIR__/spades/scaffolds.fasta
      default_args: -t __THREADS__ --careful
@@ -139,8 +139,8 @@ assemblers:
      create_dir: 1
      min_length: 75
      max_length: null
-     command_se: __BUGBUILDER_BIN__/run_celera --fastq1 __FASTQ1__ --tmpdir __TMPDIR__ --category __CATEGORY__ --encoding __ENCODING__ --genome_size __GENOME_SIZE__
-     command_pe: __BUGBUILDER_BIN__/run_celera --fastq1 __FASTQ1__ --fastq2 --tmpdir __TMPDIR__ --category __CATEGORY__ --encoding __ENCODING__ --genome_size __GENOME_SIZE__
+     command_se: run_celera --fastq1 __FASTQ1__ --tmpdir __TMPDIR__ --category __CATEGORY__ --encoding __ENCODING__ --genome_size __GENOME_SIZE__
+     command_pe: run_celera --fastq1 __FASTQ1__ --fastq2 --tmpdir __TMPDIR__ --category __CATEGORY__ --encoding __ENCODING__ --genome_size __GENOME_SIZE__
      contig_output: __TMPDIR__/celera/output/9-terminator/BugBuilder.ctg.fasta
      scaffold_output: __TMPDIR__/celera/output/9-terminator/BugBuilder.scf.fasta
      downsample_reads: 0
@@ -149,7 +149,7 @@ assemblers:
      create_dir: 1
      min_length: 500
      max_length: null
-     command_se: __BUGBUILDER_BIN__/run_PBcR --fastq __LONGFASTQ__ --tmpdir __TMPDIR__ --genome_size __GENOME_SIZE__ --platform __PLATFORM__
+     command_se: run_PBcR --fastq __LONGFASTQ__ --tmpdir __TMPDIR__ --genome_size __GENOME_SIZE__ --platform __PLATFORM__
      contig_output: __TMPDIR__/PBcR/BugBuilder/9-terminator/asm.ctg.fasta
      scaffold_output: __TMPDIR__/PBcR/BugBuilder/9-terminator/asm.scf.fasta
      downsample_reads: 0
@@ -159,8 +159,8 @@ assemblers:
      create_dir: 1
      min_length: null
      max_length: null
-     command_pe: __BUGBUILDER_BIN__/run_masurca --fastq1 __ORIG_FASTQ1__ --fastq2 __ORIG_FASTQ2__ --tmpdir __TMPDIR__ --category __CATEGORY__ --insert_size __INSSIZE__ --insert_stddev __INSSD__
-     command_hybrid: __BUGBUILDER_BIN__/run_masurca --fastq1 __ORIG_FASTQ1__ --fastq2 __ORIG_FASTQ2__ --longfastq __LONGFASTQ__ --tmpdir __TMPDIR__ --category __CATEGORY__ --insert_size __INSSIZE__ --insert_stddev __INSSD__
+     command_pe: run_masurca --fastq1 __ORIG_FASTQ1__ --fastq2 __ORIG_FASTQ2__ --tmpdir __TMPDIR__ --category __CATEGORY__ --insert_size __INSSIZE__ --insert_stddev __INSSD__
+     command_hybrid: run_masurca --fastq1 __ORIG_FASTQ1__ --fastq2 __ORIG_FASTQ2__ --longfastq __LONGFASTQ__ --tmpdir __TMPDIR__ --category __CATEGORY__ --insert_size __INSSIZE__ --insert_stddev __INSSD__
      contig_output: __TMPDIR__/masurca/contigs.fasta
      scaffold_output: __TMPDIR__/masurca/scaffolds.fasta
      default_args: --threads __THREADS__
@@ -171,7 +171,7 @@ scaffolders:
    - name: SIS
      ref_required: 1
      linkage_evidence: align_genus
-     command: __BUGBUILDER_BIN__/run_sis --reference __REFERENCE__ --contigs __CONTIGS__ --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__
+     command: run_sis --reference __REFERENCE__ --contigs __CONTIGS__ --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__
      scaffold_output: scaffolds.fasta
      unscaffolded_output: unplaced_contigs.fasta
      default_args: null
@@ -180,7 +180,7 @@ scaffolders:
    - name: mauve
      ref_required: 1
      linkage_evidence: align_genus
-     command: __BUGBUILDER_BIN__/run_mauve --reference __REFERENCE__ --run __RUN__ --contigs __CONTIGS__ --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__
+     command: run_mauve --reference __REFERENCE__ --run __RUN__ --contigs __CONTIGS__ --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__
      default_args: null
      create_dir: 1
      priority: 1
@@ -188,7 +188,7 @@ scaffolders:
    - name: sspace
      ref_required: 0
      linkage_evidence: paired-ends
-     command: __BUGBUILDER_BIN__/run_sspace --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__ --contigs __CONTIGS__ --insert_size __INSSIZE__ --insert_sd __INSSD__
+     command: run_sspace --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__ --contigs __CONTIGS__ --insert_size __INSSIZE__ --insert_sd __INSSD__
      scaffold_output: BugBuilder.scaffolds.fasta
      default_args: null
      create_dir: 1
@@ -196,13 +196,13 @@ scaffolders:
 
 merge_tools:
    - name: gfinisher
-     command: __BUGBUILDER_BIN__/run_gfinisher --tmpdir __TMPDIR__  --assembler __ASSEMB1__ --assembler __ASSEMB2__ --reference __REFERENCE__
+     command: run_gfinisher --tmpdir __TMPDIR__  --assembler __ASSEMB1__ --assembler __ASSEMB2__ --reference __REFERENCE__
      contig_output: renamed.fasta
      create_dir: 1
      priority: 1
      allow_scaffolding: 1
    - name: minimus
-     command: __BUGBUILDER_BIN__/run_minimus --tmpdir __TMPDIR__  --assembler __ASSEMB1__ --assembler __ASSEMB2__
+     command: run_minimus --tmpdir __TMPDIR__  --assembler __ASSEMB1__ --assembler __ASSEMB2__
      contig_output: renumbered.fasta
      create_dir: 1
      priority: 2
@@ -210,19 +210,19 @@ merge_tools:
 
 finishers:
    - name: gapfiller
-     command: __BUGBUILDER_BIN__/run_gapfiller --tmpdir __TMPDIR__ --insert_size __INSSIZE__ --insert_sd __INSSD__ --threads __THREADS__
+     command: run_gapfiller --tmpdir __TMPDIR__ --insert_size __INSSIZE__ --insert_sd __INSSD__ --threads __THREADS__
      create_dir: 1
      ref_required: 0
      paired_reads: 1
      priority: 2
    - name: abyss-sealer
-     command: __BUGBUILDER_BIN__/run_abyss-sealer --tmpdir __TMPDIR__ --encoding __ENCODING__ --threads __THREADS__
+     command: run_abyss-sealer --tmpdir __TMPDIR__ --encoding __ENCODING__ --threads __THREADS__
      create_dir: 1
      ref_required: 0
      paired_reads: 1
      priority: 3
    - name: pilon
-     command: __BUGBUILDER_BIN__/run_pilon --tmpdir __TMPDIR__ --threads __THREADS__
+     command: run_pilon --tmpdir __TMPDIR__ --threads __THREADS__
      create_dir: 1
      ref_required: 0
      paired_reads: 1
@@ -230,10 +230,11 @@ finishers:
 
 varcallers:
    - name: pilon
-     command: __BUGBUILDER_BIN__/run_pilon_var --tmpdir __TMPDIR__ --threads __THREADS__
+     command: run_pilon_var --tmpdir __TMPDIR__ --threads __THREADS__
      ref_required: 1
      create_dir: 1
      priority: 1
+
 """
 
 
@@ -349,10 +350,14 @@ from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
 from argparse import Namespace
 from .shared_methods import make_nucmer_delta_show_cmds
-#from .run_sis import run
-# def parse_config():
-#     pass
-
+from .run_sis import run as run_sis
+from .run_spades import run as run_spades
+from .run_abyss import run as run_abyss
+sub_mains = {
+    # "canu": run_canu,
+    "abyss": run_abyss,
+    "spades": run_spades,
+    "sis": run_sis}
 def parse_available_platforms():
     platform_list = ["illumina", "454", "iontorrent"]
     return platform_list
@@ -360,12 +365,16 @@ def parse_available_platforms():
 
 def parse_available_assemblers():
     assembler_list = ["abyss", "spades", "mascura"]
-    return assembler_list
+    return [x for x in assembler_list if
+            shutil.which(x) is not None or
+            shutil.which(x + ".py") is not None]
 
 
 def parse_available_scaffolders():
     scaffolder_list = ["sis", "mauve"]
-    return scaffolder_list
+    return [x for x in scaffolder_list if
+            shutil.which(x) is not None or
+            shutil.which(x + ".py") is not None]
 
 
 def parse_available_mergers():
@@ -384,31 +393,48 @@ def parse_available_varcaller():
 
 
 def configure(config_path):
-    mand_programs = [
-        'seqtk', 'samtools', 'picard', 'blastn', 'makeblastdb', "nucmer",
-        'R',
-        'mummer', "delta-filter",  "show-coords",  'bwa']
-    opt_programs = ['fastqc', 'sickle', "sis", "multifasta", 'mauve', 'barrnap', 'prokka', 'aragorn', 'prodigal', 'hmmer3', 'infernal', 'rnammer', 'tbl2asn', 'abyss', 'spades',
-        'celera','gapfiller', 'sspace', 'asn2gb', 'amos' , 'masurca',
-        'gfinisher', 'pilon', 'vcflib', 'cgview']
-    programs = mand_programs + opt_programs
-    program_dict = dict((k, None) for k in programs)
-    for prog in programs:
-        if shutil.which(prog):
-            # replace dashes with underscores in config names but not in prog
-            program_dict[prog.replace("-", "_")] = shutil.which(prog)
-        else:
-            if prog in mand_programs:
-                raise OSError("%s is a mandatory program; please install" % prog)
     with open(config_path, 'w') as outfile:  # write header and config params
         for line in __config_data__:
             outfile.write(line)
+    all_programs_dict = {
+        "mandatory_programs": [
+            'seqtk', 'samtools', 'picard', 'blastn', 'makeblastdb', "nucmer",
+            'R',
+            'mummer', "delta-filter",  "show-coords",  'bwa'],
+        "mandatory_python_programs": [],
+        "opt_programs": [
+            'fastqc', 'sickle', 'mauve', 'prokka',
+            'aragorn', 'prodigal', 'hmmer3', 'infernal',
+            'rnammer', 'tbl2asn', 'abyss', 'celera',
+            'gapfiller', 'sspace', 'asn2gb', 'amos' , 'masurca',
+            'gfinisher', 'pilon', 'vcflib', 'cgview'],
+        "opt_python_programs": [
+            'spades', 'sis', 'multifasta', 'barrnap']
+        }
+    output_dict = {}
+    for category, programs in all_programs_dict.items():
+        if len(programs) == 0: # pyyaml will write out curly brackets otherwise
+            continue
+        program_dict = dict((k, None) for k in programs)
+        for prog in programs:
+            # append .py if we need to (like for spades, quast, etc)
+            # cant modify prog cause we need to be able to access name without exention
+            extension = ".py" if "python" in category else ""
+            if shutil.which(prog + extension):
+                # replace dashes with underscores in config names but not in prog
+                output_dict[prog.replace("-", "_")] = shutil.which(prog + extension)
+            else:
+                if "mandatory" in category:
+                    raise OSError("%s is a mandatory program; please install" % prog)
     with open(config_path, 'a') as outfile:  # write paths to exes
-        yaml.dump(program_dict, outfile, default_flow_style=False)
+        yaml.dump(output_dict, outfile, default_flow_style=False)
 
 
 def return_config(config_path, force=False, logger=None):
-    config = parse_config(config_path)
+    try:
+        config = parse_config(config_path)
+    except yaml.YAMLError:
+        force = True
     if force or config.STATUS != "COMPLETE":
         logger.info("(Re-)Configuring BugBuilder")
         configure(config_path)
@@ -960,8 +986,12 @@ def assess_reads(args, config, platform, logger=None):
         if counts[0] != counts[1]:
             raise ValueError("Paired reads must have same number of reads!")
     #determin mean read length and stddev....
-    mean = statistics.mean(means)
-    stddev = statistics.mean(stddevs)
+    if len(means) > 1:
+        mean = statistics.mean(means)
+        stddev = statistics.stdev(stddevs)
+    else:
+        mean = means[0]
+        stddev = stddevs[0]
     # set type of library
     lib_type = None
     for category in config.assembler_categories:
@@ -997,9 +1027,9 @@ def assess_reads(args, config, platform, logger=None):
         logger.warning("Cannot calculate coverage without a reference!")
     encoding = id_fastq_encoding(args, logger)
     return Namespace(lib_type=lib_type, encoding=encoding,
-                     mean_read_length=mean,
+                     read_length_mean=mean,
                      read_length_stddev=stddev,
-                     mean_long_read_length=long_mean,
+                     long_read_length_mean=long_mean,
                      long_read_length_stddev=long_stddev,
                      read_bases=tot_length,
                      # set these later
@@ -1035,7 +1065,7 @@ def parse_config(config_file):
     return(newns)
 
 
-def check_assemblers(args, config, reads_ns, logger):
+def check_and_get_assemblers(args, config, reads_ns, logger):
     """
     """
     logger.info("Requested assemblers: %s", " ".join(args.assemblers))
@@ -1056,6 +1086,7 @@ def check_assemblers(args, config, reads_ns, logger):
                 args.assemblers = category['assemblers']
     # then check the requested assemblers are appropriate for
     # the sequence characteristics...
+    tools = []
     for assembler in args.assemblers:
         for conf_assembler in config.assemblers:
             if conf_assembler['name'] != assembler:
@@ -1067,10 +1098,10 @@ def check_assemblers(args, config, reads_ns, logger):
                 args.assemblers = [x for x in args.assemblers if x != assembler]
                 if len(args.assemblers) == 0:
                     raise ValueError("No valid assemblers chosen!")
-            if conf_assembler['min_length'] and reads_ns.mean_read_length < conf_assembler['min_length']:
+            if conf_assembler['min_length'] and reads_ns.read_length_mean < conf_assembler['min_length']:
                 raise ValueError("%s does not support reads less than %d" % \
                                  (assembler, conf_assembler.min_length))
-            if conf_assembler['max_length'] and reads_ns.mean_read_length > conf_assembler['max_length']:
+            if conf_assembler['max_length'] and reads_ns.read_length_mean > conf_assembler['max_length']:
                 raise ValueError("%s does not support reads greather than %d" % \
                                  (assembler, conf_assembler['max_length']))
             if conf_assembler['insert_size_required'] and not reads_ns.insert_mean and not args.reference:
@@ -1079,8 +1110,10 @@ def check_assemblers(args, config, reads_ns, logger):
                                  "--insert-size and --insert-stddev " +
                                  "parameters, or provide a reference " +
                                  "sequence") % assembler)
+            tools.append(conf_assembler)
     logger.info(str("Approved assembler(s) based on library type and " +
                     "availability: %s"), " ".join(args.assemblers))
+    return tools
 
 
 def get_scaffolder_and_linkage(args, config, paired, logger):
@@ -1099,19 +1132,22 @@ def get_scaffolder_and_linkage(args, config, paired, logger):
             elif "align" in conf_scaffolder['linkage_evidence'] and args.reference is None:
                 raise ValueError(str("%s requires a reference for alignment, " +
                                      "but none is specified.") % args.scaffolder)
-            return conf_scaffolder['linkage_evidence']
+            return (conf_scaffolder, conf_scaffolder['linkage_evidence'])
 
 
-def get_merger_and_linkage(args, config, paired):
+def get_merger_tool(args, config, paired):
+    """must be used before scaffolder getter
+    """
     if args.merge_method is None:
         return None
     if args.merge_method not in [x.name for x in config.merge_tools]:
         raise ValueError("%s not an available merge_method!" % args.merge_method)
     linkage_evidence = None
-    for merger_methods in config.merge_methods:
-        if merger_methods.name == args.merge_method:
-            if merge_methods.allow_scaffolding:
+    for merger_method in config.merge_methods:
+        if merger_method['name'] == args.merge_method:
+            if merge_methods['allow_scaffolding']:
                 args.scaffolder = None
+            return merge_method
 
 def get_finisher(args, config, paired):
     if args.finisher is None:
@@ -1125,6 +1161,9 @@ def get_finisher(args, config, paired):
                                      args.finisher)
             elif not paired and conf_finisher.paired_reads:
                 raise ValueError("%s requires paired reads" % args.finisher)
+            else:
+                pass
+            return conf_finisher
 
 def get_varcaller(args, config, paired):
     if args.varcaller is None:
@@ -1132,15 +1171,17 @@ def get_varcaller(args, config, paired):
     if args.varcaller not in [x.name for x in config.varcallers]:
         raise ValueError("%s not an available varcaller!" %args.varcaller)
     for conf_varcallers in config.varcallers:
-        if conf_varcallers.name == args.varcaller:
-            if args.reference is None and conf_varcallers.ref_required:
+        if conf_varcallers['name'] == args.varcaller:
+            if args.reference is None and conf_varcallers['ref_required']:
                 raise ValueError("%s requires reference, but you " +
                                  "only specified one fastq file." % \
                                  args.varcaller)
+            return conf_varcallers
 
 
 def select_tools(args, config, reads_ns, logger):
     """
+    returns a namespace wit the tools from the config!
     options, while checking for validity of selections...
 
     required params: $ ($config hash ref)
@@ -1158,28 +1199,28 @@ def select_tools(args, config, reads_ns, logger):
                  $ (name of scaffolder to use)
 
     """
-    check_assemblers(args=args, config=config, reads_ns=reads_ns, logger=logger)
+    assembler_tools = check_and_get_assemblers(args=args, config=config, reads_ns=reads_ns, logger=logger)
     logger.debug("get scaffolder")
-    linkage_evidence = get_scaffolder_and_linkage(
+    # merge tool can disqalify scaffolder, so it must be checked first
+    merge_tool = get_merger_tool(args, config, paired=reads_ns.paired)
+    scaffolder_tool, linkage_evidence = get_scaffolder_and_linkage(
         args=args, config=config, paired=reads_ns.paired, logger=logger)
     logger.debug("getting merger")
-    get_merger_and_linkage(args, config, paired=reads_ns.paired)
-    get_finisher(args, config, paired=reads_ns.paired)
-    get_varcaller(args, config, paired=reads_ns.paired)
+    finisher_tool = get_finisher(args, config, paired=reads_ns.paired)
+    varcall_tool = get_varcaller(args, config, paired=reads_ns.paired)
 
     logger.info("linkage: %s" % linkage_evidence)
-    return Namespace(assemblers=args.assemblers,
-                     scaffolder=args.scaffolder,
+    return Namespace(assemblers=assembler_tools,
+                     scaffolder=scaffolder_tool,
                      scaffold_type=linkage_evidence,
                      merge_method=args.merge_method,
-                     finisher=args.finisher,
-                     varcall=args.varcaller)
+                     finisher=finisher_tool,
+                     varcall=varcall_tool)
 
 
-def assembler_needs_downsampling(args, config):
-    assembler_conf = config.assemblers
-    for conf_assembler in config.assemblers:
-        if conf_assembler['name'] in args.assemblers:
+def assembler_needs_downsampling(tools):
+    for assembler in tools.assemblers:
+        if assembler['downsample_reads']:
             return True
     return False
 
@@ -1242,8 +1283,8 @@ def run_fastqc(reads_ns, args, logger=None):
                            "data.Please examine the fastqc outputs for " +
                            "these reads")
 
-def make_sickle_cmd(args, reads_ns, out_dir):
-    if args.fastq2:
+def make_sickle_cmd(args, reads_ns, paired, out_dir):
+    if paired:
         cmd = str("sickle pe -f {0} -r {1} -t {2} -q {3} -l {4} -o " +
                   "{5}read1.fastq -p {5}read2.fastq -s {5}singles.fastq" +
                   "> {5}sickle.log").format(
@@ -1277,7 +1318,7 @@ def quality_trim_reads(args, config, reads_ns, logger):
                        "Sequence quality trimming will be skipped...")
     trim_dir = os.path.join(args.tmp_dir, "qc_trim", "")
     os.makedirs(trim_dir)
-    trim_cmd = make_sickle_cmd(args, reads_ns, trim_dir)
+    trim_cmd = make_sickle_cmd(args, reads_ns, paired=reads_ns.paired, out_dir=trim_dir)
     trim_res = subprocess.run(trim_cmd,
                                 shell=sys.platform != "win32",
                                 stdout=subprocess.PIPE,
@@ -1288,8 +1329,11 @@ def quality_trim_reads(args, config, reads_ns, logger):
         sys.exit(1)
     else:
         # reasign the reads with the trimmed treads
-        args.fastq1 = os.path.join(trim_dir, "read1.fastq")
-        args.fastq2 = os.path.join(trim_dir, "read2.fastq")
+        if reads_ns.paired:
+            args.fastq1 = os.path.join(trim_dir, "read1.fastq")
+            args.fastq2 = os.path.join(trim_dir, "read2.fastq")
+        else:
+            args.fastq1 = os.path.join(trim_dir, "read1.fastq")
     kept = 0
     disc = 0
     report = []
@@ -1347,8 +1391,8 @@ def downsample_reads(args, reads_ns, config, new_cov=100):
                        stdout=subprocess.PIPE,
                        stderr=subprocess.PIPE,
                        check=True)
-    args.fastq1 = os.path.join(ds_dir, os.path.basename(args.fastq1))
-    args.fastq2 = os.path.join(ds_dir, os.path.basename(args.fastq2))
+    args.fastq1 = os.path.join(ds_dir, os.path.basename(args.fastq1)) if args.fastq1 is not None else None
+    args.fastq2 = os.path.join(ds_dir, os.path.basename(args.fastq2)) if args.fastq1 is not None else None
     return new_cov
 
 
@@ -1361,7 +1405,7 @@ def make_bwa_cmds(args, config, outdir, ref, reads_ns, fastq1, fastq2):
         config.bwa, ref, outdir)
     cmd_list.append(index_cmd)
     # Use bwa-bwt for 'short' reads less than 100 bp, and bwa-mem for longer reads
-    if reads_ns.mean_read_length <= 100:
+    if reads_ns.read_length_mean <= 100:
         cmdF = "{0} aln -t {1} {2} {3} > {4}read1.sai".format(
             config.bwa, args.threads, ref, fastq1, outdir)
         cmd_list.append(cmdF)
@@ -1517,7 +1561,7 @@ def replace_placeholders(string, config=None, reads_ns=None, args=None, results=
         "__ENCODING__": [reads_ns, "encoding"],
         "__GENOME_SIZE__": [args, "genome_size"],
         "__PLATFORM__": [args, "platform"],
-        "__READ_LENGTH__": [reads_ns, "mean_read_length"],
+        "__READ_LENGTH__": [reads_ns, "read_length_mean"],
         "__INSSIZE__": [reads_ns, "insert_mean"],
         "__INSSD__": [reads_ns, "insert_stddev"],
         "__THREADS__": [args, "threads"],
@@ -1566,7 +1610,11 @@ def get_assembler_cmds(assembler, assembler_args, args, config, reads_ns):
     cmd = replace_placeholders(string=cmd, config=config, args=args,
                                reads_ns=reads_ns)
     # cmd = cmd + " > {0}/{1}.log 2>&1".format(args.tmp_dir, assembler['name'])
-    return (cmd,
+    main_function = cmd.split(" ")[0]
+    cmd = " ".join(cmd.split(" ")[1:])
+    print("cmd: " + cmd)
+    return (main_function,
+            cmd,
             replace_placeholders(contig_output, config, reads_ns, args),
             replace_placeholders(scaffold_output, config, reads_ns, args))
 
@@ -1634,6 +1682,46 @@ def get_contig_stats(contigs, ctype):
     ]
 
 
+def check_spades_kmers(assembler, cmd, readlen, min_diff=2, logger=None):
+    """ warns and fixes bad kmers
+    spades = "k=21,23,55"
+    Just worry about SPAdes
+    ABySS = "K=15 k=64", where K is span and k is kmer size, in de bruijn mode?
+    canu = Picks kmers automatically
+    """
+    if assembler != "spades":
+        return cmd
+    prek_cmd = cmd.split("-k")[0].strip()
+    k = cmd.split("-k")[1].strip().split(" ")[0].strip()
+    postk_cmd = " ".join(cmd.split("-k")[1].split(" ")[2:])
+    if k is 'auto':
+        logger.debug("no need to check k, we let spades set k")
+        return cmd
+    try:
+        klist = [int(x) for x in k.split(",")]
+    except Exception as e:
+        logger.error("error splitting kmers in %s by comma!", k)
+        logger.error(e)
+        raise ValueError
+    logger.debug(klist)
+    new_ks = []
+    for i in klist:
+        if i > readlen:
+            logger.info("removing %d from list of kmers: exceeds read length",
+                        i)
+        elif readlen - i <= min_diff:
+            logger.info("removing %d from list of kmers: too close " +
+                        "to read length", i)
+        elif i % 2 == 0:
+            logger.info("removing %d from list of kmers: must be odd", i)
+        else:
+            new_ks.append(i)
+    return "{0} -k {1} {2}".format(
+        prek_cmd,
+        ",".join([str(x) for x in new_ks]),
+        postk_cmd)
+
+
 def run_assembler(assembler, assembler_args, args, reads_ns, config, logger):
     """
     Runs specified assembler on fastq files
@@ -1655,18 +1743,15 @@ def run_assembler(assembler, assembler_args, args, reads_ns, config, logger):
     conf_assembler = [x for x in config.assemblers if x['name'] == assembler]
     assert len(conf_assembler) == 1, "multiple matches for assemblers"
     conf_assembler = conf_assembler[0]
-    assembler_cmd, contigs_path, scaffolds_path = get_assembler_cmds(
+    func, assembler_cmd, contigs_path, scaffolds_path = get_assembler_cmds(
         assembler=conf_assembler,
         assembler_args=assembler_args,
         args=args,
         config=config, reads_ns=reads_ns)
     logger.info(" Starting %s assembly ... ", assembler)
-    logger.debug(assembler_cmd)
-    subprocess.run(assembler_cmd,
-                   shell=sys.platform != "win32",
-                   stdout=subprocess.PIPE,
-                   stderr=subprocess.PIPE,
-                   check=True)
+    # here we execute the "run" function from the appropriate runner script
+    sub_mains[assembler](getattr(config, assembler), assembler_cmd, logger)
+
 
     logger.info("%s assembly statistics", assembler);
     report = get_contig_stats( contigs_path, 'contigs' )
@@ -1741,7 +1826,7 @@ def merge_assemblies(args, config, reads_ns, logger):
     return contig_output
 
 
-def check_id(args, contigs, logger):
+def check_id(args, contigs, config, logger):
     """
     Checks wether the assembled contigs have sufficient identity to the
     reference for reference-based scaffolding
@@ -1753,8 +1838,8 @@ def check_id(args, contigs, logger):
     logger.info("Checking identity of assembly with reference...")
     ID_OK = False
     check_dir = os.path.join(args.tmp_dir, "id_check", "")
-    os.makedirs(checkdir)
-    cmd = str("{0} -query {0} -subject {1} -outfmt 6 -evalue 0.01 -out " +
+    os.makedirs(check_dir)
+    cmd = str("{0} -query {1} -subject {2} -outfmt 6 -evalue 0.01 -out " +
               "{3}blastout.tab 2>&1 > {3}blastn.log").format(
         config.blastn, contigs, args.reference, check_dir)
     logger.debug(cmd)
@@ -1767,8 +1852,12 @@ def check_id(args, contigs, logger):
     #TODO correct this
     with open(check_dir + "blastout.tab", "r") as inf:
         for line in inf:
-            fake_aves.append(line.strip().split("\t")[2])
-    percent_id = statistics.mean(fake_aves)
+            fake_aves.append(float(line.strip().split("\t")[2]))
+    try:
+        percent_id = statistics.mean(fake_aves)
+    except statistics.StatisticsError: # usually a "mean requires at least one data point"
+        percent_id = 0.0
+    logger.debug("percent id between reference and contigs: %d", percent_id)
     # system($cmd) == 0 or die "Error running $cmd: $!";
     # my $blio = Bio::SearchIO->new( -format => 'blastxml',
     #                                -file   => 'blastout.xml' );
@@ -1858,6 +1947,8 @@ def check_args(args, config):
     if args.merge_method is None and len(args.assemblers) > 1:
         raise ValueError("Must provide merge method if using multiple assemblers")
     for thing in ["scaffolder", "finisher"]:
+        if getattr(config, thing + "s") is None:
+            continue
         for tool in getattr(config, thing + "s"):
             if tool['name'].lower() == getattr(args, thing):
                 if args.reference is None and tool['ref_required']:
@@ -1896,11 +1987,11 @@ def make_empty_results_object():
 def log_read_and_run_data(reads_ns, args, results, logger):  # pragma nocover
     paired_str = "Paired" if reads_ns.paired else "Fragment"
     read_table=[
-        ["Mean Read Length", reads_ns.mean_read_length],
+        ["Mean Read Length", reads_ns.read_length_mean],
         ["Read Length Standard Deviation", reads_ns.read_length_stddev ],
         ["Insert size", reads_ns.insert_mean],
         ["Insert size Standard Deviation", reads_ns.insert_stddev],
-        ["Mean Long Read Length", reads_ns.mean_long_read_length],
+        ["Mean Long Read Length", reads_ns.long_read_length_mean],
         ["Mean Long Read Standard Deviation", reads_ns.long_read_length_stddev],
         ["Library type", paired_str],
         ["Platform", args.platform],
@@ -2203,7 +2294,7 @@ def find_origin(args, config, results, logger):
                  $ (reference)
                  $ (insert_size)
                  $ (insert_stddev)
-                 $ (mean_read_length)
+                 $ (read_length_mean)
 
     returns: $ (0)
 
@@ -2284,10 +2375,10 @@ def find_origin(args, config, results, logger):
 
 
 def check_and_set_trim_length(reads_ns, args, logger):
-    if reads_ns.mean_read_length is not None:
-        if reads_ns.mean_read_length < 50 and reads_ns.mean_read_length < args.trim_length:
+    if reads_ns.read_length_mean is not None:
+        if reads_ns.read_length_mean < 50 and reads_ns.read_length_mean < args.trim_length:
             logger.info("trim-length set to minimum of 25 due to mean read length: %d",
-                        reads_ns.mean_read_length)
+                        reads_ns.read_length_mean)
             return 25
     return args.trim_length
 
@@ -2442,15 +2533,13 @@ def finish_assembly(args, config, reads_ns, results, logger):
     returns        : $ (0)
     """
     logger.info("Finishing assembly with %s", args.finisher)
-    for tool in config.finishers:
-        if finisher == tool['name'].lower():
-            cmd        = tool['command']
-            create_dir = tool['create_dir']
-    outdir = os.path.join(args.tmp_dir, finisher)
-    if create_dir:
+    tool = [x for x in config.finishers if x['name'].lower() == args.finisher.lower()]
+    outdir = os.path.join(args.tmp_dir, args.finisher)
+    if tool['create_dir']:
         os.makedirs(outdir)
     cmd = replace_placeholders(
-        string=cmd, config=config,
+        string=tool['command'],
+        config=config,
         reads_ns=reads_ns, args=args)
     logger.debug("running the following command:\n %s". cmd)
     subprocess.run(cmd,
@@ -2537,7 +2626,7 @@ def main(args=None, logger=None):
 
     logger.debug("Determining whether to downsample")
     if (reads_ns.coverage is not None and reads_ns.coverage > 100) and \
-       (assembler_needs_downsampling(args, config) or args.downsample != 0):
+       (assembler_needs_downsampling(tools) or args.downsample != 0):
         logger.info("Downsampling reads to %dx coverage", args.downsample)
         reads_ns.downsampled_coverage = downsample_reads(
             args=args, reads_ns=reads_ns,
@@ -2596,6 +2685,7 @@ def main(args=None, logger=None):
     #TODO why do we check scaffolder here?
     if args.scaffolder and args.reference:
         results.ID_OK = check_id(args, contigs=results.current_contigs,
+                                 config=config,
                                  logger=logger)
     if args.scaffolder is not None:
         if \
@@ -2633,7 +2723,7 @@ def main(args=None, logger=None):
 #                 my $seq_file;
 #                 ( -e "$tmpdir/scaffolds.fasta" ) ? ( $seq_file = 'scaffolds.fasta' ) : ( $seq_file = 'contigs.fasta' );
 
-#                 align_reads( $tmpdir, $seq_file, $mean_read_length );
+#                 align_reads( $tmpdir, $seq_file, $read_length_mean );
 #                 amosvalidate( $tmpdir, $insert_size, $stddev );
 #             }
 #         }
@@ -2653,7 +2743,7 @@ def main(args=None, logger=None):
 #         $amosvalidate_results = summarise_amosvalidate($tmpdir);
 #     }
 
-#     run_varcaller( $tmpdir, $varcall, $threads, $mean_read_length ) if ($varcall);
+#     run_varcaller( $tmpdir, $varcall, $threads, $read_length_mean ) if ($varcall);
 #     merge_annotations( $tmpdir, $amosvalidate_results, $gaps, $genus, $species, $strain );
 #     #  This kept throwing an error about Bio::SeqIO
 #     # run_cgview($tmpdir);

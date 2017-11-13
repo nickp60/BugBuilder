@@ -101,7 +101,7 @@ assemblers:
      create_dir: 1
      min_length: 200
      max_length: null
-     command_pe: __BUGBUILDER_BIN__/run_abyss --tmpdir __TMPDIR__ --fastq1 __FASTQ1__ --fastq2 __FASTQ2__ --read_length __READ_LENGTH__
+     command_pe: run_abyss --tmpdir __TMPDIR__ --fastq1 __FASTQ1__ --fastq2 __FASTQ2__ --read_length __READ_LENGTH__
      contig_output: __TMPDIR__/abyss/abyss-contigs.fa
      scaffold_output: __TMPDIR__/abyss/abyss-scaffolds.fa
      insert_size_required: 0
@@ -110,10 +110,10 @@ assemblers:
      create_dir: 0
      min_length: null
      max_length: 303
-     command_se: spades.py --memory __MEMORY__ -t __THREADS__ -s __FASTQ1__ -o __TMPDIR__/spades
-     command_pe: spades.py --memory __MEMORY__ -t __THREADS__ -1 __FASTQ1__ -2 __FASTQ2__ -o __TMPDIR__/spades
-     command_hybrid: spades.py --memory __MEMORY__ -t __THREADS__ -1 __FASTQ1__ -2 __FASTQ2__ --pacbio __LONGFASTQ__ -o __TMPDIR__/spades
-     command_de_fere: spades.py --memory __MEMORY__ -t __THREADS__ -1 __FASTQ1__ -2 __FASTQ2__ --trusted-contigs __DE_FERE_CONTIGS__ -o __TMPDIR__/spades
+     command_se: run_spades --memory __MEMORY__ -t __THREADS__ -s __FASTQ1__ -o __TMPDIR__/spades
+     command_pe: run_spades --memory __MEMORY__ -t __THREADS__ -1 __FASTQ1__ -2 __FASTQ2__ -o __TMPDIR__/spades
+     command_hybrid: run_spades --memory __MEMORY__ -t __THREADS__ -1 __FASTQ1__ -2 __FASTQ2__ --pacbio __LONGFASTQ__ -o __TMPDIR__/spades
+     command_de_fere: run_spades --memory __MEMORY__ -t __THREADS__ -1 __FASTQ1__ -2 __FASTQ2__ --trusted-contigs __DE_FERE_CONTIGS__ -o __TMPDIR__/spades
      contig_output: __TMPDIR__/spades/contigs.fasta
      scaffold_output: __TMPDIR__/spades/scaffolds.fasta
      default_args: -t __THREADS__ --careful
@@ -123,8 +123,8 @@ assemblers:
      create_dir: 1
      min_length: 75
      max_length: null
-     command_se: __BUGBUILDER_BIN__/run_celera --fastq1 __FASTQ1__ --tmpdir __TMPDIR__ --category __CATEGORY__ --encoding __ENCODING__ --genome_size __GENOME_SIZE__
-     command_pe: __BUGBUILDER_BIN__/run_celera --fastq1 __FASTQ1__ --fastq2 --tmpdir __TMPDIR__ --category __CATEGORY__ --encoding __ENCODING__ --genome_size __GENOME_SIZE__
+     command_se: run_celera --fastq1 __FASTQ1__ --tmpdir __TMPDIR__ --category __CATEGORY__ --encoding __ENCODING__ --genome_size __GENOME_SIZE__
+     command_pe: run_celera --fastq1 __FASTQ1__ --fastq2 --tmpdir __TMPDIR__ --category __CATEGORY__ --encoding __ENCODING__ --genome_size __GENOME_SIZE__
      contig_output: __TMPDIR__/celera/output/9-terminator/BugBuilder.ctg.fasta
      scaffold_output: __TMPDIR__/celera/output/9-terminator/BugBuilder.scf.fasta
      downsample_reads: 0
@@ -133,7 +133,7 @@ assemblers:
      create_dir: 1
      min_length: 500
      max_length: null
-     command_se: __BUGBUILDER_BIN__/run_PBcR --fastq __LONGFASTQ__ --tmpdir __TMPDIR__ --genome_size __GENOME_SIZE__ --platform __PLATFORM__
+     command_se: run_PBcR --fastq __LONGFASTQ__ --tmpdir __TMPDIR__ --genome_size __GENOME_SIZE__ --platform __PLATFORM__
      contig_output: __TMPDIR__/PBcR/BugBuilder/9-terminator/asm.ctg.fasta
      scaffold_output: __TMPDIR__/PBcR/BugBuilder/9-terminator/asm.scf.fasta
      downsample_reads: 0
@@ -143,8 +143,8 @@ assemblers:
      create_dir: 1
      min_length: null
      max_length: null
-     command_pe: __BUGBUILDER_BIN__/run_masurca --fastq1 __ORIG_FASTQ1__ --fastq2 __ORIG_FASTQ2__ --tmpdir __TMPDIR__ --category __CATEGORY__ --insert_size __INSSIZE__ --insert_stddev __INSSD__
-     command_hybrid: __BUGBUILDER_BIN__/run_masurca --fastq1 __ORIG_FASTQ1__ --fastq2 __ORIG_FASTQ2__ --longfastq __LONGFASTQ__ --tmpdir __TMPDIR__ --category __CATEGORY__ --insert_size __INSSIZE__ --insert_stddev __INSSD__
+     command_pe: run_masurca --fastq1 __ORIG_FASTQ1__ --fastq2 __ORIG_FASTQ2__ --tmpdir __TMPDIR__ --category __CATEGORY__ --insert_size __INSSIZE__ --insert_stddev __INSSD__
+     command_hybrid: run_masurca --fastq1 __ORIG_FASTQ1__ --fastq2 __ORIG_FASTQ2__ --longfastq __LONGFASTQ__ --tmpdir __TMPDIR__ --category __CATEGORY__ --insert_size __INSSIZE__ --insert_stddev __INSSD__
      contig_output: __TMPDIR__/masurca/contigs.fasta
      scaffold_output: __TMPDIR__/masurca/scaffolds.fasta
      default_args: --threads __THREADS__
@@ -153,23 +153,26 @@ assemblers:
 
 scaffolders:
    - name: SIS
+     ref_required: 1
      linkage_evidence: align_genus
-     command: __BUGBUILDER_BIN__/run_sis --reference __REFERENCE__ --contigs __CONTIGS__ --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__
+     command: run_sis --reference __REFERENCE__ --contigs __CONTIGS__ --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__
      scaffold_output: scaffolds.fasta
      unscaffolded_output: unplaced_contigs.fasta
      default_args: null
      create_dir: 1
      priority: 2
    - name: mauve
+     ref_required: 1
      linkage_evidence: align_genus
-     command: __BUGBUILDER_BIN__/run_mauve --reference __REFERENCE__ --run __RUN__ --contigs __CONTIGS__ --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__
+     command: run_mauve --reference __REFERENCE__ --run __RUN__ --contigs __CONTIGS__ --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__
      default_args: null
      create_dir: 1
      priority: 1
      scaffold_output: scaffolds.fasta
    - name: sspace
+     ref_required: 0
      linkage_evidence: paired-ends
-     command: __BUGBUILDER_BIN__/run_sspace --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__ --contigs __CONTIGS__ --insert_size __INSSIZE__ --insert_sd __INSSD__
+     command: run_sspace --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__ --contigs __CONTIGS__ --insert_size __INSSIZE__ --insert_sd __INSSD__
      scaffold_output: BugBuilder.scaffolds.fasta
      default_args: null
      create_dir: 1
@@ -177,13 +180,13 @@ scaffolders:
 
 merge_tools:
    - name: gfinisher
-     command: __BUGBUILDER_BIN__/run_gfinisher --tmpdir __TMPDIR__  --assembler __ASSEMB1__ --assembler __ASSEMB2__ --reference __REFERENCE__
+     command: run_gfinisher --tmpdir __TMPDIR__  --assembler __ASSEMB1__ --assembler __ASSEMB2__ --reference __REFERENCE__
      contig_output: renamed.fasta
      create_dir: 1
      priority: 1
      allow_scaffolding: 1
    - name: minimus
-     command: __BUGBUILDER_BIN__/run_minimus --tmpdir __TMPDIR__  --assembler __ASSEMB1__ --assembler __ASSEMB2__
+     command: run_minimus --tmpdir __TMPDIR__  --assembler __ASSEMB1__ --assembler __ASSEMB2__
      contig_output: renumbered.fasta
      create_dir: 1
      priority: 2
@@ -191,19 +194,19 @@ merge_tools:
 
 finishers:
    - name: gapfiller
-     command: __BUGBUILDER_BIN__/run_gapfiller --tmpdir __TMPDIR__ --insert_size __INSSIZE__ --insert_sd __INSSD__ --threads __THREADS__
+     command: run_gapfiller --tmpdir __TMPDIR__ --insert_size __INSSIZE__ --insert_sd __INSSD__ --threads __THREADS__
      create_dir: 1
      ref_required: 0
      paired_reads: 1
      priority: 2
    - name: abyss-sealer
-     command: __BUGBUILDER_BIN__/run_abyss-sealer --tmpdir __TMPDIR__ --encoding __ENCODING__ --threads __THREADS__
+     command: run_abyss-sealer --tmpdir __TMPDIR__ --encoding __ENCODING__ --threads __THREADS__
      create_dir: 1
      ref_required: 0
      paired_reads: 1
      priority: 3
    - name: pilon
-     command: __BUGBUILDER_BIN__/run_pilon --tmpdir __TMPDIR__ --threads __THREADS__
+     command: run_pilon --tmpdir __TMPDIR__ --threads __THREADS__
      create_dir: 1
      ref_required: 0
      paired_reads: 1
@@ -211,39 +214,29 @@ finishers:
 
 varcallers:
    - name: pilon
-     command: __BUGBUILDER_BIN__/run_pilon_var --tmpdir __TMPDIR__ --threads __THREADS__
+     command: run_pilon_var --tmpdir __TMPDIR__ --threads __THREADS__
      ref_required: 1
      create_dir: 1
      priority: 1
-R: /usr/local/bin/R
-abyss: null
-amos: null
-aragorn: null
-asn2gb: null
-barrnap: null
-blastn: /Users/nicholas/miniconda3/bin/blastn
-bwa: /Users/nicholas/miniconda3/bin/bwa
-celera: null
-cgview: null
-fastqc: /Users/nicholas/miniconda3/bin/fastqc
-gapfiller: null
-gfinisher: null
-hmmer3: null
-infernal: null
-makeblastdb: /Users/nicholas/miniconda3/bin/makeblastdb
-masurca: null
-mauve: null
-mummer: null
-picard: /Users/nicholas/miniconda3/bin/picard
-pilon: null
-prodigal: null
-prokka: null
-rnammer: null
-samtools: /Users/nicholas/miniconda3/bin/samtools
-seqtk: /Users/nicholas/miniconda3/bin/seqtk
-sickle: /Users/nicholas/miniconda3/bin/sickle
-sis: null
-spades: /Users/nicholas/miniconda3/bin/spades
-sspace: null
-tbl2asn: null
-vcflib: null
+
+R: /usr/bin/R
+abyss: /usr/bin/abyss
+asn2gb: /usr/bin/asn2gb
+barrnap: /home/nicholas/miniconda3/bin/barrnap.py
+blastn: /usr/bin/blastn
+bwa: /home/nicholas/miniconda3/bin/bwa
+delta_filter: /usr/bin/delta-filter
+fastqc: /home/nicholas/miniconda3/bin/fastqc
+makeblastdb: /usr/bin/makeblastdb
+multifasta: /home/nicholas/Virtualenvs/bug/bin/multifasta.py
+mummer: /home/nicholas/kSNP3.021_Linux_package/kSNP3/mummer
+nucmer: /usr/bin/nucmer
+picard: /home/nicholas/miniconda3/bin/picard
+prodigal: /usr/bin/prodigal
+samtools: /home/nicholas/miniconda3/bin/samtools
+seqtk: /home/nicholas/bin/seqtk
+show_coords: /usr/bin/show-coords
+sickle: /home/nicholas/bin/sickle
+sis: /home/nicholas/Virtualenvs/bug/bin/sis.py
+spades: /home/nicholas/miniconda3/bin/spades.py
+tbl2asn: /usr/bin/tbl2asn

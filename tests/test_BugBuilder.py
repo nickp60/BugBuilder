@@ -7,6 +7,7 @@ import time
 import sys
 import logging
 import os
+from unittest import mock
 import unittest
 import shutil
 import BugBuilder.BugBuilder as bb
@@ -30,6 +31,8 @@ class test_BugBuilder(unittest.TestCase):
         self.empty_config = os.path.join(self.ref_dir, "empty_config.yaml")
         self.filled_config = os.path.join(self.ref_dir, "semicomplete_config.yaml")
         self.ref_fasta = os.path.join(self.ref_dir, "AP017923.1.fasta")
+        self.contigs = os.path.join(self.ref_dir, "contigs.fasta")
+        self.distant_contigs = os.path.join(self.ref_dir, "distant_contigs.fasta")
         self.renaming_fq = os.path.join(self.ref_dir, "needs_renaming.fq")
         self.renamed = os.path.join(self.ref_dir, "renamed_ref.fq")
         self.fastq1 = os.path.join(self.ref_dir, "AP017923.1_reads1.fq")
@@ -209,7 +212,7 @@ class test_BugBuilder(unittest.TestCase):
                                 platform="illumina", logger=logger)
         test_args.assemblers = ["notAnAssembler"]
         with self.assertRaises(ValueError):
-            bb.check_assemblers(args=test_args, config=config,
+            bb.check_and_get_assemblers(args=test_args, config=config,
                                 reads_ns=reads_ns, logger=logger)
 
     def test_check_assemblers_none_provided(self):
@@ -221,7 +224,7 @@ class test_BugBuilder(unittest.TestCase):
                                    platform="illumina", logger=logger)
         test_args.assemblers = []
         reads_ns.lib_type = "hybrid"
-        bb.check_assemblers(args=test_args, config=config,
+        bb.check_and_get_assemblers(args=test_args, config=config,
                             reads_ns=reads_ns, logger=logger)
         self.assertEqual(test_args.assemblers, ["masurca", "spades"])
 
@@ -233,9 +236,9 @@ class test_BugBuilder(unittest.TestCase):
         reads_ns = bb.assess_reads(args=test_args, config=config,
                                    platform="illumina", logger=logger)
         test_args.assemblers = ["spades"]
-        reads_ns.mean_read_length = 500
+        reads_ns.read_length_mean = 500
         with self.assertRaises(ValueError):
-            bb.check_assemblers(args=test_args, config=config,
+            bb.check_and_get_assemblers(args=test_args, config=config,
                                 reads_ns=reads_ns, logger=logger)
 
     def test_check_assemblers_need_insertsize(self):
@@ -246,9 +249,9 @@ class test_BugBuilder(unittest.TestCase):
         reads_ns = bb.assess_reads(args=test_args, config=config,
                                    platform="illumina", logger=logger)
         test_args.assemblers = ["spades"]
-        reads_ns.mean_read_length = 500
+        reads_ns.read_length_mean = 500
         with self.assertRaises(ValueError):
-            bb.check_assemblers(args=test_args, config=config,
+            bb.check_and_get_assemblers(args=test_args, config=config,
                                 reads_ns=reads_ns, logger=logger)
 
     def test_check_assemblers_too_short(self):
@@ -259,9 +262,9 @@ class test_BugBuilder(unittest.TestCase):
         reads_ns = bb.assess_reads(args=test_args, config=config,
                                    platform="illumina", logger=logger)
         test_args.assemblers = ["spades"]
-        reads_ns.mean_read_length = 400
+        reads_ns.read_length_mean = 400
         with self.assertRaises(ValueError):
-            bb.check_assemblers(args=test_args, config=config,
+            bb.check_and_get_assemblers(args=test_args, config=config,
                                 reads_ns=reads_ns, logger=logger)
 
     def test_get_scaffolder_and_linkage(self):
@@ -314,10 +317,11 @@ class test_BugBuilder(unittest.TestCase):
 
 
     def test_check_args(self):
+        config = bb.parse_config(self.filled_config)
         test_args = Namespace(
             merge_method=None, assemblers=["spades", "shovels"])
         with self.assertRaises(ValueError):
-            bb.check_args(test_args)
+            bb.check_args(test_args, config)
 
     def test_make_empty_results_object(self):
         key_list = [
@@ -342,7 +346,7 @@ class test_BugBuilder(unittest.TestCase):
         self.assertEqual(
             25,
             bb.check_and_set_trim_length(args=Namespace(trim_length=50),
-                              reads_ns=Namespace(mean_read_length=45),
+                              reads_ns=Namespace(read_length_mean=45),
                               logger=logger))
 
     def test_replace_placeholders(self):
@@ -362,9 +366,16 @@ class test_BugBuilder(unittest.TestCase):
         pass
     def parse_available_platforms():
         pass
-    def parse_available_assemblers():
-        pass
-    def parse_available_scaffolders():
+
+    @mock.patch('shutil.which')
+    def test_parse_available_assemblers(self, shumock):
+        shumock.which = "exectuable"
+        self.assertEqual(
+            ["abyss", "spades", "mascura"],
+            bb.parse_available_assemblers()
+        )
+
+    def test_parse_available_scaffolders(self):
         pass
     def parse_available_mergers():
         pass
@@ -379,40 +390,103 @@ class test_BugBuilder(unittest.TestCase):
     def get_finisher(args, config, paired):
         pass
     def get_varcaller(args, config, paired):
-        pass:
+        pass
     def select_tools(args, config, reads_ns, logger):
+        pass
     def assembler_needs_downsampling(args, config):
+        pass
     def make_fastqc_cmd(args, outdir):
+        pass
     def run_fastqc(reads_ns, args, logger=None):
+        pass
     def make_sickle_cmd(args, reads_ns, out_dir):
+        pass
     def quality_trim_reads(args, config, reads_ns, logger):
+        pass
     def make_seqtk_ds_cmd(args, reads_ns, new_coverage, outdir, config, logger):
+        pass
     def downsample_reads(args, reads_ns, config, new_cov=100):
+        pass
     def make_bwa_cmds(args, config, outdir, ref, reads_ns, fastq1, fastq2):
+        pass
     def make_samtools_cmds(config, sam, outdir, sorted_bam):
+        pass
     def align_reads(dirname, reads_ns,  downsample, args, config, logger):
+        pass
     def make_picard_stats_command(bam, config, picard_outdir):
+        pass
     def get_insert_stats(bam, reads_ns, args, config, logger):
+        pass
     def replace_placeholders(string, config=None, reads_ns=None, args=None, results=None):
+        pass
     def get_assembler_cmds(assembler, assembler_args, args, config, reads_ns):
+        pass
     def standardize_fasta_output(infile, outfile, ctype):
+        pass
     def get_L50_N50(lengths):
+        pass
     def get_contig_stats(contigs, ctype):
+        pass
     def run_assembler(assembler, assembler_args, args, reads_ns, config, logger):
+        pass
     def merge_assemblies(args, config, reads_ns, logger):
-    def check_id(args, contigs, logger):
-def check_already_assembled_dirs(args, config, logger):
+        pass
+
+    @unittest.skipIf(shutil.which("blastn") is None,
+                     "Cannot test check_id without blastn")
+    def test_check_id_close(self):
+        test_args = Namespace(tmp_dir=self.test_dir,
+                              reference=self.ref_fasta,
+                              )
+        config = Namespace(blastn=shutil.which("blastn"))
+        self.assertEqual(
+            True,
+            bb.check_id(args=test_args, contigs=self.contigs,
+                        config=config, logger=logger))
+        self.to_be_removed.append(
+            os.path.join(self.test_dir, "id_check", ""))
+
+    @unittest.skipIf(shutil.which("blastn") is None,
+                     "Cannot test check_id without blastn")
+    def test_check_id_distant(self):
+        test_args = Namespace(tmp_dir=self.test_dir,
+                              reference=self.ref_fasta,
+                              )
+        config = Namespace(blastn=shutil.which("blastn"))
+        self.assertEqual(
+            False,
+            bb.check_id(args=test_args, contigs=self.distant_contigs,
+                        config=config, logger=logger))
+        self.to_be_removed.append(
+            os.path.join(self.test_dir, "id_check", ""))
+
+    def check_already_assembled_dirs(args, config, logger):
+        pass
     def check_already_assembled_args(args, config, logger):
-    def check_args(args, config):
+        pass
     def make_empty_results_object():
-def log_read_and_run_data(reads_ns, args, results, logger):  # pragma nocover
+        pass
+    def log_read_and_run_data(reads_ns, args, results, logger):  # pragma nocover
+        pass
     def run_scaffolder(args, config, reads_ns, results, run_id, logger=None):
+        pass
     def find_origin(args, config, results, logger):
-def check_and_set_trim_length(reads_ns, args, logger):
+        pass
+    def check_and_set_trim_length(reads_ns, args, logger):
+        pass
     def use_already_assembled(args):
+        pass
     def order_scaffolds():
+        pass
     def store_orientation(orientations, contig, or_count):
+        pass
     def finish_assembly(args, config, reads_ns, results, logger):
+        pass
+    def test_check_spades_kmers(self):
+        cmd = "spades.py -k 22,33,55,77 -o someassembly"
+        self.assertEqual(
+            "spades.py -k 33,55 -o someassembly",
+            bb.check_spades_kmers(assembler="spades", cmd=cmd, readlen=78, min_diff=2, logger=logger))
 
     @unittest.skipIf("TRAVIS" in os.environ and os.environ["TRAVIS"] == "true",
                      "Skipping this test on Travis CI. Too hard to debug")
