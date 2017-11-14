@@ -38,15 +38,11 @@ initially convert our fastq files, before running the assembler
 
 =item B<tmpdir>: BugBuilder working directory, containing unscaffolded contigs.fasta file
 
-=item B<fastq1>: Fastq file1
-
-=item B<fastq2>: Fastq file2
+=item B<long_fastq>: Fastq file from PacBio or Nanopore run
 
 =item B<category>: Category of assembly i.e. long_illumina, 454_IonTorrent
 
-=item B<insert_size>: Library insert size
-
-=item B<insert_stddev>: Standard deviation of library insert size
+=item B<platform>: platform of assembly i.e. PacBio or MinION
 
 =item B<genome_size>: Estimated size of genome
 
@@ -67,9 +63,9 @@ initially convert our fastq files, before running the assembler
 Please report any bugs/issues via github:
 https://github.com/jamesabbott/BugBuilder/issues/new
 
-=head1 AUTHOR - James Abbott
+=head1 AUTHOR - James Abbott and Nick Waters
 
-Email j.abbott@imperial.ac.uk
+Email j.abbott@imperial.ac.uk and nickp60@gmail.com
 
 =cut
 
