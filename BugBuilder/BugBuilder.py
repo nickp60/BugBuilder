@@ -2065,13 +2065,11 @@ def run_ref_scaffolder(args, tools, config, reads_ns, results, run_id, logger=No
     # list of paths of resulting scaffolds to be combined, if ref sequence has multiple records
     merge_these_scaffolds = []
     # this helps keep trak of resulting files
-    ref_ids = [] # list of ID's
-    ref_paths = []  # list of paths to the sequences we just rwote out
+    ref_list = [] # [ref_id, ref_path]
     with open(args.reference, "r") as ref:
         for idx, rec in enumerate(SeqIO.parse(ref, "fasta")):
-            ref_ids.append(rec.id)
-            ref_paths.append(os.path.join(run_dir, "reference_" + rec.id))
-            with open(ref_paths[idx], "w") as outf:
+            ref_list.append([rec.id, os.path.join(run_dir, "reference_" + rec.id)])
+            with open(ref_list[idx][1], "w") as outf:
                 SeqIO.write( rec, outf, "fasta")
     # If the reference contains multiple contigs, we first neeed to align
     # our contigs to these
@@ -2080,10 +2078,10 @@ def run_ref_scaffolder(args, tools, config, reads_ns, results, run_id, logger=No
     # sequences
 
     # moved ID parsing out, so we can keep naming the same
-    if not len(ref_ids) > 1:
+    if not len(ref_list) > 1:
         # if we don't have mulitple references, we just need to make the
         # reference and contigs available under consistent names
-        reference = ref_ids[0]
+        reference = ref_list[0]
         # contigs = contigs_output
     else:
         # blast indexing doesn't produce a workable index from a symlink, so
@@ -2095,29 +2093,31 @@ def run_ref_scaffolder(args, tools, config, reads_ns, results, run_id, logger=No
         blast_cmd = str("{0} -query {1} -subject {2}  -task blastn -out " +
                         "{3}clusters.blast 2>&1 > {3}blastn.log").format(
                             config.blastn, contigs_copy, args.reference, run_dir)
-
-        subprocess.run(blast_cmd,
-                       shell=sys.platform != "win32",
-                       stdout=subprocess.PIPE,
-                       stderr=subprocess.PIPE,
-                       check=True)
+        blast_cmd2 = str("{0} -query {1} -subject {2} -outfmt 6 -out " +
+                  "{3}clusters.tab 2>&1 > {3}blastn.log").format(
+                      config.blastn, contigs_copy, args.reference, run_dir)
+        blast_cmd3 = str("{0} -query {1} -subject {2} -outfmt 5 -evalue 0.01 -out " +
+                  "{3}clusters.xml 2>&1 > {3}blastn.log").format(
+                      config.blastn, contigs_copy, args.reference, run_dir)
+        for cmd in [blast_cmd, blast_cmd2, blast_cmd3]:
+            subprocess.run(cmd,
+                           shell=sys.platform != "win32",
+                           stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE,
+                           check=True)
         # create dict of contigs per reference sequence, or unaligned
         # only need to worry about the top hit for each...
         ref_seqs = {"unaligned": []}
-        with open(os.path.join(run_dir, "clusters.blast"), "r") as blast:
-            result = SearchIO.parse(blast, "blast-text")
-            for hit in result:
-                hsps = [x for x in  hit.hsps]
-                if len(hsps) == 0:
-                    ref_seqs['unaligned'].append(hit._id)
+        with open(os.path.join(run_dir, "clusters.tab"), "r") as blast:
+            # out fmt is queryID, subjectID, % match, length of match, and other stuff separated by tabs
+            for line in blast:
+                fields = line.strip().split("\t")
+                query_id, subject_id = fields[0], fields[1]
+                logger.debug("processing hit for %s", query_id)
+                if subject_id not in ref_seqs.keys():
+                    ref_seqs[subject_id] = [query_id]
                 else:
-                    # top_hit = hsps[0]
-                    query = hsps[0].query_id
-                    subject = hsps[0].hit.id
-                    if subject not in ref_seqs.keys():
-                        ref_seqs[subject] = [query]
-                    else:
-                        ref_seqs[subject].append(query)
+                    ref_seqs[subject_id].append(query_id)
         logger.debug("generate a fasta file of contigs which align to each reference")
         for ref, cntgs in ref_seqs.items():
             out_name = os.path.join(run_dir, "reference_" + ref + "_contigs.fasta")
@@ -2126,38 +2126,35 @@ def run_ref_scaffolder(args, tools, config, reads_ns, results, run_id, logger=No
                     for rec in SeqIO.parse(contig_f, "fasta"):
                         if rec.id in cntgs:
                             SeqIO.write(rec, out_f,  "fasta")
-
-    for ref_id in ref_ids:
+    logger.debug("ref_list: %s", ref_list)
+    for ref_id, ref_path in ref_list:
         scaff_contigs = os.path.join(run_dir, "reference_" + ref_id + "_contigs.fasta")
-        if not os.path.exists(scaff_contigs):
-            continue
-        logger.info("Scaffolding vs. %s", ref_id)
-        reference = "reference_" + ref_id
-        # moved replacment of placehodlers to above -- should be fine, eh?
-        if unscaffolded_output:
-            unscaffolded_output = replace_placeholders(
-                string=unscaffolded_output,config=config,
-                reads_ns=reads_ns, args=args)
-        run_scaffold_output = os.path.join(run_dir, "",  scaffold_output)
-        # moved scaf_args out of if statement as well!
-        exec_cmd = exec_cmd + " 2>&1 > " + os.path.join(
-            args.tmp_dir,
-            args.scaffolder + "_" + str(run_id) + "_" + ref_id + ".log")
-        merge_these_scaffolds.append(os.path.join(run_scaffold_output, "scaffolds.fasta"))
-
-    # here we execute the "run" function from the appropriate runner script
-    sub_mains[args.scaffolder](config=config, args=args, results=results,
-                          scaff_dir=run_dir, logger=logger)
-    resulting_scaffold = os.path.join(run_dir, "scaffolds.fasta")
-    if len(merge_these_scaffolds) != 0:
-        counter = 1
-        with open(resulting_scaffold, "w") as outf:
-            for scaf_path in merge_these_scaffolds:
-                with open(scaf_path, "r") as scaf:
-                    for rec in SeqIO.parse(scaf, "fasta"):
-                        rec.id = "scaffold_%05d" % counter
-                        SeqIO.write(rec, outf, fasta)
-    return resulting_scaffold
+        if os.path.exists(scaff_contigs) and os.path.getsize(scaff_contigs) > 0:
+            logger.info("Scaffolding vs. %s", ref_id)
+            if unscaffolded_output:
+                unscaffolded_output = replace_placeholders(
+                    string=unscaffolded_output,config=config,
+                    reads_ns=reads_ns, args=args)
+            subscaff_dir = os.path.join(run_dir, "SIS_" + ref_id)
+            os.makedirs(subscaff_dir)
+            merge_these_scaffolds.append(os.path.join(subscaff_dir, "scaffolds.fasta"))
+            # here we execute the "run" function from the appropriate runner script
+            sub_mains[args.scaffolder](config=config, args=args, results=results,
+                                       contigs=scaff_contigs,
+                                       ref=ref_path,
+                                       scaff_dir=subscaff_dir,
+                                       logger=logger)
+            resulting_scaffold = os.path.join(run_dir, "scaffolds.fasta")
+    counter = 1
+    with open(resulting_scaffold, "w") as outf:
+        for scaf_path in merge_these_scaffolds:
+            print(scaf_path)
+            with open(scaf_path, "r") as scaf:
+                for rec in SeqIO.parse(scaf, "fasta"):
+                    rec.id = "scaffold_%05d" % counter
+                    rec.desc = ""
+                    SeqIO.write(rec, outf, "fasta")
+                    counter = counter + 1
 
 #     # Create a fasta file of unplaced contigs if files of contig_ids are generated by the scaffolder wrapper
 #     my @id_files = File::Find::Rule->file()->name("${scaffolder}.contig_ids")->in($run_dir);
@@ -2178,18 +2175,10 @@ def run_ref_scaffolder(args, tools, config, reads_ns, results, run_id, logger=No
 #         }
 #     }
 
-#     #renumber scaffolds to ensure they are unique...
-#     my $count = 0;
-#     my $inIO  = Bio::SeqIO->new( -file => "$run_dir/scaffolds.fasta", -format => "fasta" );
-#     my $outIO = Bio::SeqIO->new( -file => ">$run_dir/scaffolds_renumbered.fasta", -format => "fasta" );
 
-#     while ( my $seq = $inIO->next_seq() ) {
-#         $seq->display_id( "scaffold_" . ++$count );
-#         $outIO->write_seq($seq);
-#     }
-
-#     print "\nScaffolded assembly stats\n=========================\n\n";
-#     get_contig_stats( "$run_dir/scaffolds.fasta", 'scaffolds' );
+    print ("\nScaffolded assembly stats\n=========================\n\n")
+    get_contig_stats(resulting_scaffold, 'scaffolds' );
+    return resulting_scaffold
 
 #     if ( $run_id == 1 ) {
 #         chdir $tmpdir or die "Error chdiring to $tmpdir: $! ";

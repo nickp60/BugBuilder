@@ -38,7 +38,7 @@ class test_shared_methods(unittest.TestCase):
             out_dir="res", prefix="sis", header=False)
 
         ref_cmds = [
-            "nuc genome contigs -p res/sis 2>&1 > res/nucmer.log",
+            "nuc genome contigs -p res/sis > res/nucmer.log 2>&1",
             "df -1 res/sis.delta 2> res/delta-filter.log > res/sis.filter",
             "sc -H res/sis.filter 2> res/show-coords.log > res/sis.coords"
         ]

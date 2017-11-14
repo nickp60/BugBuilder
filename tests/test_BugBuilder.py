@@ -31,7 +31,9 @@ class test_BugBuilder(unittest.TestCase):
         self.empty_config = os.path.join(self.ref_dir, "empty_config.yaml")
         self.filled_config = os.path.join(self.ref_dir, "semicomplete_config.yaml")
         self.ref_fasta = os.path.join(self.ref_dir, "AP017923.1.fasta")
+        self.ref_split = os.path.join(self.ref_dir, "split_AP017923.1.fasta")
         self.contigs = os.path.join(self.ref_dir, "contigs.fasta")
+        self.contigs_to_scaf = os.path.join(self.ref_dir, "contigs_to_scaffold.fasta")
         self.distant_contigs = os.path.join(self.ref_dir, "distant_contigs.fasta")
         self.renaming_fq = os.path.join(self.ref_dir, "needs_renaming.fq")
         self.renamed = os.path.join(self.ref_dir, "renamed_ref.fq")
@@ -495,7 +497,7 @@ class test_BugBuilder(unittest.TestCase):
         test_args = Namespace(
             fastq1=self.fastq1, fastq2=self.fastq2, long_fastq=None,
             # de_fere_contigs=None,
-            reference=self.ref_fasta,
+            reference=self.ref_split,
             genome_size=0,
             tmp_dir=self.test_dir,
             scaffolder="sis",
@@ -506,14 +508,14 @@ class test_BugBuilder(unittest.TestCase):
         tools = Namespace(
             scaffolder=[x for x in config.scaffolders if x['name'].lower() == "sis"][0])
         results = bb.make_empty_results_object()
-        results.current_contigs = self.contigs
+        results.current_contigs = self.contigs_to_scaf
         results.current_scaffolds = "scaffs"
         reads_ns = bb.assess_reads(args=test_args, config=config,
                                    platform="illumina", logger=logger)
         bb.run_ref_scaffolder(
             args=test_args, config=config, tools=tools, results=results, reads_ns=reads_ns,
             run_id=1, logger=logger)
-        self.to_be_removed.append(os.path.join(self.test_dir, "sis_1"))
+        # self.to_be_removed.append(os.path.join(self.test_dir, "SIS_1"))
 
 
     def tearDown(self):

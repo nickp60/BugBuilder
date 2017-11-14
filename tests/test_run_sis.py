@@ -43,21 +43,22 @@ class test_run_sis(unittest.TestCase):
         """
         """
         ref_cmds = [
-            "nucmer reffy contig.fa -p sisdir/sis > sisdir/nucmer.log 2>&1",
+            "nucmer reffy contigs.fa -p sisdir/sis > sisdir/nucmer.log 2>&1",
             "delta-filter -1 sisdir/sis.delta 2> sisdir/delta-filter.log > sisdir/sis.filter",
             "show-coords sisdir/sis.filter 2> sisdir/show-coords.log > sisdir/sis.coords",
             "sis.py sisdir/sis.coords > sisdir/sis.sis",
-             "multifasta.py sisdir/sis.sis contig.fa"
+             "multifasta.py sisdir/sis.sis contigs.fa sisdir/multiout.fasta"
             ]
 
         test_args = Namespace(reference="reffy")
+        results = Namespace(current_contigs="contigs.fa")
         config = bb.parse_config(self.filled_config)
         config.nucmer = "nucmer"
         config.show_coords = "show-coords"
         config.delta_filter = "delta-filter"
         config.sis = "sis.py"
         config.multifasta = "multifasta.py"
-        cmds = rs.make_sis_etc_cmds(config=config, args=test_args, results=results.scaff_dir="sisdir")
+        cmds = rs.make_sis_etc_cmds(config=config, args=test_args, results=results, scaff_dir="sisdir")
         for i, cmd in enumerate(cmds):
             self.assertEqual(cmd, ref_cmds[i])
 

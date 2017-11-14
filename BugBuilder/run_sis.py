@@ -85,27 +85,34 @@ import subprocess
 import sys
 import os
 from .shared_methods import make_nucmer_delta_show_cmds
+from Bio import SeqIO
+from Bio.Seq import Seq
+from Bio.SeqRecord import SeqRecord
 #from scaffoldsis import sis, multifasta
 
-def make_sis_etc_cmds(config, args, results, scaff_dir):
+def make_sis_etc_cmds(config, ref, contigs, scaff_dir):
     cmds = make_nucmer_delta_show_cmds(
-        config, ref=args.reference, query=results.current_contigs,
+        config, ref=ref, query=contigs,
         out_dir=scaff_dir, prefix="sis", header=True)
     # sis
     sis_cmd = "{0} {1}/sis.coords > {1}/sis.sis".format(
         config.sis, scaff_dir)
     cmds.append(sis_cmd)
     # multifasta
-    multifasta_cmd = "{0} {1}/sis.sis {1}/multiout".format(
-        config.multifasta, scaff_dir, results.current_contigs)
+    multifasta_cmd = "{0} {1}/sis.sis {2} > {1}/unfilled_scaffolds.fna".format(
+        config.multifasta, scaff_dir, contigs)
     cmds.append(multifasta_cmd)
     return cmds
 
 
-def run(config, args, results, scaff_dir, logger):
-    cmd_list = make_sis_etc_cmds(config, args, results, scaff_dir)
+def run(config, args, results, ref, contigs, scaff_dir, logger):
+    """ we need to explicitly set the reference and the contigs files cause we may have partitioned them (using blast to see which contigs go with which contigs)
+    """
+    logger.warning("Using SIS to scaffold %s against %s", contigs, ref)
+    cmd_list = make_sis_etc_cmds(config, ref=ref, contigs=contigs, scaff_dir=scaff_dir)
     for cmd in cmd_list:
         logger.debug(cmd)
+        print(cmd)
         subprocess.run(cmd,
                        shell=sys.platform != "win32",
                        stdout=subprocess.PIPE,
@@ -119,57 +126,29 @@ def run(config, args, results, scaff_dir, logger):
     # Build a multifasta file of N-gapped scaffolds
     multi = []
     singletons = []
-    scaffolds =  glob.glob(scaff_dir  + '*.fna')
+    scaffolds =  glob.glob(os.path.join(scaff_dir, '*.fna'))
+    print(scaffolds)
     for scaf in scaffolds:
-        contig_count = 0
         with open(scaf, "r") as inf:
-            for rec in SeqIO.parse(inf, fasta):
+            contig_count = 0
+            for rec in SeqIO.parse(inf, "fasta"):
                 contig_count = contig_count + 1
             if contig_count > 1:
-                multi = multi.append(scaf)
+                multi.append(scaf)
             else:
-                singletons = singletons.append(scaf)
-
-
-#     my $multiFastaIO = Bio::SeqIO->new( -format => 'fasta',
-#                                         -file   => ">$scaff_dir/scaffolds.fasta" );
-
-#     my $i = 0;
-#     foreach my $scaffold (@multi) {
-
-#         my $io = Bio::SeqIO->new( -format => 'fasta',
-#                                   -file   => "$scaff_dir/$scaffold" );
-#         my $scaffold = Bio::Seq->new( -display_id => "scaffold_${ref_id}" . ++$i );
-#         while ( my $seq = $io->next_seq ) {
-#             if ( $scaffold->length() > 0 ) {
-#                 $scaffold->seq( $scaffold->seq() . 'N' x 100 . $seq->seq() );
-#             }
-#             else {
-#                 $scaffold->seq( $seq->seq() );
-#             }
-#         }
-#         $multiFastaIO->write_seq($scaffold);
-#     }
-
-#     #  append singleton scaffolds to scaffolds.fasta
-#     foreach my $scaffold (@singletons) {
-#         my $io = Bio::SeqIO->new( -format => 'fasta',
-#                                   -file   => "$scaff_dir/$scaffold" );
-#         my $seq = $io->next_seq();
-#         $seq->display_id( "scaffold_${ref_id}" . ++$i );
-#         $multiFastaIO->write_seq($seq);
-
-#     }
-
-#     open SIS_OUTPUT, "$scaff_dir/sis.sis"         or croak "Error opening $scaff_dir/sis.sis: $!";
-#     open CONTIG_IDS, ">$scaff_dir/sis.contig_ids" or croak "Error opening $scaff_dir/sis.contig_ids: $!";
-#     while ( my $line = <SIS_OUTPUT> ) {
-#         next if ( $line =~ /^>|^$/ );
-#         my $contig = ( split( / /, $line ) )[0];
-#         print CONTIG_IDS $contig, "\n";
-#     }
-#     close SIS_OUTPUT;
-#     close CONTIG_IDS;
-
-# }
-# """
+                singletons.append(scaf)
+    print("contigs: %s singltons:%s multi:%s" %\
+          (contig_count, singletons, multi))
+    with open(os.path.join(scaff_dir, "scaffolds.fasta"), "w") as outf:
+        new_seq = ""
+        for path in multi:
+            with open(path, "r") as inf:
+                for rec in SeqIO.parse(inf, "fasta"):
+                    new_seq = new_seq + ("N" * 100) + rec.seq
+        if new_seq != "":
+            SeqIO.write(SeqRecord(new_seq, id="combined_from_sis"),
+                        outf, "fasta")
+        for spath in singletons:
+            with open(spath, "r") as inf:
+                for rec in SeqIO.parse(inf, "fasta"):
+                    SeqIO.write(rec, outf, "fasta")
