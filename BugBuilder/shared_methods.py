@@ -6,7 +6,7 @@ def make_nucmer_delta_show_cmds(config, ref, query, out_dir, prefix="out", heade
     """results list of cmds
     """
     # nucmer
-    nucmer_cmd = "{0} {1} {2} -p {3}/{4} 2>&1 > {3}/nucmer.log".format(
+    nucmer_cmd = "{0} {1} {2} -p {3}/{4} > {3}/nucmer.log 2>&1".format(
         config.nucmer, ref, query, out_dir, prefix)
     # delta-filter
     delta_filter_cmd = \

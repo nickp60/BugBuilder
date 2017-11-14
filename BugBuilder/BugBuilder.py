@@ -346,7 +346,7 @@ import subprocess
 import pkg_resources
 import tabulate
 
-from Bio import SeqIO
+from Bio import SeqIO, SearchIO
 from Bio.SeqRecord import SeqRecord
 from argparse import Namespace
 from .shared_methods import make_nucmer_delta_show_cmds
@@ -392,7 +392,7 @@ def parse_available_varcaller():
     return varcallers
 
 
-def configure(config_path):
+def configure(config_path, hardfail=True):
     with open(config_path, 'w') as outfile:  # write header and config params
         for line in __config_data__:
             outfile.write(line)
@@ -425,19 +425,20 @@ def configure(config_path):
                 output_dict[prog.replace("-", "_")] = shutil.which(prog + extension)
             else:
                 if "mandatory" in category:
-                    raise OSError("%s is a mandatory program; please install" % prog)
+                    if hardfail:
+                        raise OSError("%s is a mandatory program; please install" % prog)
     with open(config_path, 'a') as outfile:  # write paths to exes
         yaml.dump(output_dict, outfile, default_flow_style=False)
 
 
-def return_config(config_path, force=False, logger=None):
+def return_config(config_path, force=False, hardfail=True, logger=None):
     try:
         config = parse_config(config_path)
     except yaml.YAMLError:
         force = True
     if force or config.STATUS != "COMPLETE":
         logger.info("(Re-)Configuring BugBuilder")
-        configure(config_path)
+        configure(config_path, hardfail=hardfail)
         config = parse_config(config_path)
     return config
 
@@ -517,10 +518,9 @@ def get_args():  # pragma: no cover
                           help="scaffolder to use",
                           choices=parse_available_scaffolders(),
                           type=str)
-    optional.add_argument("--assemlber-args", dest='scaffolder-args',
+    optional.add_argument("--scaffolder-args", dest='scaffolder_args',
                           action="store",
                           help="args to pass to the scaffolder, in single quotes",
-                          nargs="*",
                           type=str)
     optional.add_argument("--merge-method", dest='merge_method', action="store",
                           help="merge method to use",
@@ -1118,7 +1118,7 @@ def check_and_get_assemblers(args, config, reads_ns, logger):
 
 def get_scaffolder_and_linkage(args, config, paired, logger):
     if args.scaffolder is None:
-        return None
+        return None, None
     logger.debug(config.scaffolders)
     if args.scaffolder not in [k['name'].lower() for k in config.scaffolders]:
         raise ValueError("%s not an available scaffolder!" %args.scaffolder)
@@ -1132,6 +1132,8 @@ def get_scaffolder_and_linkage(args, config, paired, logger):
             elif "align" in conf_scaffolder['linkage_evidence'] and args.reference is None:
                 raise ValueError(str("%s requires a reference for alignment, " +
                                      "but none is specified.") % args.scaffolder)
+            else:
+                pass
             return (conf_scaffolder, conf_scaffolder['linkage_evidence'])
 
 
@@ -1152,14 +1154,14 @@ def get_merger_tool(args, config, paired):
 def get_finisher(args, config, paired):
     if args.finisher is None:
         return None
-    if args.finisher not in [x.name for x in config.finishers]:
+    if args.finisher not in [x['name'] for x in config.finishers]:
         raise ValueError("%s not an available finisher!" %args.finisher)
     for conf_finisher in config.finishers:
-        if conf_finisher.name == args.finisher:
-            if args.reference is None and conf_finisher.ref_required:
+        if conf_finisher['name'] == args.finisher:
+            if args.reference is None and conf_finisher['ref_required']:
                 raise ValueError("%s requires a reference." % \
                                      args.finisher)
-            elif not paired and conf_finisher.paired_reads:
+            elif not paired and conf_finisher['paired_reads']:
                 raise ValueError("%s requires paired reads" % args.finisher)
             else:
                 pass
@@ -1168,7 +1170,7 @@ def get_finisher(args, config, paired):
 def get_varcaller(args, config, paired):
     if args.varcaller is None:
         return None
-    if args.varcaller not in [x.name for x in config.varcallers]:
+    if args.varcaller not in [x['name'] for x in config.varcallers]:
         raise ValueError("%s not an available varcaller!" %args.varcaller)
     for conf_varcallers in config.varcallers:
         if conf_varcallers['name'] == args.varcaller:
@@ -1199,7 +1201,8 @@ def select_tools(args, config, reads_ns, logger):
                  $ (name of scaffolder to use)
 
     """
-    assembler_tools = check_and_get_assemblers(args=args, config=config, reads_ns=reads_ns, logger=logger)
+    assembler_tools = check_and_get_assemblers(
+        args=args, config=config, reads_ns=reads_ns, logger=logger)
     logger.debug("get scaffolder")
     # merge tool can disqalify scaffolder, so it must be checked first
     merge_tool = get_merger_tool(args, config, paired=reads_ns.paired)
@@ -1612,7 +1615,6 @@ def get_assembler_cmds(assembler, assembler_args, args, config, reads_ns):
     # cmd = cmd + " > {0}/{1}.log 2>&1".format(args.tmp_dir, assembler['name'])
     main_function = cmd.split(" ")[0]
     cmd = " ".join(cmd.split(" ")[1:])
-    print("cmd: " + cmd)
     return (main_function,
             cmd,
             replace_placeholders(contig_output, config, reads_ns, args),
@@ -2016,7 +2018,14 @@ def log_read_and_run_data(reads_ns, args, results, logger):  # pragma nocover
     logger.info("ASSEMBLER DETAILS:\n" + tabulate.tabulate(run_table))
 
 
-def run_scaffolder(args, config, reads_ns, results, run_id, logger=None):
+def run_scaffolder(args, tools, config, reads_ns, results, run_id, logger=None):
+    if tool.scaffolder['linkage_evidence'] == "paired-end":
+        run_pe_scaffolder(args, tools, config, reads_ns, results, run_id, logger=logger)
+    else:
+        run_ref_scaffolder(args, tools, config, reads_ns, results, run_id, logger=logger)
+
+
+def run_ref_scaffolder(args, tools, config, reads_ns, results, run_id, logger=None):
     """
     Runs specified scaffolder....
 
@@ -2024,211 +2033,131 @@ def run_scaffolder(args, config, reads_ns, results, run_id, logger=None):
     in a script which created a "$scaffolder.contig_ids" file listing the
     IDs of contigs scaffolded. These will then be used following scaffolding
     to create our own file of unscaffolded contigs
-
-    required params: $ (tmpdir)
-                 $ (reference)
-                 $ (scaffolder)
-                 $ (scaffolder args)
-                 $ (library insert size)
-	           $ (library insert sd)
-                 $ (run_id - appended to tmpdir to allow multiple runs)
-                 $ (path to contigs to scaffold)
-                 $ (mean read length)
-
-    returns        : $ (linkage evidence type)
     """
-    logger.info(" Starting $scaffolder");
-    tool_name = args.scaffolder
-    try:
-        conf_scaffolder = [x for x in config.scaffolders if x['name'].lower() == args.scaffolder][0]
-    except IndexError:
-        raise ValueError("Scaffolder %s is not defined" % tool_name)
-    exec_cmd = replace_placeholders(string=conf_scaffolder['command'],
+    logger.info(" Starting %s", tools.scaffolder['name'])
+    exec_cmd = replace_placeholders(string=tools.scaffolder['command'],
                                     config=config, results=results,
                                     reads_ns=reads_ns, args=args)
-    scaffold_output = replace_placeholders(string=conf_scaffolder['scaffold_output'],
+    assembler_run = exec_cmd.split(" ")[0]
+    exec_cmd = " ".join(exec_cmd.split(" ")[1:])
+    scaffold_output = replace_placeholders(string=tools.scaffolder['scaffold_output'],
                                            config=config, results=results,
                                            reads_ns=reads_ns, args=args)
-
     unscaffolded_output = None
-    if conf_scaffolder['unscaffolded_output']:
-        unscaffolded_output = conf_scaffolder['unscaffolded_output']
-    create = conf_scaffolder['create_dir']
-    linkage_evidence = conf_scaffolder['linkage_evidence']
+    if tools.scaffolder['unscaffolded_output']:
+        unscaffolded_output = tools.scaffolder['unscaffolded_output']
+
     # no default args are currently implemeted
-    default_args = conf_scaffolder['default_args']
+    default_args = tools.scaffolder['default_args']
     if args.scaffolder_args:
         exec_cmd = exec_cmd + args.scaffolder_args
     else:
         if default_args is not None:
             exec_cmd = exec_cmd + default_args
-    run_dir = os.path.join(args.tmp_dir, tool_name + "_" + str(run_id))
-    os.makedirs(run_dir)
-    # Treat reference-based scaffolder separately from paired-read scaffolders,
-    # since we need to scaffold per-reference, which
-    # doesn't work if your not using one...
-    scaffolder_cmd_list = []  # commands to be subprocessed
+
+    run_dir = os.path.join(args.tmp_dir,
+                           tools.scaffolder['name'] + "_" + str(run_id),
+                           "")
+    if True: # TODO make all scaffolder subscripts make a dir tools.scaffolder['create_dir']:
+        os.makedirs(run_dir)
+
+    # since we need to scaffold per-reference, which  doesn't work if your not using one..
     # list of paths of resulting scaffolds to be combined, if ref sequence has multiple records
     merge_these_scaffolds = []
     # this helps keep trak of resulting files
-    ref_ids = []
-    ref_paths = []
+    ref_ids = [] # list of ID's
+    ref_paths = []  # list of paths to the sequences we just rwote out
     with open(args.reference, "r") as ref:
         for idx, rec in enumerate(SeqIO.parse(ref, "fasta")):
             ref_ids.append(rec.id)
             ref_paths.append(os.path.join(run_dir, "reference_" + rec.id))
             with open(ref_paths[idx], "w") as outf:
                 SeqIO.write( rec, outf, "fasta")
-    if linkage_evidence == 'align_genus':
-        # If the reference contains multiple contigs, we first neeed to align
-        # out contigs to these
-        # to identify which contigs to scaffold against which reference, since
-        # some scaffolders targeted at bacteria don't handle multiple reference
-        # sequences
+    # If the reference contains multiple contigs, we first neeed to align
+    # our contigs to these
+    # to identify which contigs to scaffold against which reference, since
+    # some scaffolders targeted at bacteria don't handle multiple reference
+    # sequences
 
-        # moved ID parsing out, so we can keep naming the same
-        if not len(ref_ids) > 1:
-            # if we don't have mulitple references, we just need to make the
-            # reference and contigs available under consistent names
-            reference = ref_ids[0]
-            # contigs = contigs_output
-        else:
-            # blast indexing doesn't produce a workable index from a symlink, so need to copy the reference sequences
-            reference_copy = os.path.join(run_dir, "reference.fasta")
-            contigs_copy = os.path.join(run_dir, "contigs.fasta")
-            shutil.copyfile(args.reference, reference_copy)
-            shutil.copyfile(contigs, contigs_copy)
-            blast_cmd = str("{0} -query {1} -subject {2}  -task blastn -out " +
-                      "{3}clusters.blast 2>&1 > {3}blastn.log").format(
-                  config.blastn, contigs, args.reference, run_dir)
+    # moved ID parsing out, so we can keep naming the same
+    if not len(ref_ids) > 1:
+        # if we don't have mulitple references, we just need to make the
+        # reference and contigs available under consistent names
+        reference = ref_ids[0]
+        # contigs = contigs_output
+    else:
+        # blast indexing doesn't produce a workable index from a symlink, so
+        # need to copy the reference sequences
+        reference_copy = os.path.join(run_dir, "reference_for_scaffolding.fasta")
+        contigs_copy = os.path.join(run_dir, "contigs_to_be_scaffolded.fasta")
+        shutil.copyfile(args.reference, reference_copy)
+        shutil.copyfile(results.current_contigs, contigs_copy)
+        blast_cmd = str("{0} -query {1} -subject {2}  -task blastn -out " +
+                        "{3}clusters.blast 2>&1 > {3}blastn.log").format(
+                            config.blastn, contigs_copy, args.reference, run_dir)
 
-            subprocess.run(blast_cmd,
-                           shell=sys.platform != "win32",
-                           stdout=subprocess.PIPE,
-                           stderr=subprocess.PIPE,
-                           check=True)
-            # create dict of contigs per reference sequence, or unaligned
-            # only need to worry about the top hit for each...
-            ref_seqs = {}
-            ref_seqs['unaligned'] = []
-            with open(os.path.join(run_dir, "clusters.blast"), "r") as blast:
-                result = SearchIO.parse(blast, "blast-text")
-                for hit in result:
-                    hsps = [x for x in  blast_records.hsps]
-                    if len(hsps) == 0:
-                        ref_seqs['unaligned'].append(result.title)
+        subprocess.run(blast_cmd,
+                       shell=sys.platform != "win32",
+                       stdout=subprocess.PIPE,
+                       stderr=subprocess.PIPE,
+                       check=True)
+        # create dict of contigs per reference sequence, or unaligned
+        # only need to worry about the top hit for each...
+        ref_seqs = {"unaligned": []}
+        with open(os.path.join(run_dir, "clusters.blast"), "r") as blast:
+            result = SearchIO.parse(blast, "blast-text")
+            for hit in result:
+                hsps = [x for x in  hit.hsps]
+                if len(hsps) == 0:
+                    ref_seqs['unaligned'].append(hit._id)
+                else:
+                    # top_hit = hsps[0]
+                    query = hsps[0].query_id
+                    subject = hsps[0].hit.id
+                    if subject not in ref_seqs.keys():
+                        ref_seqs[subject] = [query]
                     else:
-                        top_hit = hsps[0]
-                        query = hsps[0].query
-                        subject = hsps[0].sbjct
-                        ref_seqs[subject] = query
+                        ref_seqs[subject].append(query)
+        logger.debug("generate a fasta file of contigs which align to each reference")
+        for ref, cntgs in ref_seqs.items():
+            out_name = os.path.join(run_dir, "reference_" + ref + "_contigs.fasta")
+            with open(contigs_copy, "r") as contig_f:
+                with open(out_name, "a") as out_f:
+                    for rec in SeqIO.parse(contig_f, "fasta"):
+                        if rec.id in cntgs:
+                            SeqIO.write(rec, out_f,  "fasta")
 
-            logger.debug("generate a fasta file of contigs which align to each reference")
-            for ref in ref_seq.keys():
-                out_name = os.path.join(run_dir, "reference_" + ref + "_contigs.fasta")
-                with open(contigs, "r") as contig_f:
-                    with open(out_name, "a") as outf:
-                        for rec in SeqIO.parse(contig_f, "fasta"):
-                            if ref.id == ref:
-                                SeqIO.write(contig_f, rec, "fasta")
-
-        ###################################################3
-
-#         my $mergedIO = Bio::SeqIO->new( -format => 'fasta', -file => ">$run_dir/scaffolds.fasta" );
-#         my $merged_scaffolds;    #for final merging of per-reference scaffolds
-#         my $merged_scaff_count = 0;
-
-#         # Now run the selecting scaffolder on each set of reference and contigs...
-        for ref_id in ref_ids:
-            scaff_contigs = os.path.join(run_dir, "reference_" + ref_id + "_contigs.fasta")
-            if not os.path.exists(scaff_contigs):
-                continue
-            logger.info("Scaffolding vs. %s", ref_id)
-            reference = "reference_" + ref_id
-            # moved replacment of placehodlers to above -- should be fine, eh?
-            if unscaffolded_output:
-                unscaffolded_output = replace_placeholders(
-                    string=unscaffolded_output,config=config,
-                    reads_ns=reads_ns, args=args)
-            os.makedirs
-            run_scaffold_output = os.path.join(args.tmp_dir,
-                                               scaffolder +"_"+ ref_id,
-                                               scaffold_output)
-            # moved scaf_args out of if statement as well!
-            exec_cmd = exec_cmd + " 2>&1 > " + os.path.join(
-                args.tmpdir,
-                args.scaffolder + "_" + str(run_id) + "_" + ref_id + ".log")
-            scaffolder_cmd_list.append(exec_cmd)
-            merge_these_scaffolds.append(os.path.join(run_scaffold_output, "scaffolds.fasta"))
-#             mkdir("$run_dir/${scaffolder}_${ref_id}") or die "Error creating $run_dir/${scaffolder}_${ref_id}: $! ";
-#             chdir("$run_dir/${scaffolder}_${ref_id}") or die "Error in chdir $run_dir/${scaffolder}_${ref_id}: $! ";
-#             symlink( "$run_dir/${reference}", "$run_dir/${scaffolder}_${ref_id}/$reference" )
-#               or die "Error linking $reference:$! ";
-
-#             #symlink( "$run_dir/reference_${ref_ids[0]}_contigs", "$run_dir/${scaffolder}_${ref_id}/$contigs" )
-#             #or die "Error linking $contigs:$! ";
-
-#             system("perl $exec_cmd") == 0 or die "Error executing $exec_cmd: ";
-#             my $scaffIO =
-#               Bio::SeqIO->new( -format => 'fasta', -file => "$run_dir/${scaffolder}_${ref_id}/scaffolds.fasta" )
-#               or die "Error opening $run_dir/${scaffolder}_${ref_id}/scaffolds.fasta: $!";
-#             while ( my $scaff = $scaffIO->next_seq() ) {
-#                 $scaff->display_id( 'scaffold_' . ++$merged_scaff_count );
-#                 $mergedIO->write_seq($scaff);
-#             }
-#         }
-#     }
-    else: # non reference-guided scaffolding, that is....
-        # A kludge to work when tmpdir is not the top run dir - needed
-        # because align_reads concatenates path from tmpdir and contigs.fasta
-        # if ( !-e "$tmpdir/contigs.fasta" ) {
-        #     symlink( $contigs, "$tmpdir/contigs.fasta" );
-        # }
-
-        # if no reference provided we won't have an estimate of insert size,
-        # so need to get this by read alignment vs the assembly.
-        if reads_ns.mean_insert is None:
-            logger.info("Aligning reads to contigs to determine insert size")
-            sorted_bam = align_reads(dirname="align_to_contigs", reads_ns=reads_ns,
-                                     config=config, downsample=True, args=args,
-                                     logger=logger)
-            reads_ns.insert_mean, reads_ns.insert_stddev = get_insert_stats(
-                bam=sorted_bam, config=config, args=args, reads_ns=reads_ns, logger=logger)
-
-        run_scaffold_output = os.path.join(args.tmp_dir,
-                                           scaffolder + "_no_reference",
-                                           scaffold_output)
-
+    for ref_id in ref_ids:
+        scaff_contigs = os.path.join(run_dir, "reference_" + ref_id + "_contigs.fasta")
+        if not os.path.exists(scaff_contigs):
+            continue
+        logger.info("Scaffolding vs. %s", ref_id)
+        reference = "reference_" + ref_id
+        # moved replacment of placehodlers to above -- should be fine, eh?
+        if unscaffolded_output:
+            unscaffolded_output = replace_placeholders(
+                string=unscaffolded_output,config=config,
+                reads_ns=reads_ns, args=args)
+        run_scaffold_output = os.path.join(run_dir, "",  scaffold_output)
         # moved scaf_args out of if statement as well!
         exec_cmd = exec_cmd + " 2>&1 > " + os.path.join(
-            args.tmpdir,
-        args.scaffolder + "_" + str(run_id) + ".log")
-        scaffolder_cmd_list.append(exec_cmd)
+            args.tmp_dir,
+            args.scaffolder + "_" + str(run_id) + "_" + ref_id + ".log")
         merge_these_scaffolds.append(os.path.join(run_scaffold_output, "scaffolds.fasta"))
 
-        #mkdir("$run_dir/${scaffolder}") or die "Error creating $run_dir/${scaffolder}: $! ";
-        #chdir("$run_dir/${scaffolder}") or die "Error in chdir $run_dir/{scaffolder}: $! ";
-        #symlink( "$run_dir/${reference}", "$run_dir/${scaffolder}/$reference" )
-        #  or die "Error linking $reference:$! ";
-
-        #symlink( "$run_dir/reference_${ref_ids[0]}_contigs", "$run_dir/${scaffolder}_${ref_id}/$contigs" )
-
-    # when refactor, end get_scaffolder_cmds here
-    # now we have are command(s), so run them
-    subprocess.run(exec_cmd,
-                   shell=sys.platform != "win32",
-                   stdout=subprocess.PIPE,
-                   stderr=subprocess.PIPE,
-                   check=True)
-    resulting_scaffold = os.path.join(args.tmp_dir, args.scaffolder + run_id,
-                                      "scaffolds.fasta")
+    # here we execute the "run" function from the appropriate runner script
+    sub_mains[args.scaffolder](config=config, args=args, results=results,
+                          scaff_dir=run_dir, logger=logger)
+    resulting_scaffold = os.path.join(run_dir, "scaffolds.fasta")
     if len(merge_these_scaffolds) != 0:
         counter = 1
         with open(resulting_scaffold, "w") as outf:
-            for scaf in merge_these_scaffolds:
-                for rec in SeqIO.parse(scaf):
-                    rec.id = "scaffold_%05d" % counter
-                    SeqIO.write(rec, outf, fasta)
+            for scaf_path in merge_these_scaffolds:
+                with open(scaf_path, "r") as scaf:
+                    for rec in SeqIO.parse(scaf, "fasta"):
+                        rec.id = "scaffold_%05d" % counter
+                        SeqIO.write(rec, outf, fasta)
+    return resulting_scaffold
 
 #     # Create a fasta file of unplaced contigs if files of contig_ids are generated by the scaffolder wrapper
 #     my @id_files = File::Find::Rule->file()->name("${scaffolder}.contig_ids")->in($run_dir);
@@ -2278,7 +2207,171 @@ def run_scaffolder(args, config, reads_ns, results, run_id, logger=None):
 #               or die "Error creating symlink: $!";
 #         }
 #     }
-    return linkage_evidence
+    # return linkage_evidence
+
+# }
+
+def run_pe_scaffolder(args, config, reads_ns, results, run_id, logger=None):
+    """
+    Runs specified scaffolder....
+
+    Scaffolders which don't separate unscaffolded contigs can be wrapped
+    in a script which created a "$scaffolder.contig_ids" file listing the
+    IDs of contigs scaffolded. These will then be used following scaffolding
+    to create our own file of unscaffolded contigs
+
+    required params: $ (tmpdir)
+                 $ (reference)
+                 $ (scaffolder)
+                 $ (scaffolder args)
+                 $ (library insert size)
+	           $ (library insert sd)
+                 $ (run_id - appended to tmpdir to allow multiple runs)
+                 $ (path to contigs to scaffold)
+                 $ (mean read length)
+
+    returns        : $ (linkage evidence type)
+    """
+    logger.info(" Starting $scaffolder");
+    tool_name = args.scaffolder
+    try:
+        conf_scaffolder = [x for x in config.scaffolders if x['name'].lower() == args.scaffolder][0]
+    except IndexError:
+        raise ValueError("Scaffolder %s is not defined" % tool_name)
+    exec_cmd = replace_placeholders(string=conf_scaffolder['command'],
+                                    config=config, results=results,
+                                    reads_ns=reads_ns, args=args)
+    assembler_run = exec_cmd.split(" ")[0]
+    exec_cmd = " ".join(exec_cmd.split(" ")[1:])
+    scaffold_output = replace_placeholders(string=conf_scaffolder['scaffold_output'],
+                                           config=config, results=results,
+                                           reads_ns=reads_ns, args=args)
+
+    unscaffolded_output = None
+    if conf_scaffolder['unscaffolded_output']:
+        unscaffolded_output = conf_scaffolder['unscaffolded_output']
+    create = conf_scaffolder['create_dir']
+    linkage_evidence = conf_scaffolder['linkage_evidence']
+    # no default args are currently implemeted
+    default_args = conf_scaffolder['default_args']
+    if args.scaffolder_args:
+        exec_cmd = exec_cmd + args.scaffolder_args
+    else:
+        if default_args is not None:
+            exec_cmd = exec_cmd + default_args
+    run_dir = os.path.join(args.tmp_dir, tool_name + "_" + str(run_id))
+    os.makedirs(run_dir)
+    # Treat reference-based scaffolder separately from paired-read scaffolders,
+    # since we need to scaffold per-reference, which
+    # doesn't work if your not using one...
+    scaffolder_cmd_list = []  # commands to be subprocessed
+    # list of paths of resulting scaffolds to be combined, if ref sequence has multiple records
+    merge_these_scaffolds = []
+    # this helps keep trak of resulting files
+    ref_ids = []
+    ref_paths = []
+    with open(args.reference, "r") as ref:
+        for idx, rec in enumerate(SeqIO.parse(ref, "fasta")):
+            ref_ids.append(rec.id)
+            ref_paths.append(os.path.join(run_dir, "reference_" + rec.id))
+            with open(ref_paths[idx], "w") as outf:
+                SeqIO.write( rec, outf, "fasta")
+    # non reference-guided scaffolding, that is....
+    # if no reference provided we won't have an estimate of insert size,
+    # so need to get this by read alignment vs the assembly.
+    if reads_ns.mean_insert is None:
+        logger.info("Aligning reads to contigs to determine insert size")
+        sorted_bam = align_reads(dirname="align_to_contigs", reads_ns=reads_ns,
+                                 config=config, downsample=True, args=args,
+                                 logger=logger)
+        reads_ns.insert_mean, reads_ns.insert_stddev = get_insert_stats(
+            bam=sorted_bam, config=config, args=args, reads_ns=reads_ns, logger=logger)
+
+    run_scaffold_output = os.path.join(args.tmp_dir,
+                                       args.scaffolder + "_no_reference",
+                                       scaffold_output)
+
+    # moved scaf_args out of if statement as well!
+    exec_cmd = exec_cmd + " 2>&1 > " + os.path.join(
+        args.tmpdir,
+        args.scaffolder + "_" + str(run_id) + ".log")
+    # scaffolder_cmd_list.append(exec_cmd)
+    merge_these_scaffolds.append(os.path.join(run_scaffold_output, "scaffolds.fasta"))
+
+
+    # when refactor, end get_scaffolder_cmds here
+    # now we have are command(s), so run them
+
+    # here we execute the "run" function from the appropriate runner script
+    sub_mains[args.scaffolder](config=config, args=args, results=results,
+                          scaff_dir=run_dir, logger=logger)
+    # for cmd in scaffolder_cmd_list:
+    #     pass
+    # subprocess.run(exec_cmd,
+    #                shell=sys.platform != "win32",
+    #                stdout=subprocess.PIPE,
+    #                stderr=subprocess.PIPE,
+    #                check=True)
+    resulting_scaffold = os.path.join(run_scaffold_output,
+                                      "scaffolds.fasta")
+    if len(merge_these_scaffolds) != 0:
+        counter = 1
+        with open(resulting_scaffold, "w") as outf:
+            for scaf in merge_these_scaffolds:
+                for rec in SeqIO.parse(scaf):
+                    rec.id = "scaffold_%05d" % counter
+                    SeqIO.write(rec, outf, fasta)
+    return resulting_scaffold
+
+#     # Create a fasta file of unplaced contigs if files of contig_ids are generated by the scaffolder wrapper
+#     my @id_files = File::Find::Rule->file()->name("${scaffolder}.contig_ids")->in($run_dir);
+#     if ( scalar(@id_files) ) {
+#         my %used_contigs;
+#         foreach my $id_file (@id_files) {
+#             open CONTIG_IDS, $id_file or die "Error opening $id_file: $!";
+#             while (<CONTIG_IDS>) {
+#                 chomp;
+#                 $used_contigs{$_}++;
+#             }
+#             close CONTIG_IDS;
+#         }
+#         my $inIO  = Bio::SeqIO->new( -format => 'fasta', -file => "$contigs" );
+#         my $outIO = Bio::SeqIO->new( -format => 'fasta', -file => ">$run_dir/unplaced_contigs.fasta" );
+#         while ( my $contig = $inIO->next_seq() ) {
+#             $outIO->write_seq($contig) unless ( $used_contigs{ $contig->display_id() } && $contig->length() > 200 );
+#         }
+#     }
+
+#     #renumber scaffolds to ensure they are unique...
+#     my $count = 0;
+#     my $inIO  = Bio::SeqIO->new( -file => "$run_dir/scaffolds.fasta", -format => "fasta" );
+#     my $outIO = Bio::SeqIO->new( -file => ">$run_dir/scaffolds_renumbered.fasta", -format => "fasta" );
+
+#     while ( my $seq = $inIO->next_seq() ) {
+#         $seq->display_id( "scaffold_" . ++$count );
+#         $outIO->write_seq($seq);
+#     }
+
+#     print "\nScaffolded assembly stats\n=========================\n\n";
+#     get_contig_stats( "$run_dir/scaffolds.fasta", 'scaffolds' );
+
+#     if ( $run_id == 1 ) {
+#         chdir $tmpdir or die "Error chdiring to $tmpdir: $! ";
+#         unlink "scaffolds.fasta"
+#           or die "Error removing scaffolds.fasta: $! "
+#           if ( -l "scaffolds.fasta" );
+#         symlink( "$run_dir/scaffolds_renumbered.fasta", "scaffolds.fasta" )
+#           or die "Error creating symlink: $! ";
+#         if ( defined($unscaffolded_output) ) {
+#             symlink( "$run_dir/$unscaffolded_output", "unplaced_contigs.fasta" )
+#               or die "Error creating symlink: $!";
+#         }
+#         elsif ( -e "$tmpdir/${scaffolder}/unplaced_contigs.fasta" ) {
+#             symlink( "${scaffolder}/unplaced_contigs.fasta", "unplaced_contigs.fasta" )
+#               or die "Error creating symlink: $!";
+#         }
+#     }
+    # return linkage_evidence
 
 # }
 
@@ -2323,15 +2416,15 @@ def find_origin(args, config, results, logger):
             if not origin and fields[0] ==1:
                 origin = "{0}:{1}".format(fields[8], fields[2])
                 logger.info("Potential origin found at %s", origin )
-    scaffolds_ori_split = os.path.join(ori_dir, "split_ori_scaff.fasta")  # OutIO
-    split_ori_scaff = os.path.join(ori_dir, "scaffolds_ori_split.fasta")  # SplitIO
+    outIO = os.path.join(ori_dir, "split_ori_scaff.fasta")  # OutIO
+    splitIO = os.path.join(ori_dir, "scaffolds_ori_split.fasta")  # SplitIO
     if origin is not None:
         ori_scaffold, pos = origin.split(":")
         with open(results.current_scaffolds, "r") as inscaff:
             for rec in SeqIO.parse(inscaff, "fasta"):
                 if ori_scaffold == rec.id:
                     # write out both parts after splitting
-                    with open(split_ori_scaff, "w") as splitscaff :
+                    with open(splitIO, "w") as splitscaff :
                         part_a = rec.seq[0: pos]
                         part_b = rec.seq[pos + 1: ]
                         ori_a = SeqRecord(id=rec.id + "_A",
@@ -2344,7 +2437,7 @@ def find_origin(args, config, results, logger):
                     results.old_scaffolds.append([results.current_scaffolds,
                                                   results.current_scaffolds_source])
                     results.current_scaffolds = split_ori_scaff
-                    results.current_scaffolds_source = "split_orii_scaff"
+                    results.current_scaffolds_source = "split_ori_scaff"
                     new_scaffolds = run_scaffolder(
                         args=args, config=config, reads_ns=reads_ns, results=results,
                         run_id=2, logger=logger)
@@ -2353,19 +2446,20 @@ def find_origin(args, config, results, logger):
                     results.current_scaffolds = new_scaffolds
                     results.current_scaffolds_source = "find_origin_rescaffolded"
 
-                    with open(new_scaffolds, "r") as infile, open(scaffolds_ori_split, "a") as outfile:
+                    with open(new_scaffolds, "r") as infile, open(outIO, "a") as outfile:
                         for new_rec in SeqIO.parse(infile):
                             SeqIO.write(new_rec, outfile, "fasta")
                 else:
                     # these dont need splitting
-                    with open(scaffolds_ori_split, "a") as outfile:
+                    with open(outIO, "a") as outfile:
                         SeqIO.write(rec, outfile, "fasta")
 
     #renumber scaffolds to ensure they are unique...
     counter = 1
-    renumbered_scaffs = os.path.dirname(scaffolds_ori_split, "scaffold.fasta")
-    with open(scaffolds_ori_split, "r") as inf, open(renumbered_scaffs, "w") as outf:
-        for rec in SeqIO.parse():
+    renumbered_scaffs = os.path.join(
+        os.path.dirname(splitIO), "scaffold.fasta")
+    with open(splitIO, "r") as inf, open(renumbered_scaffs, "w") as outf:
+        for rec in SeqIO.parse(inf):
             rec.id = "scaffold_%05d" % counter
             counter = counter + 1
             SeqIO.write(rec, outf, fasta)
@@ -2416,15 +2510,6 @@ def order_scaffolds():
                        stderr=subprocess.PIPE,
                        check=True)
 
-    # my $cmd = $config->{'mummer_dir'}
-    #   . "/nucmer $tmpdir/$reference $tmpdir/scaffolds.fasta -p $tmpdir/orientating/ori2 > $tmpdir/orientating/nucmer2.log 2>&1";
-    # system($cmd) == 0 or die "Error executing $cmd: $!";
-    # $cmd = $config->{'mummer_dir'}
-    #   . "/delta-filter -1 $tmpdir/orientating/ori2.delta 2>$tmpdir/orientating/delta-filter2.log > $tmpdir/orientating/ori2.filter";
-    # system($cmd) == 0 or die "Error executing $cmd: $!";
-    # $cmd = $config->{'mummer_dir'}
-    #   . "/show-coords -H $tmpdir/orientating/ori2.filter 2>$tmpdir/orientating/show-coords2.log > $tmpdir/orientating/ori2.coords";
-    # system($cmd) == 0 or die "Error executing $cmd: $!";
     orient_coords = os.path.join(orient_dir, "ori2.coords")
     orient_count = { '+': 0,
                      '-': 0 }
@@ -2462,7 +2547,8 @@ def order_scaffolds():
 
     # Reorientate contigs and break origin, rewriting to a new file...
     new_scaffolds = os.path.join(orient_dir, "scaffolds.fasta")
-    with open(results.current_scaffolds, "r") as inf, open(new_scaffolds, "r") as outf:
+    with open(results.current_scaffolds, "r") as inf, \
+         open(new_scaffolds, "r") as outf:
         for i, rec in enumerate(SeqIO.parse(inf, "fasta")):
             orig_length = orig_length + len(rec.seq)
             rec.id = "scaffold_%5d"  % str(i + 1)
@@ -2568,7 +2654,7 @@ def main(args=None, logger=None):
     try:
         os.makedirs(args.outdir, exist_ok=False)
     except OSError:
-        print("output directory existsl Existing...")
+        print("output directory exists! Exiting...")
         sys.exit(1)
     if logger is None:
         logger = set_up_logging(
@@ -2606,7 +2692,7 @@ def main(args=None, logger=None):
     logger.info("Determining if a reference is needed")
     check_ref_needed(args=args, lib_type=reads_ns.lib_type)
 
-    logger.info("preparing config and tools")
+    logger.info("Preparing config and tools")
     tools = select_tools(args, config=config, reads_ns=reads_ns, logger=logger)
 
     logger.debug("Determining if fastqc will be run")
@@ -2681,16 +2767,19 @@ def main(args=None, logger=None):
         results.current_scaffolds = \
             results.assemblers_results_dict_list[0]['scaffolds']
 
+    print(results.__dict__)
+    print(tools.__dict__)
+    print(args.__dict__)
 
     #TODO why do we check scaffolder here?
     if args.scaffolder and args.reference:
         results.ID_OK = check_id(args, contigs=results.current_contigs,
                                  config=config,
                                  logger=logger)
-    if args.scaffolder is not None:
+    if tools.scaffolder is not None:
         if \
-           (results.ID_OK and scaffolder_type == "paired_ends" or \
-             not results.ID_OK and scaffolder_type == "paired_ends"):
+           (results.ID_OK and tools.scaffolder['linkage_evidence'] == "align-genus") or \
+             not (results.ID_OK and tools.scaffolder['linkage_evidence'] == "paired-ends"):
             results.old_scaffolds.append(["either nowhere or straight from assembler",
                                          results.current_scaffolds])
             results.current_scaffolds = run_scaffolder(

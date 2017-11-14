@@ -81,26 +81,29 @@ use File::Basename;
 
 """
 import glob
+import subprocess
+import sys
+import os
 from .shared_methods import make_nucmer_delta_show_cmds
 #from scaffoldsis import sis, multifasta
 
-def make_sis_etc_cmds(config, args, contigs, scaff_dir):
+def make_sis_etc_cmds(config, args, results, scaff_dir):
     cmds = make_nucmer_delta_show_cmds(
-        config, ref=args.reference, query=contigs,
+        config, ref=args.reference, query=results.current_contigs,
         out_dir=scaff_dir, prefix="sis", header=True)
     # sis
     sis_cmd = "{0} {1}/sis.coords > {1}/sis.sis".format(
         config.sis, scaff_dir)
     cmds.append(sis_cmd)
     # multifasta
-    multifasta_cmd = "{0} {1}/sis.sis {2}".format(
-        config.multifasta, scaff_dir, contigs)
+    multifasta_cmd = "{0} {1}/sis.sis {1}/multiout".format(
+        config.multifasta, scaff_dir, results.current_contigs)
     cmds.append(multifasta_cmd)
     return cmds
 
 
-def run(config, args, contigs, scaff_dir, logger):
-    cmd_list = make_sis_etc_cmds(config, args, contigs, scaff_dir)
+def run(config, args, results, scaff_dir, logger):
+    cmd_list = make_sis_etc_cmds(config, args, results, scaff_dir)
     for cmd in cmd_list:
         logger.debug(cmd)
         subprocess.run(cmd,

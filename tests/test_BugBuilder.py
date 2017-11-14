@@ -61,7 +61,7 @@ class test_BugBuilder(unittest.TestCase):
         newpath_config = os.path.join(
             self.test_dir, "to_be_filled.yaml")
         shutil.copyfile(self.empty_config, newpath_config)
-        config = bb.return_config(newpath_config, logger=logger)
+        config = bb.return_config(newpath_config, hardfail=False, logger=logger)
         self.assertEqual(config.STATUS, "COMPLETE")
 
     def test_make_fastqc_cmd(self):
@@ -497,19 +497,21 @@ class test_BugBuilder(unittest.TestCase):
             # de_fere_contigs=None,
             reference=self.ref_fasta,
             genome_size=0,
-            # tmp_dir=self.test_dir,
+            tmp_dir=self.test_dir,
             scaffolder="sis",
-            #scaffolder_args=None,
+            scaffolder_args=None,
             # memory=8, untrimmed_fastq1=None, untrimmed_fastq2=None, platform="illumina", threads=1
         )
         config = bb.parse_config(self.filled_config)
+        tools = Namespace(
+            scaffolder=[x for x in config.scaffolders if x['name'].lower() == "sis"][0])
         results = bb.make_empty_results_object()
-        results.current_contigs = "contigs"
+        results.current_contigs = self.contigs
         results.current_scaffolds = "scaffs"
         reads_ns = bb.assess_reads(args=test_args, config=config,
                                    platform="illumina", logger=logger)
-        bb.run_scaffolder(
-            args=test_args, config=config, results=results, reads_ns=reads_ns,
+        bb.run_ref_scaffolder(
+            args=test_args, config=config, tools=tools, results=results, reads_ns=reads_ns,
             run_id=1, logger=logger)
         self.to_be_removed.append(os.path.join(self.test_dir, "sis_1"))
 

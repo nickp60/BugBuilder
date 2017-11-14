@@ -22,7 +22,7 @@ logger = logging
                  "Subprocess.call among other things wont run if tried " +
                  " with less than python 3.5")
 class test_run_sis(unittest.TestCase):
-    """ tests for riboSeed.py
+    """
     """
     def setUp(self):
         self.ref_dir = os.path.join(os.path.dirname(__file__), "references")
@@ -40,10 +40,10 @@ class test_run_sis(unittest.TestCase):
         self.to_be_removed = []
 
     def test_make_sis_etc_cmds(self):
-        """ test pandas import
+        """
         """
         ref_cmds = [
-            "nucmer reffy contig.fa -p sisdir/sis 2>&1 > sisdir/nucmer.log",
+            "nucmer reffy contig.fa -p sisdir/sis > sisdir/nucmer.log 2>&1",
             "delta-filter -1 sisdir/sis.delta 2> sisdir/delta-filter.log > sisdir/sis.filter",
             "show-coords sisdir/sis.filter 2> sisdir/show-coords.log > sisdir/sis.coords",
             "sis.py sisdir/sis.coords > sisdir/sis.sis",
@@ -57,7 +57,7 @@ class test_run_sis(unittest.TestCase):
         config.delta_filter = "delta-filter"
         config.sis = "sis.py"
         config.multifasta = "multifasta.py"
-        cmds = rs.make_sis_etc_cmds(config=config, args=test_args, contigs="contig.fa", scaff_dir="sisdir")
+        cmds = rs.make_sis_etc_cmds(config=config, args=test_args, results=results.scaff_dir="sisdir")
         for i, cmd in enumerate(cmds):
             self.assertEqual(cmd, ref_cmds[i])
 
