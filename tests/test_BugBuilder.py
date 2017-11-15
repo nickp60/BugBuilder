@@ -8,6 +8,7 @@ import sys
 import logging
 import os
 from unittest import mock
+from yaml import YAMLError
 import unittest
 import shutil
 import BugBuilder.BugBuilder as bb
@@ -29,6 +30,7 @@ class test_BugBuilder(unittest.TestCase):
         self.encoding_dir = os.path.join(self.ref_dir, "encoding")
         self.test_dir = os.path.join(os.path.dirname(__file__), "tmp_tests")
         self.empty_config = os.path.join(self.ref_dir, "empty_config.yaml")
+        self.broken_config = os.path.join(self.ref_dir, "broken_config.yaml")
         self.filled_config = os.path.join(self.ref_dir, "semicomplete_config.yaml")
         self.ref_fasta = os.path.join(self.ref_dir, "AP017923.1.fasta")
         self.ref_split = os.path.join(self.ref_dir, "split_AP017923.1.fasta")
@@ -43,19 +45,23 @@ class test_BugBuilder(unittest.TestCase):
         os.makedirs(self.test_dir, exist_ok=True)
         self.startTime = time.time() # for timing
         self.to_be_removed = []
-        #  I wish there was a way around this
-        sis_path = os.path.join(self.test_dir, "sis_1")
-        if os.path.exists(sis_path):
-            shutil.rmtree(sis_path)
+        # #  I wish there was a way around this
+        # sis_path = os.path.join(self.test_dir, "sis_1")
+        # if os.path.exists(sis_path):
+        #     shutil.rmtree(sis_path)
 
     def test_parse_config(self):
-        """ test pandas import
         """
-        newpath_config = os.path.join(
-            self.test_dir, "empty.yaml")
-        shutil.copyfile(self.empty_config, newpath_config)
-        config = bb.parse_config(newpath_config)
+        """
+        config = bb.parse_config(self.empty_config)
         self.assertEqual(config.STATUS, "INCOMPLETE")
+
+    def test_parse_config_broken(self):
+        """
+        """
+        with self.assertRaises(YAMLError):
+            config = bb.parse_config(self.broken_config)
+
 
     def test_fill_in_config(self):
         """ test pandas import
@@ -373,8 +379,8 @@ class test_BugBuilder(unittest.TestCase):
     def test_parse_available_assemblers(self, shumock):
         shumock.which = "exectuable"
         self.assertEqual(
-            ["abyss", "spades", "mascura"],
-            bb.parse_available_assemblers()
+            ["abyss", "spades"],
+            bb.parse_available("assemblers", self.filled_config)
         )
 
     def test_parse_available_scaffolders(self):

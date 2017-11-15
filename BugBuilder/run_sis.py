@@ -15,69 +15,12 @@
 #
 ######################################################################
 
-=pod
-
-=head1 NAME
-
-run_sis
-
-=head1 SYNOPSIS
-
-run_sis --tmpdir BugBuilder_working_directory --reference reference_genome.fasta [--help]
-
-=head1 DESCRIPTION
-
 Wrapper for SIS scaffolder to permit use withing BugBuilder's scaffolding configuration.
 SIS makes use of MUMmer to carry out alignments, and post-processes the show_coords output.
 These MUMmer stages need running prior to executing SIS itself. Following SIS execution the
 generated scaffolds (which consist of ordered contigs, with one scaffold per fasta file)
 are reprocessed into a multifasta file of 'N' gapped scaffold sequences.
 
-=head1 REQUIRED ARGUMEMNTS
-
-=over 4
-
-=item B<tmpdir>: BugBuilder working directory
-
-=item B<scaff_dir>: Directory within tmpdir for scaffolding these sequences...
-
-=item B<reference>: Fasta formatted reference genome for aligning contigs against
-
-=item B<contigs>: Fasta formatted file of contig sequences to scaffold
-
-=back
-
-=head1 OPTIONAL ARGUMENTS
-
-=over 4
-
-=item B<help>: display short help text
-
-=item B<man>: display full documentation
-
-=back
-
-=head1 REPORTING BUGS
-
-Please report any bugs/issues via github:
-https://github.com/jamesabbott/BugBuilder/issues/new
-
-=head1 AUTHOR - James Abbott
-
-Email j.abbott@imperial.ac.uk
-
-=cut
-
-use warnings;
-use strict;
-
-use FindBin;
-use YAML::XS qw(LoadFile);
-use Getopt::Long;
-use Pod::Usage;
-use Carp qw(croak cluck);
-use Bio::SeqIO;
-use File::Basename;
 
 """
 import glob
@@ -88,7 +31,6 @@ from .shared_methods import make_nucmer_delta_show_cmds
 from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
-#from scaffoldsis import sis, multifasta
 
 def make_sis_etc_cmds(config, ref, contigs, scaff_dir):
     cmds = make_nucmer_delta_show_cmds(

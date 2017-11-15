@@ -129,15 +129,6 @@ assemblers:
      scaffold_output: __TMPDIR__/celera/output/9-terminator/BugBuilder.scf.fasta
      downsample_reads: 0
      insert_size_required: 0
-   - name: PBcR
-     create_dir: 1
-     min_length: 500
-     max_length: null
-     command_se: run_PBcR --fastq __LONGFASTQ__ --tmpdir __TMPDIR__ --genome_size __GENOME_SIZE__ --platform __PLATFORM__
-     contig_output: __TMPDIR__/PBcR/BugBuilder/9-terminator/asm.ctg.fasta
-     scaffold_output: __TMPDIR__/PBcR/BugBuilder/9-terminator/asm.scf.fasta
-     downsample_reads: 0
-     insert_size_required: 0
      # masurca works best with untrimmed reads, so use __ORIG_FASTQ1__ nad __ORIG_FASTQ2__
    - name: masurca
      create_dir: 1
@@ -219,19 +210,41 @@ varcallers:
      create_dir: 1
      priority: 1
 
-R: /usr/local/bin/R
-blastn: /Users/nicholas/miniconda3/envs/bug/bin/blastn
-bwa: /Users/nicholas/miniconda3/envs/bug/bin/bwa
-delta_filter: /Users/nicholas/miniconda3/envs/bug/bin/delta-filter
-fastqc: /Users/nicholas/miniconda3/envs/bug/bin/fastqc
-makeblastdb: /Users/nicholas/miniconda3/envs/bug/bin/makeblastdb
-multifasta: /Users/nicholas/miniconda3/envs/bug/bin/multifasta.py
-mummer: /Users/nicholas/miniconda3/envs/bug/bin/mummer
-nucmer: /Users/nicholas/miniconda3/envs/bug/bin/nucmer
-picard: /Users/nicholas/miniconda3/envs/bug/bin/picard
-samtools: /Users/nicholas/miniconda3/envs/bug/bin/samtools
-seqtk: /Users/nicholas/miniconda3/envs/bug/bin/seqtk
-show_coords: /Users/nicholas/miniconda3/envs/bug/bin/show-coords
-sickle: /Users/nicholas/miniconda3/envs/bug/bin/sickle
-sis: /Users/nicholas/miniconda3/envs/bug/bin/sis.py
-spades: /Users/nicholas/miniconda3/envs/bug/bin/spades.py
+R: /usr/bin/R
+abyss: /usr/bin/abyss
+abyss_sealer: null
+amos: null
+aragorn: null
+asn2gb: /usr/bin/asn2gb
+barrnap: /home/nicholas/miniconda3/bin/barrnap.py
+blastn: /usr/bin/blastn
+bwa: /home/nicholas/miniconda3/bin/bwa
+celera: null
+cgview: null
+delta_filter: /usr/bin/delta-filter
+fastqc: /home/nicholas/miniconda3/bin/fastqc
+gapfiller: null
+gfinisher: null
+hmmer3: null
+infernal: null
+makeblastdb: /usr/bin/makeblastdb
+masurca: null
+mauve: null
+minimus: null
+multifasta: /home/nicholas/Virtualenvs/bug/bin/multifasta.py
+mummer: /home/nicholas/kSNP3.021_Linux_package/kSNP3/mummer
+nucmer: /usr/bin/nucmer
+picard: /home/nicholas/miniconda3/bin/picard
+pilon: null
+prodigal: /usr/bin/prodigal
+prokka: null
+rnammer: null
+samtools: /home/nicholas/miniconda3/bin/samtools
+seqtk: /home/nicholas/bin/seqtk
+show_coords: /usr/bin/show-coords
+sickle: /home/nicholas/bin/sickle
+sis: /home/nicholas/Virtualenvs/bug/bin/sis.py
+spades: /home/nicholas/miniconda3/bin/spades.py
+sspace: null
+tbl2asn: /usr/bin/tbl2asn
+vcflib: null

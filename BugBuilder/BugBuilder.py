@@ -145,15 +145,6 @@ assemblers:
      scaffold_output: __TMPDIR__/celera/output/9-terminator/BugBuilder.scf.fasta
      downsample_reads: 0
      insert_size_required: 0
-   - name: PBcR
-     create_dir: 1
-     min_length: 500
-     max_length: null
-     command_se: run_PBcR --fastq __LONGFASTQ__ --tmpdir __TMPDIR__ --genome_size __GENOME_SIZE__ --platform __PLATFORM__
-     contig_output: __TMPDIR__/PBcR/BugBuilder/9-terminator/asm.ctg.fasta
-     scaffold_output: __TMPDIR__/PBcR/BugBuilder/9-terminator/asm.scf.fasta
-     downsample_reads: 0
-     insert_size_required: 0
      # masurca works best with untrimmed reads, so use __ORIG_FASTQ1__ nad __ORIG_FASTQ2__
    - name: masurca
      create_dir: 1
@@ -346,7 +337,8 @@ import subprocess
 import pkg_resources
 import tabulate
 
-from Bio import SeqIO, SearchIO
+from BugBuilder import __version__
+from Bio import SeqIO # , SearchIO
 from Bio.SeqRecord import SeqRecord
 from argparse import Namespace
 from .shared_methods import make_nucmer_delta_show_cmds
@@ -358,39 +350,19 @@ sub_mains = {
     "abyss": run_abyss,
     "spades": run_spades,
     "sis": run_sis}
-def parse_available_platforms():
-    platform_list = ["illumina", "454", "iontorrent"]
-    return platform_list
+def parse_available(thing, path=None):
+    if path is None: # path var is to allow easier testing
+        try:
+            config = return_config(get_config_path(), force=False, hardfail=False, logger=None)
+        except Exception as e:
+            return []
+    else:
+        config = return_config(path, force=False, hardfail=False, logger=None)
 
-
-def parse_available_assemblers():
-    assembler_list = ["abyss", "spades", "mascura"]
-    return [x for x in assembler_list if
-            shutil.which(x) is not None or
-            shutil.which(x + ".py") is not None]
-
-
-def parse_available_scaffolders():
-    scaffolder_list = ["sis", "mauve"]
-    return [x for x in scaffolder_list if
-            shutil.which(x) is not None or
-            shutil.which(x + ".py") is not None]
-
-
-def parse_available_mergers():
-    mergers_list = ["gfinisher"]
-    return mergers_list
-
-
-def parse_available_finisher():
-    finishers = ["gapfiller"]
-    return finishers
-
-
-def parse_available_varcaller():
-    varcallers = ["pilon"]
-    return varcallers
-
+    # get all the potential names from the config
+    thing_list = [x['name'].lower() for x in getattr(config, thing)]
+    # return all the names that have an executable available
+    return [x for x in thing_list if getattr(config, x.replace("-", "_")) is not None]
 
 def configure(config_path, hardfail=True):
     with open(config_path, 'w') as outfile:  # write header and config params
@@ -399,13 +371,12 @@ def configure(config_path, hardfail=True):
     all_programs_dict = {
         "mandatory_programs": [
             'seqtk', 'samtools', 'picard', 'blastn', 'makeblastdb', "nucmer",
-            'R',
-            'mummer', "delta-filter",  "show-coords",  'bwa'],
+            'R', 'mummer', "delta-filter",  "show-coords",  'bwa'],
         "mandatory_python_programs": [],
         "opt_programs": [
-            'fastqc', 'sickle', 'mauve', 'prokka',
+            'fastqc', 'sickle', 'mauve', 'prokka', "minimus",
             'aragorn', 'prodigal', 'hmmer3', 'infernal',
-            'rnammer', 'tbl2asn', 'abyss', 'celera',
+            'rnammer', 'tbl2asn', 'abyss', 'celera', "abyss", "abyss-sealer",
             'gapfiller', 'sspace', 'asn2gb', 'amos' , 'masurca',
             'gfinisher', 'pilon', 'vcflib', 'cgview'],
         "opt_python_programs": [
@@ -417,13 +388,14 @@ def configure(config_path, hardfail=True):
             continue
         program_dict = dict((k, None) for k in programs)
         for prog in programs:
-            # append .py if we need to (like for spades, quast, etc)
+            # append .py if we need to (like for spades, sis, etc)
             # cant modify prog cause we need to be able to access name without exention
             extension = ".py" if "python" in category else ""
             if shutil.which(prog + extension):
                 # replace dashes with underscores in config names but not in prog
                 output_dict[prog.replace("-", "_")] = shutil.which(prog + extension)
             else:
+                output_dict[prog.replace("-", "_")] = None
                 if "mandatory" in category:
                     if hardfail:
                         raise OSError("%s is a mandatory program; please install" % prog)
@@ -432,31 +404,48 @@ def configure(config_path, hardfail=True):
 
 
 def return_config(config_path, force=False, hardfail=True, logger=None):
-    try:
+    """returns config namespace object, configuring if needed
+    """
+    try: # if the config file exists, parse it
         config = parse_config(config_path)
     except yaml.YAMLError:
         force = True
+    # if config file is missing or broken, recreate the config file
     if force or config.STATUS != "COMPLETE":
-        logger.info("(Re-)Configuring BugBuilder")
+        if logger is not None:
+            logger.info("(Re-)Configuring BugBuilder config file: %s", config_path)
+        else:
+            print("(Re-)Configuring BugBuilder config file: %s" % config_path)
         configure(config_path, hardfail=hardfail)
         config = parse_config(config_path)
     return config
 
+class JustConfigure(argparse.Action):
+    def __call__(self, parser, args, values, option_string=None):
+        try:
+            config_path = get_config_path()
+        except:  # not sure what this exception is:  its not an IOError or an OSError
+            resource_package = pkg_resources.Requirement.parse("BugBuilder")
+            config_path = '/'.join(('BugBuilder','config_data', 'BugBuilder.yaml'))
+        configure(config_path, hardfail=True)
+        print("(Re-)Configured BugBuilder config file: %s" % config_path)
+        sys.exit(1)
+        # setattr(args, self.dest, values)
 
 def get_args():  # pragma: no cover
     """
     """
     parser = argparse.ArgumentParser(
         prog="BugBuilder",
-        description="Automated pipeline for assembly of draft quality " +
+        description="Bugbuilder %s: " % __version__ +
+        "Automated pipeline for assembly of draft quality " +
         "bacterial genomes with reference guided scaffolding and annotation." +
         "Please see accompanying userguide for full documentation",
         add_help=False)  # to allow for custom help
-    # taking a hint from http://stackoverflow.com/questions/24180527
     requiredNamed = parser.add_argument_group('required named arguments')
     requiredNamed.add_argument("--platform", dest='platform', action="store",
                                help="Sequencing platform  used i.e. illumina, 454, iontorrent",
-                               choices=parse_available_platforms(),
+                               choices=["illumina", "454", "iontorrent"],
                                type=str, required=True)
     requiredNamed.add_argument("-o", "--output", dest='outdir', action="store",
                                help="output directory; " +
@@ -469,7 +458,7 @@ def get_args():  # pragma: no cover
                                " If no assembler is specified, BugBuilder will " +
                                "try to select an appropriate assembler " +
                                "automatically",
-                               choices=parse_available_assemblers(),
+                               choices=parse_available("assemblers"),
                                nargs="*", default=[],
                                type=str, required=True)
 
@@ -516,7 +505,7 @@ def get_args():  # pragma: no cover
                           type=str)
     optional.add_argument("--scaffolder", dest='scaffolder', action="store",
                           help="scaffolder to use",
-                          choices=parse_available_scaffolders(),
+                          choices=parse_available("scaffolders"),
                           type=str)
     optional.add_argument("--scaffolder-args", dest='scaffolder_args',
                           action="store",
@@ -524,16 +513,16 @@ def get_args():  # pragma: no cover
                           type=str)
     optional.add_argument("--merge-method", dest='merge_method', action="store",
                           help="merge method to use",
-                          choices=parse_available_mergers(),
+                          choices=parse_available("merge_tools"),
                           type=str)
     optional.add_argument("--finisher", dest='finisher', action="store",
                           help="finisher to use",
-                          choices=parse_available_finisher(),
+                          choices=parse_available("finishers"),
                           nargs="*",
                           type=str)
     optional.add_argument("--varcaller", dest='varcaller', action="store",
                           help="varcaller to use",
-                          choices=parse_available_varcaller(),
+                          choices=parse_available("varcallers"),
                           nargs="*",
                           type=str)
     optional.add_argument("--insert-size", dest='insert_size', action="store",
@@ -627,8 +616,8 @@ def get_args():  # pragma: no cover
     # optional.add_argument("--scratchdir", dest='scratchdir', action="store",
     #                       help="dir for results",
     #                       type=str)
-    optional.add_argument("--configure", dest='configure', action="store_true",
-                          help="whether to reconfigure ")
+    optional.add_argument("--configure", action=JustConfigure, type=None,
+                          help="Reconfigure and exit ", nargs=0)
     optional.add_argument("--memory", dest='memory', action="store",
                           help="how much memory to use",
                           type=int, default=4)
@@ -643,6 +632,8 @@ def get_args():  # pragma: no cover
     optional.add_argument("-h", "--help",
                           action="help", default=argparse.SUPPRESS,
                           help="Displays this help message")
+    optional.add_argument('--version', action='version',
+                          version='BugBuilder {}'.format(__version__))
     # args = parser.parse_args(sys.argv[2:])
     args = parser.parse_args()
     return args
@@ -1040,16 +1031,19 @@ def assess_reads(args, config, platform, logger=None):
 
 
 def check_ref_needed(args, lib_type):
+    """ ensure either a reference or genome size is provided for long read assembly
+    """
     if lib_type == "long" :
         if (args.genome_size is 0 and args.reference is None):
             raise ValueError("Please supply a genome size or reference " +
                              "sequence when running a long-read assembly")
 
 def get_config_path():
+    """ return path to where BugBuilder.yaml got installed
+    """
     resource_package = pkg_resources.Requirement.parse("BugBuilder")
-    config_path = '/'.join(('BugBuilder','config_data', 'BugBuilder.yaml'))
-    config = pkg_resources.resource_filename(resource_package, config_path)
-    return config
+    config = '/'.join(('BugBuilder','config_data', 'BugBuilder.yaml'))
+    return pkg_resources.resource_filename(resource_package, config)
 
 
 def parse_config(config_file):
@@ -1059,6 +1053,9 @@ def parse_config(config_file):
         try:
             yamldata = yaml.safe_load(stream)
         except yaml.YAMLError as exc:
+            with open(config_file, 'r') as stream2:
+                for line in stream2:
+                    print(line.strip())
             raise yaml.YAMLError("error parsing config file!")
     newns = argparse.Namespace()
     newns.__dict__ = yamldata
@@ -2657,7 +2654,13 @@ def main(args=None, logger=None):
     logger.info("Welcome to BugBuilder")
     logger.info("Preparing to build your bug...")
     config_path = get_config_path()
-    config = return_config(config_path, force=args.configure, logger=logger)
+    try:
+        config = return_config(config_path, force=False, logger=logger)
+    except:
+        logger.error("Error reading config file! try running BugBuilder " +
+                     "--configure to fix, or else delete the config file, " +
+                     "reconfigure, and try again")
+        sys.exit()
     logger.info("Using configuration from %s", config_path)
     logger.debug(config)
     # lets not be hasty
