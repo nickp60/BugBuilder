@@ -371,7 +371,7 @@ def configure(config_path, hardfail=True):
     all_programs_dict = {
         "mandatory_programs": [
             'seqtk', 'samtools', 'picard', 'blastn', 'makeblastdb', "nucmer",
-            'R', 'mummer', "delta-filter",  "show-coords",  'bwa'],
+            'R', 'mummer', "delta-filter",  "show-coords",  'bwa', "prokka"],
         "mandatory_python_programs": [],
         "opt_programs": [
             'fastqc', 'sickle', 'mauve', 'prokka', "minimus",
@@ -2968,32 +2968,25 @@ def main(args=None, logger=None):
 
 
 
-# ######################################################################
-# #
-# # build_agp
-# #
-# # Creates an AGP file from the scaffolds, while generating new
-# # contig/scaffold outputs meeting ENA requirements (no consecutive runs
-# # of >=10 N, minimum contig size of 200 bp) if running in 'submission'
-# # mode, otherwise leaves short contigs and gaps<100bp intact. The
-# # scaffold_type argument is used to determine the linkage evidence type
-# # for scaffold gaps
-# #
-# # required parameters: $ (tmpdir)
-# #		     : $ (organism description)
-# #                    : $ (mode - submission or draft)
-# #                    : $ (scaffold_type: align or mate_pair)
-# #
-# # returns            : $ (0)
-# #
-# ######################################################################
 
-# sub build_agp {
 
-#     my $tmpdir   = shift;
-#     my $organism = shift;
-#     my $mode     = shift;
-#     my $evidence = shift;
+def build_agp():
+    """
+    Creates an AGP file from the scaffolds, while generating new
+    contig/scaffold outputs meeting ENA requirements (no consecutive runs
+    of >=10 N, minimum contig size of 200 bp) if running in 'submission'
+    mode, otherwise leaves short contigs and gaps<100bp intact. The
+    scaffold_type argument is used to determine the linkage evidence type
+    for scaffold gaps
+
+    required parameters: $ (tmpdir)
+		     : $ (organism description)
+                   : $ (mode - submission or draft)
+                   : $ (scaffold_type: align or mate_pair)
+
+    returns            : $ (0)
+"""
+
 
 #     die "Unknown evidence type: $evidence"
 #       unless (    $evidence eq 'paired-ends'
@@ -3186,58 +3179,46 @@ def main(args=None, logger=None):
 
 # }
 
-# ######################################################################
-# #
-# # run_prokka
-# #
-# # generates annotation on the assembly using prokka
-# #
-# # required parameters: $ (tmpdir)
-# #		       $ (genus)
-# #                      $ (species)
-# #                      $ (strain)
-# #                      $ (locustag)
-# #                      $ (centre)
-# #
-# # returns            : $ (0)
-# #
-# ######################################################################
 
-# sub run_prokka {
 
-#     my $tmpdir   = shift;
-#     my $genus    = shift;
-#     my $species  = shift;
-#     my $strain   = shift;
-#     my $locustag = shift;
-#     my $centre   = shift;
+def run_prokka(config, results, logger):
+    """
+    generates annotation on the assembly using prokka
 
-#     message("Starting PROKKA...");
+    required parameters: $ (tmpdir)
+		       $ (genus)
+                     $ (species)
+                     $ (strain)
+                     $ (locustag)
+                     $ (centre)
 
-#     #use scaffolds if we have them, otherwise contigs....
-#     my $seqs;
-#     if ( -e "$tmpdir/scaffolds.fasta" ) {
-#         $seqs = "$tmpdir/scaffolds.fasta";
-#     }
-#     else {
-#         $seqs = "$tmpdir/contigs.fasta";
-#     }
+    returns            : $ (0)
+    """
+    logger.info("Starting PROKKA...");
+    #use scaffolds if we have them, otherwise contigs....
+    if results.curent_scaffolds is not None:
+        seqs = results.current_scaffolds
+    else:
+        seqs = results.current_contigs
 
-#     my $type = $1 if ( $seqs =~ /\/(contigs|scaffolds).fasta/ );
+    prokka_dir = os.path.join(args.tmp_dir, "prokka", "")
+    # os.makedirs(prokka_dir)
 
-#     my $cmd = "prokka --addgenes --outdir $tmpdir/prokka --prefix prokka ";
-#     $cmd .= "--genus $genus " if ( $genus && ( $genus ne "unknown_genus" ) );
-#     $cmd .= "--species $species "
-#       if ( $species && ( $species ne "unknown_species" ) );
-#     $cmd .= "--strain $strain "
-#       if ( $strain && ( $strain ne "unknown_strain" ) );
-#     $cmd .= "--locustag $locustag " if ($locustag);
-#     $cmd .= "--centre $centre "     if ($centre);
-#     $cmd .= " $seqs ";
-#     $cmd .= " >prokka.log 2>&1";
-
-#     system($cmd);
-#     if ( $? != 0 ) { print "prokka exited with $?...\n" }
+    cmd = "{0} --addgenes --outdir {1} --prefix prokka --genus {2} --species {3} --strain {4} --locustag {5} --centre {6} {7}> {1}prokka.log 2>&1".format(
+        config.prokka, #0
+        prokka_dir, #1
+        args.genus,#2
+        args.species,#3
+         args.strain,#4
+        args.locustag,#5
+        args.centre,#6
+        seqs)
+    logger.debug("running the following command:\n %s". cmd)
+    subprocess.run(cmd,
+                   shell=sys.platform != "win32",
+                   stdout=subprocess.PIPE,
+                   stderr=subprocess.PIPE,
+                   check=True)
 
 #     # my $inIO        = Bio::SeqIO->new( -file => "$tmpdir/prokka/prokka.gbf",     -format => 'genbank' );
 #     my $inIO        = Bio::SeqIO->new( -file => "$tmpdir/prokka/prokka.gbk",     -format => 'genbank' );
