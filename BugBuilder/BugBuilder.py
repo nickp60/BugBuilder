@@ -2987,197 +2987,195 @@ def build_agp():
     returns            : $ (0)
 """
 
+    if evidence not in ['paired-ends', 'align_genus', 'align_xgenus']:
+        logger.error("Unknown evidence type: %s", evidence)
+    logger.info("Creating AGP file...");
+    agp_dir = os.path.join(args.tmp_dir, "agp")
+    agpfile_path = os.path.join(agp_dir, "scaffolds.agp")
+    os.makedirs(agp_dir)
+    lines = []
+    lines.append(">scaffolds.agp")
+    lines.append( "##agp-version 2.0\n")
+    lines.append("#$organism\n")
 
-#     die "Unknown evidence type: $evidence"
-#       unless (    $evidence eq 'paired-ends'
-#                || $evidence eq 'align_genus'
-#                || $evidence eq 'align_xgenus' );
+    my $scaffold_inIO  = Bio::SeqIO->new( -file => "$tmpdir/scaffolds.fasta", -format => 'fasta' );
+    my $scaffold_outIO = Bio::SeqIO->new( -file => ">scaffolds.fasta",        -format => "fasta" );
+    my $contig_outIO   = Bio::SeqIO->new( -file => ">contigs.fasta",          -format => 'fasta' );
 
-#     message("Creating AGP file...");
+    contig_count = 0
+    gaps = {}    #overall per-scaffold gaps to return....
+    with open(results.current_scaffolds, "r") as scaffold_inIO:
+        for scaffold in scaffold_inIO:
 
-#     mkdir "$tmpdir/agp" or die "Error creating agp dir: $!";
-#     chdir "$tmpdir/agp" or die "Error chdiring to $tmpdir/agp: $!";
+            contig_start = 0
+            scaffold_loc = 1
+            scaffold_id  = scaffold.id;
+            scaff_count  = $1 if ( $scaffold_id =~ /([0-9]+)$/ );
+            scaffold_id = sprintf( "scaffold_%06s", $scaff_count );
+            scaffold_end = $scaffold->length();
+            my ( $contig_end, $gap_start, $gap_end );
 
-#     open AGP, ">scaffolds.agp"
-#       or die "Error opening scaffolds.agp for writing: $! ";
-#     print AGP "##agp-version 2.0\n";
-#     print AGP "#$organism\n";
+            my @bases = split( //, $scaffold->seq() );
+            my ( %contigs, @gaps );    #location tracking for included contigs/gaps
 
-#     my $scaffold_inIO  = Bio::SeqIO->new( -file => "$tmpdir/scaffolds.fasta", -format => 'fasta' );
-#     my $scaffold_outIO = Bio::SeqIO->new( -file => ">scaffolds.fasta",        -format => "fasta" );
-#     my $contig_outIO   = Bio::SeqIO->new( -file => ">contigs.fasta",          -format => 'fasta' );
+        # this is kind of crude, but seems to work...
+      BASE: for ( b_count = 0 ; $b_count <= $#bases ; $b_count++ ) {
+            if ( ( $bases[$b_count] ne 'N' ) && ( !$gap_start ) ) {
+                $contig_end = $b_count;
+                next BASE;
+            }
+            elsif ( ( $bases[$b_count] eq 'N' ) & !($gap_start) ) {
+                $gap_start = $b_count if ( !$gap_start );
+                next BASE;
+            }
+            elsif ( ( $bases[$b_count] ne 'N' ) && ($gap_start) ) {
 
-#     my $contig_count = 0;
-#     my %gaps;    #overall per-scaffold gaps to return....
+                #we have left the gap
+                $gap_end = $b_count;
+                gap_length = $gap_end - $gap_start;
+                if ( ( $gap_length < 10 ) && ( $mode eq 'submission' ) ) {
 
-#     while ( my $scaffold = $scaffold_inIO->next_seq() ) {
+                    # skip gaps <10 bp which are acceptable by EMBL
+                    $gap_start = undef;
+                    next BASE;
+                }
+                elsif ( ( $mode eq 'draft' ) && ( $gap_length <= 1 ) ) {
 
-#         my $contig_start = 0;
-#         my $scaffold_loc = 1;
-#         my $scaffold_id  = $scaffold->display_id();
-#         my $scaff_count  = $1 if ( $scaffold_id =~ /([0-9]+)$/ );
-#         $scaffold_id = sprintf( "scaffold_%06s", $scaff_count );
-#         my $scaffold_end = $scaffold->length();
-#         my ( $contig_end, $gap_start, $gap_end );
+                    # we can leave single ambiguous bases alone
+                    $gap_start = undef;
+                    next BASE;
+                }
+                else {
+                    $gap_end = $b_count;
 
-#         my @bases = split( //, $scaffold->seq() );
-#         my ( %contigs, @gaps );    #location tracking for included contigs/gaps
+                    # Output contigs only > 200 bp
+                    if (    ( ( $contig_end - $contig_start ) < 200 )
+                         && ( $mode eq 'submission' ) )
+                    {
 
-#         # this is kind of crude, but seems to work...
-#       BASE: for ( my $b_count = 0 ; $b_count <= $#bases ; $b_count++ ) {
-#             if ( ( $bases[$b_count] ne 'N' ) && ( !$gap_start ) ) {
-#                 $contig_end = $b_count;
-#                 next BASE;
-#             }
-#             elsif ( ( $bases[$b_count] eq 'N' ) & !($gap_start) ) {
-#                 $gap_start = $b_count if ( !$gap_start );
-#                 next BASE;
-#             }
-#             elsif ( ( $bases[$b_count] ne 'N' ) && ($gap_start) ) {
+                        #need to extend previous gap to new position including short contig
+                        if ( scalar(@gaps) ) {
+                            last_gap = pop @gaps;
+                            my ( $last_start, $last_end ) = split( /-/, $last_gap );
+                            new_gap = $last_start . '-' . $gap_end;
+                            push @gaps, $new_gap;
+                            $gap_start    = undef;
+                            $contig_start = $b_count;
+                            next BASE;
+                        }
+                    }
+                    else {
+                        contig_id = sprintf( "contig_%06s", ++$contig_count );
+                        contig_seq =
+                          Bio::Seq->new( -display_id => $contig_id,
+                                         -seq        => join( '', @bases[ $contig_start .. $contig_end ] ) );
+                        $contig_outIO->write_seq($contig_seq);
+                        $contigs{$contig_id} = {
+                                                 'coords' => $contig_start . '-' . $contig_end,
+                                                 length   => $contig_seq->length()
+                                               };
+                        gap = $gap_start . '-' . $gap_end;
+                        push @gaps, $gap;
 
-#                 #we have left the gap
-#                 $gap_end = $b_count;
-#                 my $gap_length = $gap_end - $gap_start;
-#                 if ( ( $gap_length < 10 ) && ( $mode eq 'submission' ) ) {
+                        $gap_start    = undef;
+                        $contig_start = $b_count;
+                    }
+                }
+            }
+        }
+    with open(agpfile_path, "w") as outf:
+        for line in lines:
+            outf.write(line)
 
-#                     # skip gaps <10 bp which are acceptable by EMBL
-#                     $gap_start = undef;
-#                     next BASE;
-#                 }
-#                 elsif ( ( $mode eq 'draft' ) && ( $gap_length <= 1 ) ) {
+        # Output last contig from last contig_start position to scaffold end if it is longer than
+        # 200 bp and we are running in submission mode, otherwise remove the last gap to truncate the scaffold...
+        if (    ( ( $scaffold_end - $contig_start ) > 200 )
+             || ( $mode eq 'draft' )
+             || $contig_count == 0 )
+        {
+            contig_id = sprintf( "contig_%06s", ++$contig_count );
+            contig_seq =
+              Bio::Seq->new( -display_id => $contig_id,
+                             -seq        => join( '', @bases[ $contig_start .. $#bases ] ) );
+            $contig_outIO->write_seq($contig_seq);
+            $contigs{$contig_id} = {
+                                     'coords' => $contig_start . '-' . $scaffold_end,
+                                     length   => $contig_seq->length()
+                                   };
+        }
+        else {
+            pop @gaps;
+        }
 
-#                     # we can leave single ambiguous bases alone
-#                     $gap_start = undef;
-#                     next BASE;
-#                 }
-#                 else {
-#                     $gap_end = $b_count;
+        $gaps{$scaffold_id} = \@gaps;
 
-#                     # Output contigs only > 200 bp
-#                     if (    ( ( $contig_end - $contig_start ) < 200 )
-#                          && ( $mode eq 'submission' ) )
-#                     {
+        scaffold_part = 0;
 
-#                         #need to extend previous gap to new position including short contig
-#                         if ( scalar(@gaps) ) {
-#                             my $last_gap = pop @gaps;
-#                             my ( $last_start, $last_end ) = split( /-/, $last_gap );
-#                             my $new_gap = $last_start . '-' . $gap_end;
-#                             push @gaps, $new_gap;
-#                             $gap_start    = undef;
-#                             $contig_start = $b_count;
-#                             next BASE;
-#                         }
-#                     }
-#                     else {
-#                         my $contig_id = sprintf( "contig_%06s", ++$contig_count );
-#                         my $contig_seq =
-#                           Bio::Seq->new( -display_id => $contig_id,
-#                                          -seq        => join( '', @bases[ $contig_start .. $contig_end ] ) );
-#                         $contig_outIO->write_seq($contig_seq);
-#                         $contigs{$contig_id} = {
-#                                                  'coords' => $contig_start . '-' . $contig_end,
-#                                                  length   => $contig_seq->length()
-#                                                };
-#                         my $gap = $gap_start . '-' . $gap_end;
-#                         push @gaps, $gap;
+        #write AGP output and new scaffolds fasta file
+        unlink("contigs.fasta.index") if ( -e "contigs.fasta.index" );
+        contig_db = Bio::DB::Fasta->new("contigs.fasta");
+        scaffold_seq;
 
-#                         $gap_start    = undef;
-#                         $contig_start = $b_count;
-#                     }
-#                 }
-#             }
-#         }
+        my @contig_ids = map { $_->[0] }
+          sort { $a->[1] <=> $b->[1] }
+          map { [ $_, /(\d+)$/ ] } keys(%contigs);
 
-#         # Output last contig from last contig_start position to scaffold end if it is longer than
-#         # 200 bp and we are running in submission mode, otherwise remove the last gap to truncate the scaffold...
-#         if (    ( ( $scaffold_end - $contig_start ) > 200 )
-#              || ( $mode eq 'draft' )
-#              || $contig_count == 0 )
-#         {
-#             my $contig_id = sprintf( "contig_%06s", ++$contig_count );
-#             my $contig_seq =
-#               Bio::Seq->new( -display_id => $contig_id,
-#                              -seq        => join( '', @bases[ $contig_start .. $#bases ] ) );
-#             $contig_outIO->write_seq($contig_seq);
-#             $contigs{$contig_id} = {
-#                                      'coords' => $contig_start . '-' . $scaffold_end,
-#                                      length   => $contig_seq->length()
-#                                    };
-#         }
-#         else {
-#             pop @gaps;
-#         }
+        if ( $#contig_ids > -1 ) {
+            for ( i = 0 ; $i <= $#contig_ids ; $i++ ) {
+                contig_id   = $contig_ids[$i];
+                contig_data = $contigs{$contig_id};
+                coords      = $contig_data->{'coords'};
+                length      = $contig_data->{'length'};
 
-#         $gaps{$scaffold_id} = \@gaps;
+                if ( $contig_id ne "" ) {
+                    contig = $contig_db->get_Seq_by_id($contig_id);
 
-#         my $scaffold_part = 0;
+                    my ( $contig_start, $contig_end ) = split( /-/, $coords );
 
-#         #write AGP output and new scaffolds fasta file
-#         unlink("contigs.fasta.index") if ( -e "contigs.fasta.index" );
-#         my $contig_db = Bio::DB::Fasta->new("contigs.fasta");
-#         my $scaffold_seq;
+                    print AGP "$scaffold_id\t"
+                      . ( $contig_start + 1 ) . "\t"
+                      . ( $contig_end + 1 ) . "\t"
+                      . ++$scaffold_part
+                      . "\tW\t$contig_id\t1\t$length\t+\n";
+                    $scaffold_seq .= $contig->seq();
+                    if ( $i < $#contig_ids ) {
 
-#         my @contig_ids = map { $_->[0] }
-#           sort { $a->[1] <=> $b->[1] }
-#           map { [ $_, /(\d+)$/ ] } keys(%contigs);
+                        gap = $gaps[$i];
+                        my ( $gap_start, $gap_end ) = split( /-/, $gap );
+                        gap_size = $gap_end - $gap_start;
 
-#         if ( $#contig_ids > -1 ) {
-#             for ( my $i = 0 ; $i <= $#contig_ids ; $i++ ) {
-#                 my $contig_id   = $contig_ids[$i];
-#                 my $contig_data = $contigs{$contig_id};
-#                 my $coords      = $contig_data->{'coords'};
-#                 my $length      = $contig_data->{'length'};
+                        print AGP "$scaffold_id\t"
+                          . ( $gap_start + 1 )
+                          . "\t$gap_end\t"
+                          . ++$scaffold_part
+                          . "\tN\t$gap_size\tscaffold\tyes\t$evidence\n";
+                        $scaffold_seq .= 'N' x $gap_size;
+                    }
+                }
+            }
+        }
+        if ($scaffold_seq) {
+            scaffold_seqobj = Bio::Seq->new( -display_id => $scaffold_id, -seq => $scaffold_seq );
+            $scaffold_outIO->write_seq($scaffold_seqobj);
+        }
+    }
 
-#                 if ( $contig_id ne "" ) {
-#                     my $contig = $contig_db->get_Seq_by_id($contig_id);
+    close AGP     or warn "Error closring $tmpdir/scaffolds.agp: $!";
+    chdir $tmpdir or die "Error chdiring to $tmpdir: $!";
 
-#                     my ( $contig_start, $contig_end ) = split( /-/, $coords );
+    unlink "scaffolds.fasta" or die "Error removing scaffolds.fasta: $!";
+    unlink "contigs.fasta"   or die "Error removing contigs.fasta; $!";
 
-#                     print AGP "$scaffold_id\t"
-#                       . ( $contig_start + 1 ) . "\t"
-#                       . ( $contig_end + 1 ) . "\t"
-#                       . ++$scaffold_part
-#                       . "\tW\t$contig_id\t1\t$length\t+\n";
-#                     $scaffold_seq .= $contig->seq();
-#                     if ( $i < $#contig_ids ) {
+    symlink( "agp/scaffolds.agp", "scaffolds.agp" )
+      or die "Error creating scaffolds.agp symlink: $!";
+    symlink( "agp/scaffolds.fasta", "scaffolds.fasta" )
+      or die "Error creating scaffolds.fasta symlink: $!";
+    symlink( "agp/contigs.fasta", "contigs.fasta" )
+      or die "Error creating contigs.fasta symlink: $!";
 
-#                         my $gap = $gaps[$i];
-#                         my ( $gap_start, $gap_end ) = split( /-/, $gap );
-#                         my $gap_size = $gap_end - $gap_start;
+    return ( \%gaps );
 
-#                         print AGP "$scaffold_id\t"
-#                           . ( $gap_start + 1 )
-#                           . "\t$gap_end\t"
-#                           . ++$scaffold_part
-#                           . "\tN\t$gap_size\tscaffold\tyes\t$evidence\n";
-#                         $scaffold_seq .= 'N' x $gap_size;
-#                     }
-#                 }
-#             }
-#         }
-#         if ($scaffold_seq) {
-#             my $scaffold_seqobj = Bio::Seq->new( -display_id => $scaffold_id, -seq => $scaffold_seq );
-#             $scaffold_outIO->write_seq($scaffold_seqobj);
-#         }
-#     }
-
-#     close AGP     or warn "Error closring $tmpdir/scaffolds.agp: $!";
-#     chdir $tmpdir or die "Error chdiring to $tmpdir: $!";
-
-#     unlink "scaffolds.fasta" or die "Error removing scaffolds.fasta: $!";
-#     unlink "contigs.fasta"   or die "Error removing contigs.fasta; $!";
-
-#     symlink( "agp/scaffolds.agp", "scaffolds.agp" )
-#       or die "Error creating scaffolds.agp symlink: $!";
-#     symlink( "agp/scaffolds.fasta", "scaffolds.fasta" )
-#       or die "Error creating scaffolds.fasta symlink: $!";
-#     symlink( "agp/contigs.fasta", "contigs.fasta" )
-#       or die "Error creating contigs.fasta symlink: $!";
-
-#     return ( \%gaps );
-
-# }
+}
 
 
 
