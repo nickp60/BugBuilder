@@ -33,7 +33,7 @@ class test_BugBuilder(unittest.TestCase):
         self.broken_config = os.path.join(self.ref_dir, "broken_config.yaml")
         self.filled_config = os.path.join(self.ref_dir, "semicomplete_config.yaml")
         self.ref_fasta = os.path.join(self.ref_dir, "AP017923.1.fasta")
-        self.ref_split = os.path.join(self.ref_dir, "split_AP017923.1.fasta")
+        self.ref_split = os.path.join(self.ref_dir, "2chrom.fasta")
         self.contigs = os.path.join(self.ref_dir, "contigs.fasta")
         self.contigs_to_scaf = os.path.join(self.ref_dir, "contigs_to_scaffold.fasta")
         self.distant_contigs = os.path.join(self.ref_dir, "distant_contigs.fasta")
@@ -342,6 +342,7 @@ class test_BugBuilder(unittest.TestCase):
             "current_scaffolds_source",
             "current_reference",
             "current_embl",
+            "current_embl_source",
             "ID_OK",
             "old_contigs",
             "old_scaffolds",
