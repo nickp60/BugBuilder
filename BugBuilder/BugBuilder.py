@@ -2985,7 +2985,9 @@ def build_agp():
                    : $ (scaffold_type: align or mate_pair)
 
     returns            : $ (0)
-"""
+
+    see https://www.ncbi.nlm.nih.gov/assembly/agp/AGP_Specification/
+    """
 
     if evidence not in ['paired-ends', 'align_genus', 'align_xgenus']:
         logger.error("Unknown evidence type: %s", evidence)
@@ -2997,185 +2999,145 @@ def build_agp():
     lines.append(">scaffolds.agp")
     lines.append( "##agp-version 2.0\n")
     lines.append("#$organism\n")
-
-    my $scaffold_inIO  = Bio::SeqIO->new( -file => "$tmpdir/scaffolds.fasta", -format => 'fasta' );
-    my $scaffold_outIO = Bio::SeqIO->new( -file => ">scaffolds.fasta",        -format => "fasta" );
-    my $contig_outIO   = Bio::SeqIO->new( -file => ">contigs.fasta",          -format => 'fasta' );
-
+    contigs_path = os.path.join(agp_dir, "contigs.fasta")
+    scaffolds_path = os.path.join(agp_dir, "scaffolds.fasta")
     contig_count = 0
-    gaps = {}    #overall per-scaffold gaps to return....
+    gap_dict = {}    #overall per-scaffold gaps to return....
     with open(results.current_scaffolds, "r") as scaffold_inIO:
         for scaffold in scaffold_inIO:
 
             contig_start = 0
             scaffold_loc = 1
             scaffold_id  = scaffold.id;
-            scaff_count  = $1 if ( $scaffold_id =~ /([0-9]+)$/ );
-            scaffold_id = sprintf( "scaffold_%06s", $scaff_count );
-            scaffold_end = $scaffold->length();
-            my ( $contig_end, $gap_start, $gap_end );
+            scaff_count  = re.match("([0-9]+)$", scaffold_id).group(1)
+            scaffold_id = "scaffold_%06s"  %scaff_count
+            scaffold_end = len(scaffold.seq);
+            contig_end, gap_start, gap_end = 0, 0, 0
 
-            my @bases = split( //, $scaffold->seq() );
-            my ( %contigs, @gaps );    #location tracking for included contigs/gaps
+            bases = list(scaffold.seq)
+            # location tracking for included contigs/gaps
+            contigs_dict, gaps = {}, []
+            # this is kind of crude, but seems to work...
+            for idx, base in enumerate(bases):
+                if base != "N" and not gap_start:
+                    contig_end = idx
+                elif base == "N" and not gap_start:
+                    gap_start = idx
+                # elif base != "N" and  gap_start:
+                else:
+                    assert base != "N" and  gap_start, "something wrong with AGP"
+                    gap_end = idx
+                    gap_length = gap_end - gap_start
 
-        # this is kind of crude, but seems to work...
-      BASE: for ( b_count = 0 ; $b_count <= $#bases ; $b_count++ ) {
-            if ( ( $bases[$b_count] ne 'N' ) && ( !$gap_start ) ) {
-                $contig_end = $b_count;
-                next BASE;
-            }
-            elsif ( ( $bases[$b_count] eq 'N' ) & !($gap_start) ) {
-                $gap_start = $b_count if ( !$gap_start );
-                next BASE;
-            }
-            elsif ( ( $bases[$b_count] ne 'N' ) && ($gap_start) ) {
-
-                #we have left the gap
-                $gap_end = $b_count;
-                gap_length = $gap_end - $gap_start;
-                if ( ( $gap_length < 10 ) && ( $mode eq 'submission' ) ) {
-
-                    # skip gaps <10 bp which are acceptable by EMBL
-                    $gap_start = undef;
-                    next BASE;
-                }
-                elsif ( ( $mode eq 'draft' ) && ( $gap_length <= 1 ) ) {
-
-                    # we can leave single ambiguous bases alone
-                    $gap_start = undef;
-                    next BASE;
-                }
-                else {
-                    $gap_end = $b_count;
-
-                    # Output contigs only > 200 bp
-                    if (    ( ( $contig_end - $contig_start ) < 200 )
-                         && ( $mode eq 'submission' ) )
-                    {
-
-                        #need to extend previous gap to new position including short contig
-                        if ( scalar(@gaps) ) {
-                            last_gap = pop @gaps;
-                            my ( $last_start, $last_end ) = split( /-/, $last_gap );
-                            new_gap = $last_start . '-' . $gap_end;
-                            push @gaps, $new_gap;
-                            $gap_start    = undef;
-                            $contig_start = $b_count;
-                            next BASE;
-                        }
-                    }
-                    else {
-                        contig_id = sprintf( "contig_%06s", ++$contig_count );
-                        contig_seq =
-                          Bio::Seq->new( -display_id => $contig_id,
-                                         -seq        => join( '', @bases[ $contig_start .. $contig_end ] ) );
-                        $contig_outIO->write_seq($contig_seq);
-                        $contigs{$contig_id} = {
-                                                 'coords' => $contig_start . '-' . $contig_end,
-                                                 length   => $contig_seq->length()
-                                               };
-                        gap = $gap_start . '-' . $gap_end;
-                        push @gaps, $gap;
-
-                        $gap_start    = undef;
-                        $contig_start = $b_count;
+                    if gap_length < 10 and mode == 'submission':
+                        # skip gaps <10 bp which are acceptable by EMBL
+                        gap_start = None
+                    elif mode == 'draft' and gap_length <= 1:
+                        # we can leave single ambiguous bases alone
+                        gap_start = None
+                    else:
+                        gap_end = idx
+                        if contig_end - contig_start < 200 and mode == "submission":
+                            #need to extend previous gap to new position including short contig
+                            if len(gaps) != 0:
+                                last_gap = gaps[len(gaps)]
+                                last_start, last_end = last_gaps.split("-")
+                                new_gap = "{0}-{1}".format(last_start, gap_end)
+                                gaps.append(new_gap)
+                                gap_start = None
+                                contig_start = idx
+                            else:
+                                pass
+                        else:
+                            contig_id = "contig_%06s", ++$contig_count
+                            with open(contigs_path, "a") as  outf:
+                                SeqIO.write(
+                                    SeqRecord(id=contig_id, "".join(bases)),
+                                    outf, "fasta")
+                            contigs_dict[contig] = {
+                                'coords': "{}-{}".format(contig_start, contig_end)
+                                'length': len(bases))
+                            }
+                            gap = "{}-{}".foramt(gap_start, gap_end)
+                            gaps.append(gap)
+                            gap_start = None
+                            contig_start = idx
                     }
                 }
             }
         }
+        # Output last contig from last contig_start position to scaffold end if it is longer than
+        # 200 bp and we are running in submission mode, otherwise remove the last gap to truncate the scaffold...
+        if scaffold_end - contig_start  > 200 or mode == 'draft' or contig_count == 0:
+            contig_id = "contig_%06s", ++$contig_count
+            with open(contigsIO, "a") as  outf:
+                SeqIO.write(SeqRecord(id=contig_id, "".join(bases)), outf, "fasta")
+                contigs_dict[contig] = {
+                    'coords': "{}-{}".format(contig_start, contig_end)
+                    'length': len(bases))
+                }
+        else:
+            gaps.pop()
+
+        gap_dict[scaffold_id] = gaps
+        scaffold_part = 0
+
+        #write AGP output and new scaffolds fasta file
+        record_dict = SeqIO.index("example.fasta", "fasta")
+        # unlink("contigs.fasta.index") if ( -e "contigs.fasta.index" );
+        # contig_db = Bio::DB::Fasta->new("contigs.fasta");
+        scaffold_seq = None
+
+        # I think this is just a sorted list of ids
+        contig_ids = sort([k.split("_")[1] for k, v in contigs_dict.items()])
+        # my @contig_ids = map { $_->[0] }
+        #   sort { $a->[1] <=> $b->[1] }
+        #   map { [ $_, /(\d+)$/ ] } keys(%contigs);
+        if len(contig_ids) > 0:
+        # if ( $#contig_ids > -1 ) {
+            for i, contig_id in enumerate(contig_ids):
+                contig_data = contigs_dict[contig_id]
+                coords      = contig_data['coords']
+                length      = contig_data['length']
+                if contig_id != "" :  # dont know when this could possibly be true
+                    contig = record_dict['contig_id']
+                    contig_start, contig_end  = coords.split("-")
+                    scaffold_part = scaffold_part + 1
+                    lines.append(
+                        "{ob}\t{ob_beg}\t{ob_end}\t{part_number}\t{comp_type}\t{comp_id}\t{comp_beg}\t{comp_end}\t{orientation}".format(
+                            ob=scaffold_id,
+                            ob_beg=contig_start + 1,
+                            ob_end=contig_end + 1,
+                            part_number=scaffold_part,
+                            comp_type="W",
+                            comp_id=contig_id,
+                            comp_beg=1,
+                            comp_end=length,
+                            orientation="+"))
+                    scaffold_seq = scaffold_seq + str(contig.seq)
+                    if i < len(contig_ids) - 1:
+                        gap_start, gap_end = gaps[i].split("-")
+                        gap_size = gap_end - gap_start
+                        scaffold_part = scaffold_part + 1
+                        lines.append(
+                            "{ob}\t{ob_beg}\t{ob_end}\t{part_number}\t{comp_type}\t{gap_len}\t{gap_type}\t{linkage}\t{linkage_ev}".format(
+                                ob=scaffold_id,
+                                ob_beg=gap_start + 1,
+                                ob_end=gap_end + 1,
+                                part_number=scaffold_part,
+                                comp_type="N",
+                                gap_length=gap_size,
+                                gap_type="scaffold",
+                                linkage="yes",
+                                linkage_ev=evidence))
+                        scaffold_seq = scaffold_seq + "N" * gap_size
+        if scaffold_seq is not None:
+            with open(scaffolds_path, "a") as outf:
+                SeqIO.write(SeqRecord(scaffold_seq, id=scaffold_id)
     with open(agpfile_path, "w") as outf:
         for line in lines:
             outf.write(line)
-
-        # Output last contig from last contig_start position to scaffold end if it is longer than
-        # 200 bp and we are running in submission mode, otherwise remove the last gap to truncate the scaffold...
-        if (    ( ( $scaffold_end - $contig_start ) > 200 )
-             || ( $mode eq 'draft' )
-             || $contig_count == 0 )
-        {
-            contig_id = sprintf( "contig_%06s", ++$contig_count );
-            contig_seq =
-              Bio::Seq->new( -display_id => $contig_id,
-                             -seq        => join( '', @bases[ $contig_start .. $#bases ] ) );
-            $contig_outIO->write_seq($contig_seq);
-            $contigs{$contig_id} = {
-                                     'coords' => $contig_start . '-' . $scaffold_end,
-                                     length   => $contig_seq->length()
-                                   };
-        }
-        else {
-            pop @gaps;
-        }
-
-        $gaps{$scaffold_id} = \@gaps;
-
-        scaffold_part = 0;
-
-        #write AGP output and new scaffolds fasta file
-        unlink("contigs.fasta.index") if ( -e "contigs.fasta.index" );
-        contig_db = Bio::DB::Fasta->new("contigs.fasta");
-        scaffold_seq;
-
-        my @contig_ids = map { $_->[0] }
-          sort { $a->[1] <=> $b->[1] }
-          map { [ $_, /(\d+)$/ ] } keys(%contigs);
-
-        if ( $#contig_ids > -1 ) {
-            for ( i = 0 ; $i <= $#contig_ids ; $i++ ) {
-                contig_id   = $contig_ids[$i];
-                contig_data = $contigs{$contig_id};
-                coords      = $contig_data->{'coords'};
-                length      = $contig_data->{'length'};
-
-                if ( $contig_id ne "" ) {
-                    contig = $contig_db->get_Seq_by_id($contig_id);
-
-                    my ( $contig_start, $contig_end ) = split( /-/, $coords );
-
-                    print AGP "$scaffold_id\t"
-                      . ( $contig_start + 1 ) . "\t"
-                      . ( $contig_end + 1 ) . "\t"
-                      . ++$scaffold_part
-                      . "\tW\t$contig_id\t1\t$length\t+\n";
-                    $scaffold_seq .= $contig->seq();
-                    if ( $i < $#contig_ids ) {
-
-                        gap = $gaps[$i];
-                        my ( $gap_start, $gap_end ) = split( /-/, $gap );
-                        gap_size = $gap_end - $gap_start;
-
-                        print AGP "$scaffold_id\t"
-                          . ( $gap_start + 1 )
-                          . "\t$gap_end\t"
-                          . ++$scaffold_part
-                          . "\tN\t$gap_size\tscaffold\tyes\t$evidence\n";
-                        $scaffold_seq .= 'N' x $gap_size;
-                    }
-                }
-            }
-        }
-        if ($scaffold_seq) {
-            scaffold_seqobj = Bio::Seq->new( -display_id => $scaffold_id, -seq => $scaffold_seq );
-            $scaffold_outIO->write_seq($scaffold_seqobj);
-        }
-    }
-
-    close AGP     or warn "Error closring $tmpdir/scaffolds.agp: $!";
-    chdir $tmpdir or die "Error chdiring to $tmpdir: $!";
-
-    unlink "scaffolds.fasta" or die "Error removing scaffolds.fasta: $!";
-    unlink "contigs.fasta"   or die "Error removing contigs.fasta; $!";
-
-    symlink( "agp/scaffolds.agp", "scaffolds.agp" )
-      or die "Error creating scaffolds.agp symlink: $!";
-    symlink( "agp/scaffolds.fasta", "scaffolds.fasta" )
-      or die "Error creating scaffolds.fasta symlink: $!";
-    symlink( "agp/contigs.fasta", "contigs.fasta" )
-      or die "Error creating contigs.fasta symlink: $!";
-
-    return ( \%gaps );
-
-}
+    return gaps
 
 
 
@@ -3339,129 +3301,129 @@ def run_prokka(config, results, logger):
 
 
 
-# ######################################################################
-# #
-# # run_varcaller
-# #
-# # Carries out variant calling using requested variant caller
-# #
-# # required params: $ (tmpdir)
-# #                  $ (varcall)
-# #                  $ (no. threads)
-# #                  $ (read length)
-# #
-# # returns        : $ (0)
-# #
-# ######################################################################
 
-# sub run_varcaller {
 
-#     my $tmpdir      = shift;
-#     my $varcall     = shift;
-#     my $threads     = shift;
-#     my $read_length = shift;
+def run_varcaller():
+    """"
+Carries out variant calling using requested variant caller
 
-#     message("Running variant calling ($varcall)...");
+required params: $ (tmpdir)
+                 $ (varcall)
+                 $ (no. threads)
+                 $ (read length)
 
-#     my ( $cmd, $caller_cmd, $create_dir );
-#     my $varcallers = $config->{'varcallers'};
-#     foreach my $caller (@$varcallers) {
-#         my $name = $caller->{'name'};
-#         if ( $name eq $varcall ) {
-#             $caller_cmd = $caller->{'command'};
-#             $create_dir = $caller->{'create_dir'};
-#         }
-#     }
-#     my $vardir = "$tmpdir/var_${varcall}/";
-#     if ($create_dir) {
-#         mkdir "$tmpdir/var_${varcall}" or die "Error creating $tmpdir/var_${varcall}: $! ";
-#         chdir "$tmpdir/var_${varcall}" or die "Error chdiring to $tmpdir/var_${varcall}: $!";
-#     }
+returns        : $ (0)
+""""
 
-#     symlink( "$tmpdir/reference_parsed_ids.fasta", "$vardir/reference.fasta" )
-#       or die "Error creating $vardir/reference.fasta symlink: $!";
-#     $cmd = $config->{'bwa_dir'} . symlink( "$tmpdir/read1.fastq", "$vardir/read1.fastq" )
-#       or die "Error creating symlink: $! ";
-#     symlink( "$tmpdir/read2.fastq", "$vardir/read2.fastq" )
-#       if ( -e "$tmpdir/read2.fastq" )
-#       or die "Error creating symlink: $! ";
 
-#     print "BWA aligning reads to assembly...\n";
-#     my $samtools_dir = $config->{'samtools_dir'};
+sub run_varcaller {
 
-#     $cmd = $config->{'bwa_dir'} . "/bwa index $vardir/reference.fasta >$vardir/bwa_index.log 2>&1";
-#     system($cmd) == 0 or die " Error running $cmd";
+    my $tmpdir      = shift;
+    my $varcall     = shift;
+    my $threads     = shift;
+    my $read_length = shift;
 
-#     # Use bwa-bwt for 'short' reads less than 100 bp, and bwa-mem for longer reads
-#     if ( $read_length <= 100 ) {
-#         $cmd =
-#             $config->{'bwa_dir'}
-#           . "/bwa aln -t $threads $vardir/reference.fasta $vardir/read1.fastq > $vardir/read1.sai"
-#           . " 2> $vardir/bwa_sai1.log";
-#         system($cmd) == 0 or die "Error running $cmd";
-#         if ( -e "$vardir/read2.fastq" ) {
-#             $cmd =
-#                 $config->{'bwa_dir'}
-#               . "/bwa aln -t $threads $vardir/reference.fasta $vardir/read2.fastq > $vardir/read2.sai"
-#               . " 2> $vardir/bwa_sai2.log";
-#             system($cmd) == 0 or die "Error running $cmd";
-#             $cmd =
-#                 $config->{'bwa_dir'}
-#               . "/bwa sampe $vardir/reference.fasta $vardir/read1.sai $vardir/read2.sai "
-#               . "$vardir/read1.fastq $vardir/read2.fastq";
-#             $cmd .= " 2> $vardir/sampe.log > $vardir/scaffolds.sam";
-#             system($cmd) == 0 or die "Error running $cmd";
-#         }
-#         else {
-#             $cmd = $config->{'bwa_dir'} . "/bwa samse $vardir/reference.fasta $vardir/read1.sai $vardir/read1.fastq";
-#             $cmd .= "2> $vardir/samse.log > $vardir/scaffolds.sam";
-#             system($cmd) == 0 or die "Error running $cmd";
-#         }
-#     }
-#     else {
-#         if ( !-e "$vardir/read2.fastq" ) {
+    message("Running variant calling ($varcall)...");
 
-#             # single-ended long reads
-#             $cmd =
-#                 $config->{'bwa_dir'}
-#               . "/bwa mem -t $threads -M $vardir/reference.fasta $vardir/read1.fastq > reference.sam "
-#               . "2>$vardir/bwa_mem.log";
-#             system($cmd) == 0 or die "Error running $cmd: $!";
-#         }
-#         else {
+    my ( $cmd, $caller_cmd, $create_dir );
+    my $varcallers = $config->{'varcallers'};
+    foreach my $caller (@$varcallers) {
+        my $name = $caller->{'name'};
+        if ( $name eq $varcall ) {
+            $caller_cmd = $caller->{'command'};
+            $create_dir = $caller->{'create_dir'};
+        }
+    }
+    my $vardir = "$tmpdir/var_${varcall}/";
+    if ($create_dir) {
+        mkdir "$tmpdir/var_${varcall}" or die "Error creating $tmpdir/var_${varcall}: $! ";
+        chdir "$tmpdir/var_${varcall}" or die "Error chdiring to $tmpdir/var_${varcall}: $!";
+    }
 
-#             # paired-end long reads
-#             $cmd =
-#                 $config->{'bwa_dir'}
-#               . "/bwa mem -t $threads -M $vardir/reference.fasta $vardir/read1.fastq $vardir/read2.fastq >reference.sam "
-#               . "2>$vardir/bwa_mem.log";
-#             system($cmd) == 0 or die "Error running $cmd: $!";
-#         }
-#     }
+    symlink( "$tmpdir/reference_parsed_ids.fasta", "$vardir/reference.fasta" )
+      or die "Error creating $vardir/reference.fasta symlink: $!";
+    $cmd = $config->{'bwa_dir'} . symlink( "$tmpdir/read1.fastq", "$vardir/read1.fastq" )
+      or die "Error creating symlink: $! ";
+    symlink( "$tmpdir/read2.fastq", "$vardir/read2.fastq" )
+      if ( -e "$tmpdir/read2.fastq" )
+      or die "Error creating symlink: $! ";
 
-#     $cmd = "$samtools_dir/samtools view -q 10 -Sb $vardir/reference.sam 2>$vardir/samtoolsview.log"
-#       . "|$samtools_dir/samtools sort - $vardir/reference";
-#     system($cmd) == 0 or die "Error running $cmd";
+    print "BWA aligning reads to assembly...\n";
+    my $samtools_dir = $config->{'samtools_dir'};
 
-#     $cmd = "$samtools_dir/samtools index $vardir/reference.bam 2>$vardir/samtools_index.log";
-#     system($cmd) == 0 or die "Error running $cmd";
+    $cmd = $config->{'bwa_dir'} . "/bwa index $vardir/reference.fasta >$vardir/bwa_index.log 2>&1";
+    system($cmd) == 0 or die " Error running $cmd";
 
-#     $caller_cmd =~ s/__BUGBUILDER_BIN__/$FindBin::Bin/;
-#     $caller_cmd =~ s/__TMPDIR__/$tmpdir/;
-#     $caller_cmd =~ s/__THREADS__/$threads/;
+    # Use bwa-bwt for 'short' reads less than 100 bp, and bwa-mem for longer reads
+    if ( $read_length <= 100 ) {
+        $cmd =
+            $config->{'bwa_dir'}
+          . "/bwa aln -t $threads $vardir/reference.fasta $vardir/read1.fastq > $vardir/read1.sai"
+          . " 2> $vardir/bwa_sai1.log";
+        system($cmd) == 0 or die "Error running $cmd";
+        if ( -e "$vardir/read2.fastq" ) {
+            $cmd =
+                $config->{'bwa_dir'}
+              . "/bwa aln -t $threads $vardir/reference.fasta $vardir/read2.fastq > $vardir/read2.sai"
+              . " 2> $vardir/bwa_sai2.log";
+            system($cmd) == 0 or die "Error running $cmd";
+            $cmd =
+                $config->{'bwa_dir'}
+              . "/bwa sampe $vardir/reference.fasta $vardir/read1.sai $vardir/read2.sai "
+              . "$vardir/read1.fastq $vardir/read2.fastq";
+            $cmd .= " 2> $vardir/sampe.log > $vardir/scaffolds.sam";
+            system($cmd) == 0 or die "Error running $cmd";
+        }
+        else {
+            $cmd = $config->{'bwa_dir'} . "/bwa samse $vardir/reference.fasta $vardir/read1.sai $vardir/read1.fastq";
+            $cmd .= "2> $vardir/samse.log > $vardir/scaffolds.sam";
+            system($cmd) == 0 or die "Error running $cmd";
+        }
+    }
+    else {
+        if ( !-e "$vardir/read2.fastq" ) {
 
-#     system($caller_cmd) == 0 or die "Error running $cmd: $!";
-#     chdir $tmpdir            or die " Error chdiring to $tmpdir: $! ";
+            # single-ended long reads
+            $cmd =
+                $config->{'bwa_dir'}
+              . "/bwa mem -t $threads -M $vardir/reference.fasta $vardir/read1.fastq > reference.sam "
+              . "2>$vardir/bwa_mem.log";
+            system($cmd) == 0 or die "Error running $cmd: $!";
+        }
+        else {
 
-#     symlink( "var_${varcall}/var.filtered.vcf", "reference.variants.vcf" )
-#       or die "Error creating $tmpdir/reference.variants.vcf: $!";
-#     my $varcount = `grep -vc ^# $tmpdir/reference.variants.vcf`;
-#     chomp $varcount;
+            # paired-end long reads
+            $cmd =
+                $config->{'bwa_dir'}
+              . "/bwa mem -t $threads -M $vardir/reference.fasta $vardir/read1.fastq $vardir/read2.fastq >reference.sam "
+              . "2>$vardir/bwa_mem.log";
+            system($cmd) == 0 or die "Error running $cmd: $!";
+        }
+    }
 
-#     print "\nIdentified $varcount variants...\n";
+    $cmd = "$samtools_dir/samtools view -q 10 -Sb $vardir/reference.sam 2>$vardir/samtoolsview.log"
+      . "|$samtools_dir/samtools sort - $vardir/reference";
+    system($cmd) == 0 or die "Error running $cmd";
 
-#     return (0);
-# }
+    $cmd = "$samtools_dir/samtools index $vardir/reference.bam 2>$vardir/samtools_index.log";
+    system($cmd) == 0 or die "Error running $cmd";
+
+    $caller_cmd =~ s/__BUGBUILDER_BIN__/$FindBin::Bin/;
+    $caller_cmd =~ s/__TMPDIR__/$tmpdir/;
+    $caller_cmd =~ s/__THREADS__/$threads/;
+
+    system($caller_cmd) == 0 or die "Error running $cmd: $!";
+    chdir $tmpdir            or die " Error chdiring to $tmpdir: $! ";
+
+    symlink( "var_${varcall}/var.filtered.vcf", "reference.variants.vcf" )
+      or die "Error creating $tmpdir/reference.variants.vcf: $!";
+    my $varcount = `grep -vc ^# $tmpdir/reference.variants.vcf`;
+    chomp $varcount;
+
+    print "\nIdentified $varcount variants...\n";
+
+    return (0);
+}
 
 # ######################################################################
 # #
