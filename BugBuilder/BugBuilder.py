@@ -336,6 +336,9 @@ import statistics
 import subprocess
 import pkg_resources
 import tabulate
+import multiprocessing
+
+
 
 from BugBuilder import __version__
 from Bio import SeqIO # , SearchIO
@@ -374,8 +377,8 @@ def configure(config_path, hardfail=True):
             'R', 'mummer', "delta-filter",  "show-coords",  'bwa', "prokka"],
         "mandatory_python_programs": [],
         "opt_programs": [
-            'fastqc', 'sickle', 'mauve', 'prokka', "minimus",
-            'aragorn', 'prodigal', 'hmmer3', 'infernal',
+            'fastqc', 'sickle', 'mauve', 'prokka', "minimus", 'sam2afg',
+            'aragorn', 'prodigal', 'hmmer3', 'infernal','bank-transact',
             'rnammer', 'tbl2asn', 'abyss', 'celera', "abyss", "abyss-sealer",
             'gapfiller', 'sspace', 'asn2gb', 'amos' , 'masurca',
             'gfinisher', 'pilon', 'vcflib', 'cgview'],
@@ -2623,6 +2626,345 @@ def finish_assembly(args, config, reads_ns, results, logger):
     get_contig_stats( "$tmpdir/scaffolds.fasta", 'scaffolds' );
 
 
+def build_agp():
+    """
+    Creates an AGP file from the scaffolds, while generating new
+    contig/scaffold outputs meeting ENA requirements (no consecutive runs
+    of >=10 N, minimum contig size of 200 bp) if running in 'submission'
+    mode, otherwise leaves short contigs and gaps<100bp intact. The
+    scaffold_type argument is used to determine the linkage evidence type
+    for scaffold gaps
+
+    required parameters: $ (tmpdir)
+		     : $ (organism description)
+                   : $ (mode - submission or draft)
+                   : $ (scaffold_type: align or mate_pair)
+
+    returns            : $ (0)
+
+    see https://www.ncbi.nlm.nih.gov/assembly/agp/AGP_Specification/
+    """
+
+    if evidence not in ['paired-ends', 'align_genus', 'align_xgenus']:
+        logger.error("Unknown evidence type: %s", evidence)
+    logger.info("Creating AGP file...");
+    agp_dir = os.path.join(args.tmp_dir, "agp")
+    agpfile_path = os.path.join(agp_dir, "scaffolds.agp")
+    os.makedirs(agp_dir)
+    lines = []
+    lines.append(">scaffolds.agp")
+    lines.append( "##agp-version 2.0\n")
+    lines.append("#$organism\n")
+    contigs_path = os.path.join(agp_dir, "contigs.fasta")
+    scaffolds_path = os.path.join(agp_dir, "scaffolds.fasta")
+    contig_count = 0
+    gap_dict = {}    #overall per-scaffold gaps to return....
+    with open(results.current_scaffolds, "r") as scaffold_inIO:
+        for scaffold in scaffold_inIO:
+
+            contig_start = 0
+            scaffold_loc = 1
+            scaffold_id  = scaffold.id;
+            scaff_count  = re.match("([0-9]+)$", scaffold_id).group(1)
+            scaffold_id = "scaffold_%06s"  %scaff_count
+            scaffold_end = len(scaffold.seq);
+            contig_end, gap_start, gap_end = 0, 0, 0
+
+            bases = list(scaffold.seq)
+            # location tracking for included contigs/gaps
+            contigs_dict, gaps = {}, []
+            # this is kind of crude, but seems to work...
+            for idx, base in enumerate(bases):
+                if base != "N" and not gap_start:
+                    contig_end = idx
+                elif base == "N" and not gap_start:
+                    gap_start = idx
+                # elif base != "N" and  gap_start:
+                else:
+                    assert base != "N" and  gap_start, "something wrong with AGP"
+                    gap_end = idx
+                    gap_length = gap_end - gap_start
+
+                    if gap_length < 10 and mode == 'submission':
+                        # skip gaps <10 bp which are acceptable by EMBL
+                        gap_start = None
+                    elif mode == 'draft' and gap_length <= 1:
+                        # we can leave single ambiguous bases alone
+                        gap_start = None
+                    else:
+                        gap_end = idx
+                        if contig_end - contig_start < 200 and mode == "submission":
+                            #need to extend previous gap to new position including short contig
+                            if len(gaps) != 0:
+                                last_gap = gaps[len(gaps)]
+                                last_start, last_end = last_gaps.split("-")
+                                new_gap = "{0}-{1}".format(last_start, gap_end)
+                                gaps.append(new_gap)
+                                gap_start = None
+                                contig_start = idx
+                            else:
+                                pass
+                        else:
+                            contig_count = contig_count + 1
+                            contig_id = "contig_%06s", contig_count
+                            with open(contigs_path, "a") as  outf:
+                                SeqIO.write(
+                                    SeqRecord("".join(bases), id=contig_id),
+                                    outf, "fasta")
+                            contigs_dict[contig] = {
+                                'coords': "{}-{}".format(contig_start, contig_end),
+                                'length': len(bases)
+                            }
+                            gap = "{}-{}".foramt(gap_start, gap_end)
+                            gaps.append(gap)
+                            gap_start = None
+                            contig_start = idx
+        # Output last contig from last contig_start position to scaffold end if it is longer than
+        # 200 bp and we are running in submission mode, otherwise remove the last gap to truncate the scaffold...
+        if scaffold_end - contig_start  > 200 or mode == 'draft' or contig_count == 0:
+            contig_count = contig_count + 1
+            contig_id = "contig_%06s", contig_count
+            with open(contigsIO, "a") as  outf:
+                SeqIO.write(SeqRecord("".join(bases), id=contig_id), outf, "fasta")
+                contigs_dict[contig] = {
+                    'coords': "{}-{}".format(contig_start, contig_end),
+                    'length': len(bases)
+                }
+        else:
+            gaps.pop()
+
+        gap_dict[scaffold_id] = gaps
+        scaffold_part = 0
+
+        #write AGP output and new scaffolds fasta file
+        record_dict = SeqIO.index("example.fasta", "fasta")
+        # unlink("contigs.fasta.index") if ( -e "contigs.fasta.index" );
+        # contig_db = Bio::DB::Fasta->new("contigs.fasta");
+        scaffold_seq = None
+
+        # I think this is just a sorted list of ids
+        contig_ids = sort([k.split("_")[1] for k, v in contigs_dict.items()])
+        # my @contig_ids = map { $_->[0] }
+        #   sort { $a->[1] <=> $b->[1] }
+        #   map { [ $_, /(\d+)$/ ] } keys(%contigs);
+        if len(contig_ids) > 0:
+        # if ( $#contig_ids > -1 ) {
+            for i, contig_id in enumerate(contig_ids):
+                contig_data = contigs_dict[contig_id]
+                coords      = contig_data['coords']
+                length      = contig_data['length']
+                if contig_id != "" :  # dont know when this could possibly be true
+                    contig = record_dict['contig_id']
+                    contig_start, contig_end  = coords.split("-")
+                    scaffold_part = scaffold_part + 1
+                    lines.append(
+                        "{ob}\t{ob_beg}\t{ob_end}\t{part_number}\t{comp_type}\t{comp_id}\t{comp_beg}\t{comp_end}\t{orientation}".format(
+                            ob=scaffold_id,
+                            ob_beg=contig_start + 1,
+                            ob_end=contig_end + 1,
+                            part_number=scaffold_part,
+                            comp_type="W",
+                            comp_id=contig_id,
+                            comp_beg=1,
+                            comp_end=length,
+                            orientation="+"))
+                    scaffold_seq = scaffold_seq + str(contig.seq)
+                    if i < len(contig_ids) - 1:
+                        gap_start, gap_end = gaps[i].split("-")
+                        gap_size = gap_end - gap_start
+                        scaffold_part = scaffold_part + 1
+                        lines.append(
+                            "{ob}\t{ob_beg}\t{ob_end}\t{part_number}\t{comp_type}\t{gap_len}\t{gap_type}\t{linkage}\t{linkage_ev}".format(
+                                ob=scaffold_id,
+                                ob_beg=gap_start + 1,
+                                ob_end=gap_end + 1,
+                                part_number=scaffold_part,
+                                comp_type="N",
+                                gap_length=gap_size,
+                                gap_type="scaffold",
+                                linkage="yes",
+                                linkage_ev=evidence))
+                        scaffold_seq = scaffold_seq + "N" * gap_size
+        if scaffold_seq is not None:
+            with open(scaffolds_path, "a") as outf:
+                SeqIO.write(SeqRecord(scaffold_seq, id=scaffold_id))
+    with open(agpfile_path, "w") as outf:
+        for line in lines:
+            outf.write(line)
+    return gaps
+
+
+
+def run_prokka(config, results, logger):
+    """
+    generates annotation on the assembly using prokka
+
+    required parameters: $ (tmpdir)
+		       $ (genus)
+                     $ (species)
+                     $ (strain)
+                     $ (locustag)
+                     $ (centre)
+
+    returns            : $ (0)
+    """
+    logger.info("Starting PROKKA...")
+    #use scaffolds if we have them, otherwise contigs....
+    if results.curent_scaffolds is not None:
+        seqs = results.current_scaffolds
+    else:
+        seqs = results.current_contigs
+
+    prokka_dir = os.path.join(args.tmp_dir, "prokka", "")
+    # os.makedirs(prokka_dir)
+
+    cmd = "{0} --addgenes --outdir {1} --prefix prokka --genus {2} --species {3} --strain {4} --locustag {5} --centre {6} {7}> {1}prokka.log 2>&1".format(
+        config.prokka, #0
+        prokka_dir, #1
+        args.genus,#2
+        args.species,#3
+         args.strain,#4
+        args.locustag,#5
+        args.centre,#6
+        seqs)
+    logger.debug("running the following command:\n %s". cmd)
+    subprocess.run(cmd,
+                   shell=sys.platform != "win32",
+                   stdout=subprocess.PIPE,
+                   stderr=subprocess.PIPE,
+                   check=True)
+
+#     # my $inIO        = Bio::SeqIO->new( -file => "$tmpdir/prokka/prokka.gbf",     -format => 'genbank' );
+#     my $inIO        = Bio::SeqIO->new( -file => "$tmpdir/prokka/prokka.gbk",     -format => 'genbank' );
+#     my $embl_outIO  = Bio::SeqIO->new( -file => ">$tmpdir/prokka/prokka.embl",   -format => 'embl' );
+#     my $fasta_outIO = Bio::SeqIO->new( -file => ">$tmpdir/prokka/${type}.fasta", -format => 'fasta' );
+
+#     # something is losing the scaffold/contig naming so needs to be regenerated...
+#     # at least ordering should be conserved
+#     my $count = 0;
+#     while ( my $seq = $inIO->next_seq() ) {
+#         my $label;
+#         ( $type eq 'scaffolds' ) ? ( $label = 'scaffold' ) : ( $label = 'contig' );
+#         my $id = sprintf( "${label}_%06s", ++$count );
+#         $seq->display_id($id);
+#         $seq->accession($id);
+#         $embl_outIO->write_seq($seq);
+#         $fasta_outIO->write_seq($seq);
+#     }
+
+#     chdir $tmpdir or die "Error chdiring to $tmpdir: $!";
+#     unlink "scaffolds.fasta" or die "Error removing scaffolds.fasta: $!" if ( $type eq 'scaffolds' );
+
+#     symlink( "prokka/prokka.embl", "$type.embl" )
+#       or die "Error creating $type.embl symlink: $!";
+#     symlink( "prokka/scaffolds.fasta", "scaffolds.fasta" )
+#       or die "Error creating scaffolds.fasta symlink: $!"
+#       if ( $type eq 'scaffolds' );
+
+#     return (0);
+# }
+
+
+def amosvalidate(args, seq_file, config, reads_ns):
+    """
+    Uses abyss's abyss-samtoafg script to convert spades sam and contigs
+    to an amos bank
+
+    required params: $ (tmpdir)
+                 $ (insert size)
+                 $ (insert size stddev)
+
+    returns        : $ (0)
+    """
+    amos_dir = os.path.join(args.tmp_dir, "amos", "")
+    os.makedirs(amos_dir)
+    out_sequences = os.path.join(amos_dir, os.path.basename(seq_file))
+    # copy sequences with a newline separating records
+    with open(seq_file, "r") as inf, open(out_sequences, "w") as outf:
+        for rec in SeqIO.parse(inf, "fasta"):
+            SeqIO.write(rec, outf, "fasta")
+            outf.write("\n")
+    assert reads_ns.insert_size is not None and \
+        reads_ns.insert_stddev is not None, "how did we get here with paired reads but no insert size calcualted?"
+    logger.info("Converting to amos bank...");
+    sam2afg_cmd = "{exe}  -m {ins_size} -s {ins_stddev} {infile} {sam} > {outdir}amos.afg".format(
+        exe=config.sam2afg,
+        ins_size=insert_size,
+        ins_stddev=insert_stddev,
+        infile=out_sequences,
+        sam=os.path.join(args.tmp_dir, "bwa",
+                         os.path.splitext(os.path.basename(seq_file))[0]),
+        outdir=amos_dir)
+
+    bnk_cmd = "{exe} -cb {outdir}assembly.bnk -m {outdir}amos.afg  > {outdir}bank-transact.log 2>&1".format(
+        exe=config['bank_transact'],
+        outfile=amos_dir)
+    logger.info("Running amosvalidate");
+
+    # read amosvalidate script and comment out '4xx' lines, which run SNP checks and are extreeeeemly slow....
+    new_exe = os.path.join(amos_dir, "amosvalidate")
+    regex = re.compile(r"^4.*")
+    with open(config.amosvalidate, "r") as source, open(new_exe, "w") as new_source:
+        for line in source:
+            line = regex.sub("#4", line)  # double check this line actully works
+            new_source.write(line)
+    os.chmod(new_exe, "0755")  # im twitching too...
+    validate_cmd = "{exe} {outdir}assembly.bnk > {outdir}amosvalidate.log 2>&1".format(
+        exe=new_exe,
+        outdir=amos_dir)
+    mapping_cmd = \
+    "{exe} -i -p -b {outdir}/assembly.bnk CTG 2> /dev/null | cut -f 2,3 > {outdir}/ctg_to_iid.txt".format(
+        exe=config.bank_report,
+        outdir=amos_dir)
+
+    for cmd in [sam2afg_cmd, bnk_cmd, validate_cmd, mapping_cmd]:
+        logger.debug("running the following command:\n %s". cmd)
+        subprocess.run(cmd,
+                       shell=sys.platform != "win32",
+                       stdout=subprocess.PIPE,
+                       stderr=subprocess.PIPE,
+                       check=True)
+
+def summarise_amosvalidate():
+    """
+    postprocesses amosvalidate outputs to make more readily digestible
+
+    required params: $ (tmpdir)
+
+    returns        : $ ($ - hashref to parsed results)
+    """
+    logger.info("processing amosvalidate results...");
+    amosvalidate = os.path.join(args.tmp_dir, "amos", "")
+    iid_mapping = os.path.join(args.tmp_dir, "amos", "ctg_to_iid.txt")
+    results_dict = {}
+
+    # Read Contig->iid mapping into a hash
+    contig_to_iid_dict = {}
+    pattern = re.compile(r"\s+")
+    with open(iid_mapping, "r") as inf:
+        for line in inf:
+            contig, iid  = pattern.split(line)
+            iid = iid.strip()
+            contig_to_iid_dict[iid] = contig
+            results_dict[contig]    = []
+
+    outputs = glob.glob(os.path.join(amosvalidate, "*feat"))
+    with open(os.path.join(amosvalidate, "assembly.all.feat")) as ALL:
+        for line in ALL:
+            fields    = patter.split(line)
+            contig_id = contig_to_iid_dict[fields[0]]
+            start     = fields[2]
+            end       = fields[3]
+            tpe      = fields[4]
+            res_arr   = results[contig_id]
+            #no idea how it ends up with a negative start...but it does...
+            start = 0 if start < 0  else start
+            #  making this a list?
+            res_arr = [start, end, tpe]
+            results[contig_id] = res_arr
+    return results_dict
+
+
 def main(args=None, logger=None):
     if args is None:
         args = get_args()
@@ -2790,42 +3132,46 @@ def main(args=None, logger=None):
             finish_assembly(args, config, reads_ns, results, logger=logger)
 
     if results.current_scaffolds is not None:
-        pass
-         # gaps = build_agp( $tmpdir, $organism, $mode, $scaffold_type );
+        gaps = build_agp( args,results, read_ns, scaffold_type )
 
-#     # sequence stable from this point, only annotations altered
-#     for my $i (qw(1 2)) {
-# 	print "pm: $i \n";
-#         $pm->start and next();
-#         if ( $i == 1 ) {
+    # sequence stable from this point, only annotations altered
+    #  it looks this this is attempting to be multiprocessed.
+    #  for now, lets just do this in serial, as this cant save much time;
+    #  id rather prokka have all the cores it can
+    # simul_cmds = []
+    # pool = multiprocessing.Pool(processes=split_cores)
+    # logger.debug("running the following commands:")
+    # logger.debug("\n".join(simul_cmds))
+    # spades_results = [
+    #     pool.apply_async(subprocess.run,
+    #                      (cmd,),
+    #               { "shell": sys.platform != "win32",
+    #                "stdout": subprocess.PIPE,
+    #                "stderr": subprocess.PIPE,
+    #                "check": True})
+    #     for cmd in simul_cmds]
+    # pool.close()
+    # pool.join()
+    # logger.debug(spades_results)
+    # logger.info("Sum of return codes (should be 0):")
+    # spades_results_sum = sum([r.get() for r in spades_results])
 
-#             ##amosvalidate fails if we don't have mate-pairs
-#             if ( -e "$tmpdir/read2.fastq" && ( $mode eq 'draft' ) ) {
-#                 my $seq_file;
-#                 ( -e "$tmpdir/scaffolds.fasta" ) ? ( $seq_file = 'scaffolds.fasta' ) : ( $seq_file = 'contigs.fasta' );
+    ##amosvalidate fails if we don't have mate-pairs
+    if reads_ns.paired and args.mode == 'draft':
+            seq_file = results.current_contigs
+            if results.current_scaffolds is not None:
+                seq_file = results.current_scaffolds
+            sorted_bam = align_reads(
+                dirname="align", reads_ns=reads_ns,
+                config=config, downsample=True, args=args, logger=logger)
+            amosvalidate( tmpdir, insert_size, stddev );
+            # get_contig_to_iid_mapping($tmpdir);
+            amosvalidate_results = summarise_amosvalidate(tmpdir);
+    run_prokka( tmpdir, genus, species, strain, locustag, centre );
 
-#                 align_reads( $tmpdir, $seq_file, $read_length_mean );
-#                 amosvalidate( $tmpdir, $insert_size, $stddev );
-#             }
-#         }
-#         elsif ( $i == 2 ) {
-
-#             run_prokka( $tmpdir, $genus, $species, $strain, $locustag, $centre );
-#         }
-
-#         $pm->finish();
-#     }
-
-#     $pm->wait_all_children();
-
-#     my $amosvalidate_results;
-#     if ( -e "$tmpdir/read2.fastq" && ( $mode eq 'draft' ) ) {
-#         get_contig_to_iid_mapping($tmpdir);
-#         $amosvalidate_results = summarise_amosvalidate($tmpdir);
-#     }
-
-#     run_varcaller( $tmpdir, $varcall, $threads, $read_length_mean ) if ($varcall);
-#     merge_annotations( $tmpdir, $amosvalidate_results, $gaps, $genus, $species, $strain );
+    amosvalidate_results = None
+    # run_varcaller( tmpdir, varcall, threads, read_length_mean ) if (varcall)
+    # merge_annotations( tmpdir, amosvalidate_results, gaps, genus, species, strain )
 #     #  This kept throwing an error about Bio::SeqIO
 #     # run_cgview($tmpdir);
 
@@ -2961,469 +3307,127 @@ def main(args=None, logger=None):
 
 
 
+# def run_varcaller():
+#     """"
+# Carries out variant calling using requested variant caller
 
+# required params: $ (tmpdir)
+#                  $ (varcall)
+#                  $ (no. threads)
+#                  $ (read length)
 
+# returns        : $ (0)
+# """"
+# pass
 
+# sub run_varcaller {
 
+#     my $tmpdir      = shift;
+#     my $varcall     = shift;
+#     my $threads     = shift;
+#     my $read_length = shift;
 
+#     message("Running variant calling ($varcall)...");
 
-
-
-
-def build_agp():
-    """
-    Creates an AGP file from the scaffolds, while generating new
-    contig/scaffold outputs meeting ENA requirements (no consecutive runs
-    of >=10 N, minimum contig size of 200 bp) if running in 'submission'
-    mode, otherwise leaves short contigs and gaps<100bp intact. The
-    scaffold_type argument is used to determine the linkage evidence type
-    for scaffold gaps
-
-    required parameters: $ (tmpdir)
-		     : $ (organism description)
-                   : $ (mode - submission or draft)
-                   : $ (scaffold_type: align or mate_pair)
-
-    returns            : $ (0)
-
-    see https://www.ncbi.nlm.nih.gov/assembly/agp/AGP_Specification/
-    """
-
-    if evidence not in ['paired-ends', 'align_genus', 'align_xgenus']:
-        logger.error("Unknown evidence type: %s", evidence)
-    logger.info("Creating AGP file...");
-    agp_dir = os.path.join(args.tmp_dir, "agp")
-    agpfile_path = os.path.join(agp_dir, "scaffolds.agp")
-    os.makedirs(agp_dir)
-    lines = []
-    lines.append(">scaffolds.agp")
-    lines.append( "##agp-version 2.0\n")
-    lines.append("#$organism\n")
-    contigs_path = os.path.join(agp_dir, "contigs.fasta")
-    scaffolds_path = os.path.join(agp_dir, "scaffolds.fasta")
-    contig_count = 0
-    gap_dict = {}    #overall per-scaffold gaps to return....
-    with open(results.current_scaffolds, "r") as scaffold_inIO:
-        for scaffold in scaffold_inIO:
-
-            contig_start = 0
-            scaffold_loc = 1
-            scaffold_id  = scaffold.id;
-            scaff_count  = re.match("([0-9]+)$", scaffold_id).group(1)
-            scaffold_id = "scaffold_%06s"  %scaff_count
-            scaffold_end = len(scaffold.seq);
-            contig_end, gap_start, gap_end = 0, 0, 0
-
-            bases = list(scaffold.seq)
-            # location tracking for included contigs/gaps
-            contigs_dict, gaps = {}, []
-            # this is kind of crude, but seems to work...
-            for idx, base in enumerate(bases):
-                if base != "N" and not gap_start:
-                    contig_end = idx
-                elif base == "N" and not gap_start:
-                    gap_start = idx
-                # elif base != "N" and  gap_start:
-                else:
-                    assert base != "N" and  gap_start, "something wrong with AGP"
-                    gap_end = idx
-                    gap_length = gap_end - gap_start
-
-                    if gap_length < 10 and mode == 'submission':
-                        # skip gaps <10 bp which are acceptable by EMBL
-                        gap_start = None
-                    elif mode == 'draft' and gap_length <= 1:
-                        # we can leave single ambiguous bases alone
-                        gap_start = None
-                    else:
-                        gap_end = idx
-                        if contig_end - contig_start < 200 and mode == "submission":
-                            #need to extend previous gap to new position including short contig
-                            if len(gaps) != 0:
-                                last_gap = gaps[len(gaps)]
-                                last_start, last_end = last_gaps.split("-")
-                                new_gap = "{0}-{1}".format(last_start, gap_end)
-                                gaps.append(new_gap)
-                                gap_start = None
-                                contig_start = idx
-                            else:
-                                pass
-                        else:
-                            contig_id = "contig_%06s", ++$contig_count
-                            with open(contigs_path, "a") as  outf:
-                                SeqIO.write(
-                                    SeqRecord(id=contig_id, "".join(bases)),
-                                    outf, "fasta")
-                            contigs_dict[contig] = {
-                                'coords': "{}-{}".format(contig_start, contig_end)
-                                'length': len(bases))
-                            }
-                            gap = "{}-{}".foramt(gap_start, gap_end)
-                            gaps.append(gap)
-                            gap_start = None
-                            contig_start = idx
-                    }
-                }
-            }
-        }
-        # Output last contig from last contig_start position to scaffold end if it is longer than
-        # 200 bp and we are running in submission mode, otherwise remove the last gap to truncate the scaffold...
-        if scaffold_end - contig_start  > 200 or mode == 'draft' or contig_count == 0:
-            contig_id = "contig_%06s", ++$contig_count
-            with open(contigsIO, "a") as  outf:
-                SeqIO.write(SeqRecord(id=contig_id, "".join(bases)), outf, "fasta")
-                contigs_dict[contig] = {
-                    'coords': "{}-{}".format(contig_start, contig_end)
-                    'length': len(bases))
-                }
-        else:
-            gaps.pop()
-
-        gap_dict[scaffold_id] = gaps
-        scaffold_part = 0
-
-        #write AGP output and new scaffolds fasta file
-        record_dict = SeqIO.index("example.fasta", "fasta")
-        # unlink("contigs.fasta.index") if ( -e "contigs.fasta.index" );
-        # contig_db = Bio::DB::Fasta->new("contigs.fasta");
-        scaffold_seq = None
-
-        # I think this is just a sorted list of ids
-        contig_ids = sort([k.split("_")[1] for k, v in contigs_dict.items()])
-        # my @contig_ids = map { $_->[0] }
-        #   sort { $a->[1] <=> $b->[1] }
-        #   map { [ $_, /(\d+)$/ ] } keys(%contigs);
-        if len(contig_ids) > 0:
-        # if ( $#contig_ids > -1 ) {
-            for i, contig_id in enumerate(contig_ids):
-                contig_data = contigs_dict[contig_id]
-                coords      = contig_data['coords']
-                length      = contig_data['length']
-                if contig_id != "" :  # dont know when this could possibly be true
-                    contig = record_dict['contig_id']
-                    contig_start, contig_end  = coords.split("-")
-                    scaffold_part = scaffold_part + 1
-                    lines.append(
-                        "{ob}\t{ob_beg}\t{ob_end}\t{part_number}\t{comp_type}\t{comp_id}\t{comp_beg}\t{comp_end}\t{orientation}".format(
-                            ob=scaffold_id,
-                            ob_beg=contig_start + 1,
-                            ob_end=contig_end + 1,
-                            part_number=scaffold_part,
-                            comp_type="W",
-                            comp_id=contig_id,
-                            comp_beg=1,
-                            comp_end=length,
-                            orientation="+"))
-                    scaffold_seq = scaffold_seq + str(contig.seq)
-                    if i < len(contig_ids) - 1:
-                        gap_start, gap_end = gaps[i].split("-")
-                        gap_size = gap_end - gap_start
-                        scaffold_part = scaffold_part + 1
-                        lines.append(
-                            "{ob}\t{ob_beg}\t{ob_end}\t{part_number}\t{comp_type}\t{gap_len}\t{gap_type}\t{linkage}\t{linkage_ev}".format(
-                                ob=scaffold_id,
-                                ob_beg=gap_start + 1,
-                                ob_end=gap_end + 1,
-                                part_number=scaffold_part,
-                                comp_type="N",
-                                gap_length=gap_size,
-                                gap_type="scaffold",
-                                linkage="yes",
-                                linkage_ev=evidence))
-                        scaffold_seq = scaffold_seq + "N" * gap_size
-        if scaffold_seq is not None:
-            with open(scaffolds_path, "a") as outf:
-                SeqIO.write(SeqRecord(scaffold_seq, id=scaffold_id)
-    with open(agpfile_path, "w") as outf:
-        for line in lines:
-            outf.write(line)
-    return gaps
-
-
-
-def run_prokka(config, results, logger):
-    """
-    generates annotation on the assembly using prokka
-
-    required parameters: $ (tmpdir)
-		       $ (genus)
-                     $ (species)
-                     $ (strain)
-                     $ (locustag)
-                     $ (centre)
-
-    returns            : $ (0)
-    """
-    logger.info("Starting PROKKA...");
-    #use scaffolds if we have them, otherwise contigs....
-    if results.curent_scaffolds is not None:
-        seqs = results.current_scaffolds
-    else:
-        seqs = results.current_contigs
-
-    prokka_dir = os.path.join(args.tmp_dir, "prokka", "")
-    # os.makedirs(prokka_dir)
-
-    cmd = "{0} --addgenes --outdir {1} --prefix prokka --genus {2} --species {3} --strain {4} --locustag {5} --centre {6} {7}> {1}prokka.log 2>&1".format(
-        config.prokka, #0
-        prokka_dir, #1
-        args.genus,#2
-        args.species,#3
-         args.strain,#4
-        args.locustag,#5
-        args.centre,#6
-        seqs)
-    logger.debug("running the following command:\n %s". cmd)
-    subprocess.run(cmd,
-                   shell=sys.platform != "win32",
-                   stdout=subprocess.PIPE,
-                   stderr=subprocess.PIPE,
-                   check=True)
-
-#     # my $inIO        = Bio::SeqIO->new( -file => "$tmpdir/prokka/prokka.gbf",     -format => 'genbank' );
-#     my $inIO        = Bio::SeqIO->new( -file => "$tmpdir/prokka/prokka.gbk",     -format => 'genbank' );
-#     my $embl_outIO  = Bio::SeqIO->new( -file => ">$tmpdir/prokka/prokka.embl",   -format => 'embl' );
-#     my $fasta_outIO = Bio::SeqIO->new( -file => ">$tmpdir/prokka/${type}.fasta", -format => 'fasta' );
-
-#     # something is losing the scaffold/contig naming so needs to be regenerated...
-#     # at least ordering should be conserved
-#     my $count = 0;
-#     while ( my $seq = $inIO->next_seq() ) {
-#         my $label;
-#         ( $type eq 'scaffolds' ) ? ( $label = 'scaffold' ) : ( $label = 'contig' );
-#         my $id = sprintf( "${label}_%06s", ++$count );
-#         $seq->display_id($id);
-#         $seq->accession($id);
-#         $embl_outIO->write_seq($seq);
-#         $fasta_outIO->write_seq($seq);
+#     my ( $cmd, $caller_cmd, $create_dir );
+#     my $varcallers = $config->{'varcallers'};
+#     foreach my $caller (@$varcallers) {
+#         my $name = $caller->{'name'};
+#         if ( $name eq $varcall ) {
+#             $caller_cmd = $caller->{'command'};
+#             $create_dir = $caller->{'create_dir'};
+#         }
+#     }
+#     my $vardir = "$tmpdir/var_${varcall}/";
+#     if ($create_dir) {
+#         mkdir "$tmpdir/var_${varcall}" or die "Error creating $tmpdir/var_${varcall}: $! ";
+#         chdir "$tmpdir/var_${varcall}" or die "Error chdiring to $tmpdir/var_${varcall}: $!";
 #     }
 
-#     chdir $tmpdir or die "Error chdiring to $tmpdir: $!";
-#     unlink "scaffolds.fasta" or die "Error removing scaffolds.fasta: $!" if ( $type eq 'scaffolds' );
+#     symlink( "$tmpdir/reference_parsed_ids.fasta", "$vardir/reference.fasta" )
+#       or die "Error creating $vardir/reference.fasta symlink: $!";
+#     $cmd = $config->{'bwa_dir'} . symlink( "$tmpdir/read1.fastq", "$vardir/read1.fastq" )
+#       or die "Error creating symlink: $! ";
+#     symlink( "$tmpdir/read2.fastq", "$vardir/read2.fastq" )
+#       if ( -e "$tmpdir/read2.fastq" )
+#       or die "Error creating symlink: $! ";
 
-#     symlink( "prokka/prokka.embl", "$type.embl" )
-#       or die "Error creating $type.embl symlink: $!";
-#     symlink( "prokka/scaffolds.fasta", "scaffolds.fasta" )
-#       or die "Error creating scaffolds.fasta symlink: $!"
-#       if ( $type eq 'scaffolds' );
+#     print "BWA aligning reads to assembly...\n";
+#     my $samtools_dir = $config->{'samtools_dir'};
 
-#     return (0);
-# }
+#     $cmd = $config->{'bwa_dir'} . "/bwa index $vardir/reference.fasta >$vardir/bwa_index.log 2>&1";
+#     system($cmd) == 0 or die " Error running $cmd";
 
-# ######################################################################
-# #
-# # amosvalidate
-# #
-# # Uses abyss's abyss-samtoafg script to convert spades sam and contigs
-# # to an amos bank
-# #
-# # required params: $ (tmpdir)
-# #                  $ (insert size)
-# #                  $ (insert size stddev)
-# #
-# # returns        : $ (0)
-# #
-# ######################################################################
-
-# sub amosvalidate {
-
-#     my $tmpdir        = shift;
-#     my $insert_size   = shift;
-#     my $insert_stddev = shift;
-
-#     mkdir "$tmpdir/amos" or die "Error creating $tmpdir/amos: $!";
-#     chdir "$tmpdir/amos" or die "Error running chdir $tmpdir/amos: $!";
-
-#     my $seq_file;
-#     ( -e "$tmpdir/scaffolds.fasta" ) ? ( $seq_file = "scaffolds.fasta" ) : ( $seq_file = "contigs.fasta" );
-
-#     open SEQS, "$tmpdir/$seq_file"
-#       or die "Error opening $tmpdir/$seq_file: $!";
-#     open OUT, ">$tmpdir/amos/$seq_file"
-#       or die "Error opening $tmpdir/amos/contigs.fasta: $!";
-
-#     my $first_line = 0;    #kludgetastic...
-#     while ( my $line = <SEQS> ) {
-#         if ( $line =~ /^>/ ) {
-#             if ( $first_line > 0 ) {
-#                 print OUT "\n$line";
-#             }
-#             else {
-#                 print OUT "$line";
-#                 $first_line++;
-#             }
+#     # Use bwa-bwt for 'short' reads less than 100 bp, and bwa-mem for longer reads
+#     if ( $read_length <= 100 ) {
+#         $cmd =
+#             $config->{'bwa_dir'}
+#           . "/bwa aln -t $threads $vardir/reference.fasta $vardir/read1.fastq > $vardir/read1.sai"
+#           . " 2> $vardir/bwa_sai1.log";
+#         system($cmd) == 0 or die "Error running $cmd";
+#         if ( -e "$vardir/read2.fastq" ) {
+#             $cmd =
+#                 $config->{'bwa_dir'}
+#               . "/bwa aln -t $threads $vardir/reference.fasta $vardir/read2.fastq > $vardir/read2.sai"
+#               . " 2> $vardir/bwa_sai2.log";
+#             system($cmd) == 0 or die "Error running $cmd";
+#             $cmd =
+#                 $config->{'bwa_dir'}
+#               . "/bwa sampe $vardir/reference.fasta $vardir/read1.sai $vardir/read2.sai "
+#               . "$vardir/read1.fastq $vardir/read2.fastq";
+#             $cmd .= " 2> $vardir/sampe.log > $vardir/scaffolds.sam";
+#             system($cmd) == 0 or die "Error running $cmd";
 #         }
 #         else {
-#             chomp $line;
-#             print OUT $line;
+#             $cmd = $config->{'bwa_dir'} . "/bwa samse $vardir/reference.fasta $vardir/read1.sai $vardir/read1.fastq";
+#             $cmd .= "2> $vardir/samse.log > $vardir/scaffolds.sam";
+#             system($cmd) == 0 or die "Error running $cmd";
 #         }
 #     }
-#     close SEQS;
-#     close OUT;
+#     else {
+#         if ( !-e "$vardir/read2.fastq" ) {
 
-#     message("Converting to amos bank...");
-#     my $cmd = $config->{'sam2afg'};
-#     $cmd .= " -m $insert_size -s $insert_stddev " if ( $insert_size && $insert_stddev );
-#     $cmd .= " $tmpdir/amos/${seq_file} $tmpdir/bwa/${seq_file}.sam";
-#     $cmd .= " > amos.afg";
+#             # single-ended long reads
+#             $cmd =
+#                 $config->{'bwa_dir'}
+#               . "/bwa mem -t $threads -M $vardir/reference.fasta $vardir/read1.fastq > reference.sam "
+#               . "2>$vardir/bwa_mem.log";
+#             system($cmd) == 0 or die "Error running $cmd: $!";
+#         }
+#         else {
 
-#     system($cmd) == 0 or die "Error executing $cmd: $!";
-
-#     $cmd = $config->{'amos_dir'}
-#       . "bank-transact -cb $tmpdir/amos/assembly.bnk -m $tmpdir/amos/amos.afg  > $tmpdir/amos/bank-transact.log 2>&1";
-#     system($cmd) == 0 or die "Error executing $cmd: $!";
-
-#     message("Running amosvalidate");
-
-#     # read amosvalidate script and comment out '4xx' lines, which run SNP checks and are extreeeeemly slow....
-#     open AMOSVALIDATE, $config->{'amos_dir'} . "/amosvalidate"
-#       or die "Error opening " . $config->{'amos_dir'} . "/amosvalidate: $!";
-#     open SCRIPT, ">$tmpdir/amos/amosvalidate" or die "Error opening $tmpdir/amos/amosvalidate: $!";
-#     while ( my $line = <AMOSVALIDATE> ) {
-#         $line =~ s/^4/#4/;
-#         print SCRIPT $line;
+#             # paired-end long reads
+#             $cmd =
+#                 $config->{'bwa_dir'}
+#               . "/bwa mem -t $threads -M $vardir/reference.fasta $vardir/read1.fastq $vardir/read2.fastq >reference.sam "
+#               . "2>$vardir/bwa_mem.log";
+#             system($cmd) == 0 or die "Error running $cmd: $!";
+#         }
 #     }
-#     close AMOSVALIDATE;
-#     close SCRIPT;
-#     chmod 0755, "$tmpdir/amos/amosvalidate" or die "Error running chmod $tmpdir/amos/amosvalidate: $!";
 
-#     $cmd = "$tmpdir/amos/amosvalidate $tmpdir/amos/assembly.bnk > $tmpdir/amos/amosvalidate.log 2>&1";
-#     system($cmd) == 0 or die "Error executing $cmd: $!";
+#     $cmd = "$samtools_dir/samtools view -q 10 -Sb $vardir/reference.sam 2>$vardir/samtoolsview.log"
+#       . "|$samtools_dir/samtools sort - $vardir/reference";
+#     system($cmd) == 0 or die "Error running $cmd";
 
-#     chdir $tmpdir or die "Error chainging to $tmpdir: $!";
+#     $cmd = "$samtools_dir/samtools index $vardir/reference.bam 2>$vardir/samtools_index.log";
+#     system($cmd) == 0 or die "Error running $cmd";
+
+#     $caller_cmd =~ s/__BUGBUILDER_BIN__/$FindBin::Bin/;
+#     $caller_cmd =~ s/__TMPDIR__/$tmpdir/;
+#     $caller_cmd =~ s/__THREADS__/$threads/;
+
+#     system($caller_cmd) == 0 or die "Error running $cmd: $!";
+#     chdir $tmpdir            or die " Error chdiring to $tmpdir: $! ";
+
+#     symlink( "var_${varcall}/var.filtered.vcf", "reference.variants.vcf" )
+#       or die "Error creating $tmpdir/reference.variants.vcf: $!";
+#     my $varcount = `grep -vc ^# $tmpdir/reference.variants.vcf`;
+#     chomp $varcount;
+
+#     print "\nIdentified $varcount variants...\n";
+
 #     return (0);
-
 # }
-
-
-
-
-
-
-
-
-
-def run_varcaller():
-    """"
-Carries out variant calling using requested variant caller
-
-required params: $ (tmpdir)
-                 $ (varcall)
-                 $ (no. threads)
-                 $ (read length)
-
-returns        : $ (0)
-""""
-
-
-sub run_varcaller {
-
-    my $tmpdir      = shift;
-    my $varcall     = shift;
-    my $threads     = shift;
-    my $read_length = shift;
-
-    message("Running variant calling ($varcall)...");
-
-    my ( $cmd, $caller_cmd, $create_dir );
-    my $varcallers = $config->{'varcallers'};
-    foreach my $caller (@$varcallers) {
-        my $name = $caller->{'name'};
-        if ( $name eq $varcall ) {
-            $caller_cmd = $caller->{'command'};
-            $create_dir = $caller->{'create_dir'};
-        }
-    }
-    my $vardir = "$tmpdir/var_${varcall}/";
-    if ($create_dir) {
-        mkdir "$tmpdir/var_${varcall}" or die "Error creating $tmpdir/var_${varcall}: $! ";
-        chdir "$tmpdir/var_${varcall}" or die "Error chdiring to $tmpdir/var_${varcall}: $!";
-    }
-
-    symlink( "$tmpdir/reference_parsed_ids.fasta", "$vardir/reference.fasta" )
-      or die "Error creating $vardir/reference.fasta symlink: $!";
-    $cmd = $config->{'bwa_dir'} . symlink( "$tmpdir/read1.fastq", "$vardir/read1.fastq" )
-      or die "Error creating symlink: $! ";
-    symlink( "$tmpdir/read2.fastq", "$vardir/read2.fastq" )
-      if ( -e "$tmpdir/read2.fastq" )
-      or die "Error creating symlink: $! ";
-
-    print "BWA aligning reads to assembly...\n";
-    my $samtools_dir = $config->{'samtools_dir'};
-
-    $cmd = $config->{'bwa_dir'} . "/bwa index $vardir/reference.fasta >$vardir/bwa_index.log 2>&1";
-    system($cmd) == 0 or die " Error running $cmd";
-
-    # Use bwa-bwt for 'short' reads less than 100 bp, and bwa-mem for longer reads
-    if ( $read_length <= 100 ) {
-        $cmd =
-            $config->{'bwa_dir'}
-          . "/bwa aln -t $threads $vardir/reference.fasta $vardir/read1.fastq > $vardir/read1.sai"
-          . " 2> $vardir/bwa_sai1.log";
-        system($cmd) == 0 or die "Error running $cmd";
-        if ( -e "$vardir/read2.fastq" ) {
-            $cmd =
-                $config->{'bwa_dir'}
-              . "/bwa aln -t $threads $vardir/reference.fasta $vardir/read2.fastq > $vardir/read2.sai"
-              . " 2> $vardir/bwa_sai2.log";
-            system($cmd) == 0 or die "Error running $cmd";
-            $cmd =
-                $config->{'bwa_dir'}
-              . "/bwa sampe $vardir/reference.fasta $vardir/read1.sai $vardir/read2.sai "
-              . "$vardir/read1.fastq $vardir/read2.fastq";
-            $cmd .= " 2> $vardir/sampe.log > $vardir/scaffolds.sam";
-            system($cmd) == 0 or die "Error running $cmd";
-        }
-        else {
-            $cmd = $config->{'bwa_dir'} . "/bwa samse $vardir/reference.fasta $vardir/read1.sai $vardir/read1.fastq";
-            $cmd .= "2> $vardir/samse.log > $vardir/scaffolds.sam";
-            system($cmd) == 0 or die "Error running $cmd";
-        }
-    }
-    else {
-        if ( !-e "$vardir/read2.fastq" ) {
-
-            # single-ended long reads
-            $cmd =
-                $config->{'bwa_dir'}
-              . "/bwa mem -t $threads -M $vardir/reference.fasta $vardir/read1.fastq > reference.sam "
-              . "2>$vardir/bwa_mem.log";
-            system($cmd) == 0 or die "Error running $cmd: $!";
-        }
-        else {
-
-            # paired-end long reads
-            $cmd =
-                $config->{'bwa_dir'}
-              . "/bwa mem -t $threads -M $vardir/reference.fasta $vardir/read1.fastq $vardir/read2.fastq >reference.sam "
-              . "2>$vardir/bwa_mem.log";
-            system($cmd) == 0 or die "Error running $cmd: $!";
-        }
-    }
-
-    $cmd = "$samtools_dir/samtools view -q 10 -Sb $vardir/reference.sam 2>$vardir/samtoolsview.log"
-      . "|$samtools_dir/samtools sort - $vardir/reference";
-    system($cmd) == 0 or die "Error running $cmd";
-
-    $cmd = "$samtools_dir/samtools index $vardir/reference.bam 2>$vardir/samtools_index.log";
-    system($cmd) == 0 or die "Error running $cmd";
-
-    $caller_cmd =~ s/__BUGBUILDER_BIN__/$FindBin::Bin/;
-    $caller_cmd =~ s/__TMPDIR__/$tmpdir/;
-    $caller_cmd =~ s/__THREADS__/$threads/;
-
-    system($caller_cmd) == 0 or die "Error running $cmd: $!";
-    chdir $tmpdir            or die " Error chdiring to $tmpdir: $! ";
-
-    symlink( "var_${varcall}/var.filtered.vcf", "reference.variants.vcf" )
-      or die "Error creating $tmpdir/reference.variants.vcf: $!";
-    my $varcount = `grep -vc ^# $tmpdir/reference.variants.vcf`;
-    chomp $varcount;
-
-    print "\nIdentified $varcount variants...\n";
-
-    return (0);
-}
 
 # ######################################################################
 # #
@@ -3489,83 +3493,8 @@ sub run_varcaller {
 
 # }
 
-# ######################################################################
-# #
-# # get_contig_to_iid_mapping
-# #
-# # generates a mapping of contig ids to amos IID
-# #
-# # required params: $ (tmpdir)
-# #
-# # returns        : $ (0)
-# #
-# ######################################################################
 
-# sub get_contig_to_iid_mapping {
 
-#     my $tmpdir = shift;
-#     message("Extracting contig -> AMOS iid mapping...");
-
-#     my $amos_dir = $config->{'amos_dir'};
-#     my $mapping =
-# `$amos_dir/bank-report -i -p -b $tmpdir/amos/assembly.bnk CTG 2> /dev/null|cut -f2,3 > $tmpdir/amos/ctg_to_iid.txt`;
-
-#     return (0);
-# }
-
-# ######################################################################
-# #
-# # summarise_amosvalidate
-# #
-# # postprocesses amosvalidate outputs to make more readily digestible
-# #
-# # required params: $ (tmpdir)
-# #
-# # returns        : $ ($ - hashref to parsed results)
-# #
-# ######################################################################
-
-# sub summarise_amosvalidate {
-
-#     my $tmpdir = shift;
-
-#     message("processing amosvalidate results...");
-
-#     my $amosvalidate = $tmpdir . "/amos";
-#     my $iid_mapping  = $tmpdir . "/amos/ctg_to_iid.txt";
-#     my %results;
-
-#     # Read Contig->iid mapping into a hash
-#     my %contig_to_iid;
-#     open IID, $iid_mapping or die "Error opening $iid_mapping: $!";
-#     while (<IID>) {
-#         my ( $contig, $iid ) = split(/\s+/);
-#         chomp $iid;
-#         $contig_to_iid{$iid} = $contig;
-#         $results{$contig}    = [];
-#     }
-#     close IID;
-
-#     opendir AMOSVALIDATE, $amosvalidate
-#       or die "Error opening $amosvalidate: $!";
-#     my @outputs = grep /feat$/, readdir AMOSVALIDATE;
-#     close AMOSVALIDATE;
-
-#     open ALL, "$amosvalidate/assembly.all.feat" or die "Could not open $amosvalidate/assembly.all.feat: $!";
-#     while (<ALL>) {
-#         my @fields    = split(/\s+/);
-#         my $contig_id = $contig_to_iid{ $fields[0] };
-#         my $start     = $fields[2];
-#         my $end       = $fields[3];
-#         my $type      = $fields[4];
-#         my $res_arr   = $results{$contig_id};
-#         $start = 0 if ( $start < 0 );    #no idea how it ends up with a negative start...but it does...
-#         push @$res_arr, { 'start' => $start, 'end' => $end, type => $type, };
-#         $results{$contig_id} = $res_arr;
-#     }
-#     close ALL;
-#     return ( \%results );
-# }
 # ######################################################################
 # #
 # # merge_annotations
@@ -3792,26 +3721,6 @@ sub run_varcaller {
 # }
 
 
-# ######################################################################
-# #
-# #  Pretty formats a status message
-# #
-# #  requried params: $ (message to display)
-# #
-# #  returns        : $ (0)
-# #
-# ######################################################################
-
-# sub message {
-
-#     my $message = shift;
-#     print "\n\n", "*" x 80, "\n";
-#     print "*",    " " x 78, "*\n";
-#     print "* $message", " " x ( 77 - length($message) ), "*\n";
-#     print "*", " " x 78, "*\n";
-#     print "*" x 80, "\n\n";
-
-# }
 
 # ######################################################################
 # #
@@ -3833,119 +3742,4 @@ sub run_varcaller {
 
 #     return ($date);
 
-# }
-
-# ######################################################################
-# #
-# # parse_fasta_id
-# #
-# # attempt to parse an ID from the reference fasta file. Different fasta formats
-# # make this tricky, so we will specifically parse plain IDs, ENA and NCBI
-# # formats
-# #
-# # required params: $ (fasta file)
-# #
-# # returns: $ (hashref of parsed sequence IDs)=
-# #
-# ######################################################################
-
-# sub parse_fasta_id {
-
-#     my $file = shift;
-#     my $IO = Bio::SeqIO->new( -format => 'fasta', -file => $file );
-#     my @seq_ids;
-#     while ( my $seq = $IO->next_seq() ) {
-#         my $id = $seq->display_id();
-#         if ( $id =~ /\|/ ) {
-#             my @fields = split( /\|/, $id );
-#             if ( $fields[0] eq 'ENA' ) {
-#                 push( @seq_ids, $fields[1] );
-#             }
-#             elsif ( $fields[0] eq 'gi' ) {
-#                 push( @seq_ids, $fields[3] );
-#             }
-#         }
-#         else {
-#             if ( $id =~ />([^ ])/ ) {
-#                 push( @seq_ids, $1 );
-#             }
-#         }
-#     }
-#     return (@seq_ids);
-# }
-
-# ######################################################################
-# #
-# # parse_ref_id
-# #
-# # Similar to parse_fasta_id above, but works directly on a passed ID
-# #
-# # required params: $ (id)
-# #
-# # returns: $ (id)
-# #
-# ######################################################################
-
-# sub parse_ref_id {
-
-#     my $id = shift;
-#     my $parsed_id;
-#     if ( $id =~ /\|/ ) {
-#         my @fields = split( /\|/, $id );
-#         if ( $fields[0] eq 'ENA' ) {
-#             $parsed_id = $fields[1];
-#         }
-#         elsif ( $fields[0] eq 'gi' ) {
-#             $parsed_id = $fields[3];
-#         }
-#     }
-#     else {
-#         if ( $id =~ />([^ ])/ ) {
-#             $parsed_id = $1;
-#         }
-#         else {
-#             $parsed_id = $id;
-#         }
-#     }
-#     return ($parsed_id);
-# }
-
-# ######################################################################
-# #
-# # show_tools
-# #
-# # Reports on configured assemblers, scaffolders and platforms
-# #
-# # Required params: $ (config hash)
-# #
-# # Returns:         $ ()
-# #
-# ######################################################################
-
-# sub show_tools {
-
-#     my $config = shift;
-
-#     my @available_assemblers  = map { $_->{'name'} } @{ $config->{'assemblers'} };
-#     my @available_scaffolders = map { $_->{'name'} } @{ $config->{'scaffolders'} };
-#     my @available_mergers     = map { $_->{'name'} } @{ $config->{'merge_tools'} };
-#     my @available_finishers   = map { $_->{'name'} } @{ $config->{'finishers'} };
-#     my @platforms             = map { $_->{'platforms'} } @{ $config->{'assembler_categories'} };
-
-#     my %available_platforms;
-#     foreach my $platform (@platforms) {
-#         foreach my $p (@$platform) {
-#             $available_platforms{$p}++;
-#         }
-#     }
-#     my @available_platforms = sort( keys(%available_platforms) );
-
-#     print "\nWelcome to BugBuilder\n\n";
-#     print "Available assemblers: " . join( ", ",                @available_assemblers ),
-#       "\n" . "Available scaffolders: " . join( ", ",            @available_scaffolders ),
-#       "\n" . "Available assembly merging tools: " . join( ", ", @available_mergers ),
-#       "\n" . "Available finishing tools: " . join( ", ",        @available_finishers ),
-#       "\n" . "Configured platforms: " . join( ", ", @available_platforms ), "\n\n";
-
-#     return ();
 # }
