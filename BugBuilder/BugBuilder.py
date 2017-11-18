@@ -2431,14 +2431,22 @@ def find_origin(args, config, results, tools, reads_ns, logger):
                                                   results.current_scaffolds_source])
                     results.current_scaffolds = outIO
                     results.current_scaffolds_source = "split_ori_scaff"
-                    new_scaffolds = run_scaffolder(
-                        args=args, config=config, tools=tools, reads_ns=reads_ns, results=results,
-                        run_id=2, logger=logger)
-                    results.old_scaffolds.append([results.current_scaffolds,
-                                                  results.current_scaffolds_source])
-                    results.current_scaffolds = new_scaffolds
-                    results.current_scaffolds_source = "find_origin_rescaffolded"
-
+                    if tools.scaffolder:
+                        new_scaffolds = run_scaffolder(
+                            args=args, config=config, tools=tools,
+                            reads_ns=reads_ns, results=results,
+                            run_id=2, logger=logger)
+                        results.old_scaffolds.append([results.current_scaffolds,
+                                                      results.current_scaffolds_source])
+                        results.current_scaffolds = new_scaffolds
+                        results.current_scaffolds_source = "find_origin_rescaffolded"
+                    else:
+                        new_scaffolds = outIO
+                        results.old_scaffolds.append(
+                            [results.current_scaffolds,
+                             results.current_scaffolds_source])
+                        results.current_scaffolds = new_scaffolds
+                        results.current_scaffolds_source = "find_origin_not_scaffolded"
                     with open(new_scaffolds, "r") as infile, open(outIO, "a") as outfile:
                         for new_rec in SeqIO.parse(infile, "fasta"):
                             SeqIO.write(new_rec, outfile, "fasta")
@@ -2543,7 +2551,7 @@ def order_scaffolds(args, config, results, logger):
          open(new_scaffolds, "r") as outf:
         for i, rec in enumerate(SeqIO.parse(inf, "fasta")):
             orig_length = orig_length + len(rec.seq)
-            rec.id = "scaffold_%5d"  % str(i + 1)
+            rec.id = "scaffold_%05d"  % str(i + 1)
             if orientations[rec.id]:
                 if orientations[rec.id] == '+':
                     SeqIO.write(rec, outf, "fasta")
@@ -2630,7 +2638,7 @@ def finish_assembly(args, config, reads_ns, results, logger):
     get_contig_stats( "$tmpdir/scaffolds.fasta", 'scaffolds' );
 
 
-def build_agp():
+def build_agp(args, results, reads_ns, evidence, logger):
     """
     Creates an AGP file from the scaffolds, while generating new
     contig/scaffold outputs meeting ENA requirements (no consecutive runs
@@ -2662,14 +2670,15 @@ def build_agp():
     contigs_path = os.path.join(agp_dir, "contigs.fasta")
     scaffolds_path = os.path.join(agp_dir, "scaffolds.fasta")
     contig_count = 0
+    scaffold_count = 0
     gap_dict = {}    #overall per-scaffold gaps to return....
     with open(results.current_scaffolds, "r") as scaffold_inIO:
-        for scaffold in scaffold_inIO:
-
+        for scaffold in SeqIO.parse(scaffold_inIO, "fasta"):
+            scaffold_count = scaffold_count + 1
             contig_start = 0
             scaffold_loc = 1
             scaffold_id  = scaffold.id;
-            scaff_count  = re.match("([0-9]+)$", scaffold_id).group(1)
+            scaff_count  = scaffold_count
             scaffold_id = "scaffold_%06s"  %scaff_count
             scaffold_end = len(scaffold.seq);
             contig_end, gap_start, gap_end = 0, 0, 0
@@ -2943,6 +2952,7 @@ def amosvalidate(args, seq_file, config, reads_ns):
                        stderr=subprocess.PIPE,
                        check=True)
 
+
 def summarise_amosvalidate():
     """
     postprocesses amosvalidate outputs to make more readily digestible
@@ -3153,10 +3163,14 @@ def main(args=None, logger=None):
             order_scaffolds(args, config, results, logger)
         if args.finisher and results.ID_OK:
             finish_assembly(args, config, reads_ns, results, logger=logger)
-
     if results.current_scaffolds is not None:
-        gaps = build_agp( args,results, read_ns, scaffold_type )
-
+        try:
+            evidence = tools.scaffolder['linkage_evidence']
+        except:
+            evidence = "paired-ends"
+        gaps = build_agp(args, results, reads_ns,
+                         evidence=evidence,
+                         logger=logger)
     # sequence stable from this point, only annotations altered
     #  it looks this this is attempting to be multiprocessed.
     #  for now, lets just do this in serial, as this cant save much time;
