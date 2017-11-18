@@ -2365,7 +2365,45 @@ def run_pe_scaffolder(args, config, reads_ns, results, run_id, logger=None):
 
 # }
 
-def find_origin(args, config, results, tools, reads_ns, logger):
+def find_origin(config, args, results, ori_dir, flex, logger):
+    """ attempts to find the origin for each record in the reference
+    returns a dict {seqID: "contig_name:ori",...}
+    """
+    logger.info("Attempting to identify origin...");
+    cmds =  make_nucmer_delta_show_cmds(config=config, ref=args.reference,
+                                       query=results.current_scaffolds,
+                                       out_dir=ori_dir, prefix="ori", header=False)
+    logger.debug("Running the following cmds:")
+    for cmd in cmds:
+        logger.debug(cmd)
+        subprocess.run(cmd,
+                   shell=sys.platform != "win32",
+                   stdout=subprocess.PIPE,
+                   stderr=subprocess.PIPE,
+                   check=True)
+    ori_coords = os.path.join(ori_dir, "ori.coords")
+    pattern = re.compile("\s+")
+    origin_dict = {}
+    with open(args.reference, "r") as inf:
+        for rec in SeqIO.parse(inf, "fasta"):
+            FOUND = False
+            with open(ori_coords, "r") as coords:
+                for line in coords:
+                    line = line.strip()
+                    line = line.replace("|", "")
+                    fields = pattern.split(line)
+                    # if we haven't found one already
+                    if not FOUND:
+                        #  and if the start is near 1 and on the correct record
+                        if int(fields[0]) <= flex and fields[7] == rec.id :
+                            origin_dict[rec.id] = "{0}:{1}".format(fields[8], fields[2])
+                            FOUND = True
+                            logger.info("Potential origin found at %s",
+                                        origin_dict[rec.id] )
+    return origin_dict
+
+
+def find_and_split_origin(args, config, results, tools, reads_ns, logger):
     """
     Attempts to identify location of origin based upon contig overlapping
     base 1 of the reference sequence. This assumes  each reference sequence
@@ -2384,89 +2422,81 @@ def find_origin(args, config, results, tools, reads_ns, logger):
     """
     ori_dir = os.path.join(args.tmp_dir, "origin")
     os.makedirs(ori_dir)
-    logger.info("Attempting to identify origin...");
-    cmds =  make_nucmer_delta_show_cmds(config=config, ref=args.reference,
-                                       query=results.current_scaffolds,
-                                       out_dir=ori_dir, prefix="ori", header=False)
-    logger.debug("Running the following cmds:")
-    for cmd in cmds:
-        logger.debug(cmd)
-        subprocess.run(cmd,
-                   shell=sys.platform != "win32",
-                   stdout=subprocess.PIPE,
-                   stderr=subprocess.PIPE,
-                   check=True)
-    origin = None
-    ori_coords = os.path.join(ori_dir, "ori.coords")
-    pattern = re.compile("\s+")
-    with open(ori_coords, "r") as coords:
-        for line in coords:
-            line = line.strip()
-            line = line.replace("|", "")
-            fields = pattern.split(line)
-            if origin is None and fields[0] == "1":
-                origin = "{0}:{1}".format(fields[8], fields[2])
-                logger.info("Potential origin found at %s", origin )
+
+    origin_dict = find_origin(config, args, results, ori_dir, flex=10, logger=logger)
     outIO = os.path.join(ori_dir, "split_ori_scaff.fasta")  # OutIO
     splitIO = os.path.join(ori_dir, "scaffolds_ori_split.fasta")  # SplitIO
-    if origin is None:
+    counter = 0
+    if len(origin_dict) == 0:
         raise ValueError("no origin found!")
     else:
-        ori_scaffold, pos = origin.split(":")
-        with open(results.current_scaffolds, "r") as inscaff:
+    # for ref_id, origin in sorted(origin_dict.items())
+        contigs_containing_scaffolds = \
+            [x.split(":")[0] for x in origin_dict.values()]
+        with open(results.current_scaffolds, "r") as inscaff, open(splitIO, "w") as splitscaff:
             for rec in SeqIO.parse(inscaff, "fasta"):
-                if ori_scaffold == rec.id:
+                counter = counter + 1
+                if rec.id in contigs_containing_scaffolds:
+                    # get the proper entry from the dictionary, its a bit clunky
+                    origin = [x for x in origin_dict.values() if
+                              x.split(":")[0] == rec.id][0]
+                    ori_scaffold, pos = origin.split(":")
+                    logger.debug("spliting %s at origin %d", ori_scaffold, pos)
                     # write out both parts after splitting
-                    with open(splitIO, "w") as splitscaff :
-                        part_a = rec.seq[0: int(pos)]
-                        part_b = rec.seq[int(pos) + 1: ]
-                        ori_a = SeqRecord(id=rec.id + "_A",
-                                          seq=part_a)
-                        ori_b = SeqRecord(id=rec.id + "_B",
-                                          seq=part_b)
-                        SeqIO.write(ori_a, splitscaff, "fasta")
-                        SeqIO.write(ori_b, splitscaff, "fasta")
-                    #  now, rerun scaffolder on our split origins
-                    results.old_scaffolds.append([results.current_scaffolds,
-                                                  results.current_scaffolds_source])
-                    results.current_scaffolds = outIO
-                    results.current_scaffolds_source = "split_ori_scaff"
-                    if tools.scaffolder:
-                        new_scaffolds = run_scaffolder(
-                            args=args, config=config, tools=tools,
-                            reads_ns=reads_ns, results=results,
-                            run_id=2, logger=logger)
-                        results.old_scaffolds.append([results.current_scaffolds,
-                                                      results.current_scaffolds_source])
-                        results.current_scaffolds = new_scaffolds
-                        results.current_scaffolds_source = "find_origin_rescaffolded"
-                    else:
-                        new_scaffolds = outIO
-                        results.old_scaffolds.append(
-                            [results.current_scaffolds,
-                             results.current_scaffolds_source])
-                        results.current_scaffolds = new_scaffolds
-                        results.current_scaffolds_source = "find_origin_not_scaffolded"
-                    with open(new_scaffolds, "r") as infile, open(outIO, "a") as outfile:
-                        for new_rec in SeqIO.parse(infile, "fasta"):
-                            SeqIO.write(new_rec, outfile, "fasta")
+                    part_a = rec.seq[0: int(pos)]
+                    part_b = rec.seq[int(pos) + 1: ]
+                    ori_a = SeqRecord(id="Scaffold_%05d" % counter,
+                                      seq=part_a)
+                    counter = counter + 1
+                    ori_b = SeqRecord(id="Scaffold_%05d" % counter,
+                                      seq=part_b)
+                    SeqIO.write(ori_a, splitscaff, "fasta")
+                    SeqIO.write(ori_b, splitscaff, "fasta")
                 else:
-                    # these dont need splitting
-                    with open(outIO, "a") as outfile:
-                        SeqIO.write(rec, outfile, "fasta")
+                    rec.id = "Scaffold_%05d" % counter
+                    SeqIO.write(rec, splitscaff, "fasta")
 
-    #renumber scaffolds to ensure they are unique...
-    counter = 1
-    renumbered_scaffs = os.path.join(
-        os.path.dirname(splitIO), "scaffold.fasta")
-    with open(splitIO, "r") as inf, open(renumbered_scaffs, "w") as outf:
-        for rec in SeqIO.parse(inf, "fasta"):
-            rec.id = "scaffold_%05d" % counter
-            counter = counter + 1
-            SeqIO.write(rec, outf, "fasta")
-    results.old_scaffolds.append([results.current_scaffolds, results.current_scaffolds_source])
-    results.current_scaffolds = renumbered_scaffs
-    results.current_scaffolds_source = "renumbering_after_origin_split"
+    #                 #  now, rerun scaffolder on our split origins
+    #                 results.old_scaffolds.append([results.current_scaffolds,
+    #                                               results.current_scaffolds_source])
+    #                 results.current_scaffolds = outIO
+    #                 results.current_scaffolds_source = "split_ori_scaff"
+    #                 if tools.scaffolder:
+    #                     new_scaffolds = run_scaffolder(
+    #                         args=args, config=config, tools=tools,
+    #                         reads_ns=reads_ns, results=results,
+    #                         run_id=2, logger=logger)
+    #                     results.old_scaffolds.append([results.current_scaffolds,
+    #                                                   results.current_scaffolds_source])
+    #                     results.current_scaffolds = new_scaffolds
+    #                     results.current_scaffolds_source = "find_origin_rescaffolded"
+    #                 else:
+    #                     new_scaffolds = outIO
+    #                     results.old_scaffolds.append(
+    #                         [results.current_scaffolds,
+    #                          results.current_scaffolds_source])
+    #                     results.current_scaffolds = new_scaffolds
+    #                     results.current_scaffolds_source = "find_origin_not_scaffolded"
+    #                 with open(new_scaffolds, "r") as infile, open(outIO, "a") as outfile:
+    #                     for new_rec in SeqIO.parse(infile, "fasta"):
+    #                         SeqIO.write(new_rec, outfile, "fasta")
+    #             else:
+    #                 # these dont need splitting
+    #                 with open(outIO, "a") as outfile:
+    #                     SeqIO.write(rec, outfile, "fasta")
+
+    # #renumber scaffolds to ensure they are unique...
+    # counter = 1
+    # renumbered_scaffs = os.path.join(
+    #     os.path.dirname(splitIO), "scaffold.fasta")
+    # with open(splitIO, "r") as inf, open(renumbered_scaffs, "w") as outf:
+    #     for rec in SeqIO.parse(inf, "fasta"):
+    #         rec.id = "scaffold_%05d" % counter
+    #         counter = counter + 1
+    #         SeqIO.write(rec, outf, "fasta")
+    # results.old_scaffolds.append([results.current_scaffolds, results.current_scaffolds_source])
+    # results.current_scaffolds = renumbered_scaffs
+    # results.current_scaffolds_source = "renumbering_after_origin_split"
 
 
 def check_and_set_trim_length(reads_ns, args, logger):
