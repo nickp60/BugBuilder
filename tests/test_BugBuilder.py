@@ -341,6 +341,7 @@ class test_BugBuilder(unittest.TestCase):
             "current_scaffolds",
             "current_scaffolds_source",
             "current_reference",
+            "current_embl",
             "ID_OK",
             "old_contigs",
             "old_scaffolds",
@@ -521,7 +522,7 @@ class test_BugBuilder(unittest.TestCase):
         bb.run_ref_scaffolder(
             args=test_args, config=config, tools=tools, results=results, reads_ns=reads_ns,
             run_id=1, logger=logger)
-        # self.to_be_removed.append(os.path.join(self.test_dir, "SIS_1"))
+        self.to_be_removed.append(os.path.join(self.test_dir, "SIS_1"))
 
 
     def tearDown(self):

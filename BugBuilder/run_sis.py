@@ -54,7 +54,6 @@ def run(config, args, results, ref, contigs, scaff_dir, logger):
     cmd_list = make_sis_etc_cmds(config, ref=ref, contigs=contigs, scaff_dir=scaff_dir)
     for cmd in cmd_list:
         logger.debug(cmd)
-        print(cmd)
         subprocess.run(cmd,
                        shell=sys.platform != "win32",
                        stdout=subprocess.PIPE,
@@ -62,9 +61,6 @@ def run(config, args, results, ref, contigs, scaff_dir, logger):
                        check=True)
 
     ref_id = os.path.basename(scaff_dir)
-
-    #$ref_id=~s/SIS_//;
-
     # Build a multifasta file of N-gapped scaffolds
     multi = []
     singletons = []

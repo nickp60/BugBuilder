@@ -1659,19 +1659,18 @@ def get_contig_stats(contigs, ctype):
     assert ctype in ['scaffolds', 'contigs'], "invalid contig type"
     count, count_200 = 0, 0
     all_lengths, all_lengths_200 = [], []
-    lengths, lengths_200 = [], []
+    if os.path.getsize(contigs) == 0:
+        raise ValueError("contigs file is empty!")
     with open(contigs, "r") as inf:
         for rec in SeqIO.parse(contigs, "fasta"):
             length = len(rec.seq)
             count = count + 1
             all_lengths.append(length)
             if length > 200:
-                lengths_200.append(length)
-                count_200 = count_200 + 1
                 all_lengths_200.append(length)
-
-    sorted_lengths     = sorted(all_lengths)
-    sorted_lengths_200 = sorted(all_lengths_200)
+                count_200 = count_200 + 1
+    all_lengths.sort()
+    all_lengths_200.sort()
     L50, N50 = get_L50_N50(all_lengths)
     L50_200, N50_200 = get_L50_N50(all_lengths_200)
     return [
@@ -1979,6 +1978,7 @@ def make_empty_results_object():
         ID_OK=False, # to be set by check_id
         current_contigs=None, current_scaffolds=None, current_reference=None,
         current_contigs_source=None, current_scaffolds_source=None,
+        current_embl=None, # run_prokka fills this in
         old_contigs=[[None, None]],  # [path, source]
         old_scaffolds=[[None, None]],  # [path, source]
         old_references=[[None, None]],  # [path, source]
@@ -2854,7 +2854,7 @@ def run_prokka(config, results, logger):
 
 #     chdir $tmpdir or die "Error chdiring to $tmpdir: $!";
 #     unlink "scaffolds.fasta" or die "Error removing scaffolds.fasta: $!" if ( $type eq 'scaffolds' );
-
+    results.current_embl = os.path.join(prokka_dir, "prokka.embl")
 #     symlink( "prokka/prokka.embl", "$type.embl" )
 #       or die "Error creating $type.embl symlink: $!";
 #     symlink( "prokka/scaffolds.fasta", "scaffolds.fasta" )
@@ -3495,183 +3495,149 @@ def main(args=None, logger=None):
 
 
 
-# ######################################################################
-# #
-# # merge_annotations
-# #
-# # updates annotated generated embl file with amosvalidate results
-# # and gap locations
-# #
-# # required parameters: $ (tmpdir)
-# #                      $ (hashref of amosvalidate results, keyed on contigid)
-# #                      $ (hashref of scaffold gaps)
-# #                      $ (genus)
-# #                      $ (species)
-# #                      $ (strain)
-# #
-# # returns            : $ (none)
-# #
-# ######################################################################
 
-# sub merge_annotations {
 
-#     my $tmpdir               = shift;
-#     my $amosvalidate_results = shift;
-#     my $gaps                 = shift;
-#     my $genus                = shift;
-#     my $species              = shift;
-#     my $strain               = shift;
+def merge_annotations():
+    """
+    updates annotated generated embl file with amosvalidate results
+    and gap locations
 
-#     message("Merging annotations");
+    required parameters: $ (tmpdir)
+                     $ (hashref of amosvalidate results, keyed on contigid)
+                     $ (hashref of scaffold gaps)
+                     $ (genus)
+                     $ (species)
+                     $ (strain)
 
-#     mkdir "$tmpdir/annotation_merge"
-#       or die "Error creating $tmpdir/annotation_merge: $!";
-#     chdir "$tmpdir/annotation_merge"
-#       or die "Error chdiring to $tmpdir/annotation_merge: $!";
-#     my $filename;
+    returns            : $ (none)
+    """
 
-#     ( -e "$tmpdir/scaffolds.embl" ) ? ( $filename = "scaffolds.embl" ) : ( $filename = "contigs.embl" );
+    logger.info("Merging annotations");
+    merge_dir = os.path.join(args.tmp_dir, "annotation_merge")
+    os.makedirs(merge_dir)
+    filename = None
+    new_embl = os.path.join(merge_dir, os.path.basename(results.current_embl))
+    with open(results.current_embl, "r") as IO, open(new_embl, "w") as outIO:
 
-#     my $IO = Bio::SeqIO->new( -format => 'embl',
-#                               -file   => "$tmpdir/$filename" );
+        amos_colours = {
+            'CE_STRETCH'     :  '0 128 128',
+            'CE_COMPRESS'    :  '0 128 128',
+            'HIGH_SNP'       :  '128 128 0',
+            'HIGH_READ_CVG'  :  '255 0 0',
+            'HIGH_KMER'      :  '255 0 0',
+            'KMER_COV'       :  '255 0 0',
+            'HIGH_OUTIE_CVG' :  '255 0 0',
+            'HIGH_NORMAL_CVG':  '255 0 0',
+            'LOW_GOOD_CVG'   :  '0 0 255',
+        }
 
-#     my $outIO =
-#       Bio::SeqIO->new( -format => 'embl',
-#                        -file   => ">$filename" );
+        amos_notes = {
+            'CE_STRETCH'      : 'Stretched mate-pairs: Possible repeat copy number expansion or other insertion',
+            'CE_COMPRESS'     :  'Compressed mate-pairs; Possible collapsed repeat',
+            'HIGH_SNP'        :  'High SNP frequency',
+            'HIGH_READ_CVG'   :'High read coverage; Possible collapsed repeat',
+            'HIGH_KMER'       :  'High frequency of normalized kmers: Possible collapsed repeat',
+            'KMER_COV'        :'High frequency of normalized kmers: Possible collapsed repeat',
+            'LOW_GOOD_CVG'    : 'Low coverage',
+            'HIGH_NORMAL_CVG' : 'High coverage',
+            'HIGH_OUTIE_CVG'  : 'High outie coverage',
+                     }
+        for embl_record in SeqIO.parse(IO, "embl"):
+            orig_id = embl_record.id
+            embl_record.id = orig_id
+            embl_record.accession_number = orig_id
+            embl_record.division = 'PRO'
+            embl_record.molecule = 'genomic DNA'
+            embl_record.is_circular = 1
+            embl_record.date = arrow.now().format("DD-MMM-YYYY").upper()
+            embl_record.description = "{0} {1} {2} genome scaffold".format(
+                args.genus, args.species, args.strain)
 
-#     my %amos_colours = (
-#                          'CE_STRETCH'      => '0 128 128',
-#                          'CE_COMPRESS'     => '0 128 128',
-#                          'HIGH_SNP'        => '128 128 0',
-#                          'HIGH_READ_CVG'   => '255 0 0',
-#                          'HIGH_KMER'       => '255 0 0',
-#                          'KMER_COV'        => '255 0 0',
-#                          'HIGH_OUTIE_CVG'  => '255 0 0',
-#                          'HIGH_NORMAL_CVG' => '255 0 0',
-#                          'LOW_GOOD_CVG'    => '0 0 255',
-#                        );
+            embl_record.comment = "Assembled using BugBuilder from http://github.com/jamesabbott/BugBuilder"
+            # remove source entries from feature table
+            features = [x for x in  embl_record.features]
+            # retrieve amosvalidate results for this contig and sort by start co-ordinate...
+"""
+            if ($amosvalidate_results) {
+                    my @amos_features =
+                    map  { $_->[0] }
+                    sort { $a->[1] <=> $b->[1] }
+                    map  { [ $_, $_->{'start'} ] } @{ $amosvalidate_results->{$orig_id} };
 
-#     my %amos_notes = (
-#                        'CE_STRETCH' => 'Stretched mate-pairs: Possible repeat copy number expansion or other insertion',
-#                        'CE_COMPRESS'     => 'Compressed mate-pairs; Possible collapsed repeat',
-#                        'HIGH_SNP'        => 'High SNP frequency',
-#                        'HIGH_READ_CVG'   => 'High read coverage; Possible collapsed repeat',
-#                        'HIGH_KMER'       => 'High frequency of normalized kmers: Possible collapsed repeat',
-#                        'KMER_COV'        => 'High frequency of normalized kmers: Possible collapsed repeat',
-#                        'LOW_GOOD_CVG'    => 'Low coverage',
-#                        'HIGH_NORMAL_CVG' => 'High coverage',
-#                        'HIGH_OUTIE_CVG'  => 'High outie coverage',
-#                      );
+                foreach my $feature (@amos_features) {
+                    if ( $feature->{'start'} != $feature->{'end'} ) {
+                            my $colour = $amos_colours{ $feature->{'type'} };
+                            my $note   = $amos_notes{ $feature->{'type'} };
+                            my $feature =
+                            new Bio::SeqFeature::Generic(
+                                -start       => $feature->{'start'} + 1,
+                                -end         => $feature->{'end'},
+                                -primary_tag => 'misc_feature',
+                                -tag         => {
+                                    'note'   => $note,
+                                    'colour' => $colour,
+                                }
+                            );
+                            push @features, $feature;
+####
+        if ($gaps) {
+            foreach my $scaffold ( keys(%$gaps) ) {
+                if ( $orig_id eq $scaffold ) {
+                    my $scaffold_gaps = $gaps->{$scaffold};
+                    foreach my $gap (@$scaffold_gaps) {
+                        my ( $gap_start, $gap_end ) = split( /-/, $gap );
+                        my $est_length;
+                        if ( $gap_end - $gap_start == 100 ) {
+                            $est_length = 'unknown';
+                        }
+                        else {
+                            $est_length = $gap_end - $gap_start;
+                        }
+                        my $feature =
+                          new Bio::SeqFeature::Generic(
+                                          -start       => $gap_start,
+                                          -end         => $gap_end,
+                                          -primary_tag => 'assembly_gap',
+                                          -tag => { 'estimated_length' => $est_length, 'gap_type' => 'within_scaffold' }
+                          );
+                        push( @features, $feature );
+                    }
+                }
+            }
+        }
 
-#     while ( my $embl_record = $IO->next_seq() ) {
-#         my $orig_id = $embl_record->display_id();
-#         $embl_record->display_id("$orig_id");
-#         $embl_record->accession_number("$orig_id");
-#         $embl_record->division('PRO');
-#         $embl_record->molecule('genomic DNA');
-#         $embl_record->is_circular(1);
+        my $source =
+          new Bio::SeqFeature::Generic(
+                                        -start       => 1,
+                                        -end         => $embl_record->length(),
+                                        -primary_tag => 'source',
+                                        -tag         => {
+                                                  'organism' => "$genus $species $strain",
+                                                  'strain'   => $strain
+                                                }
+                                      );
 
-#         $embl_record->add_date( get_embl_date() );
-#         $embl_record->description("$genus $species $strain genome scaffold");
+        $embl_record->add_SeqFeature($source);
+        @features = map { $_->[0] }
+          sort { $a->[1] <=> $b->[1] }
+          map { [ $_, $_->start() ] } @features;
 
-#         my @comments = $embl_record->annotation->get_Annotations('comment');
-#         my $annot    = new Bio::Annotation::Collection;
-#         my $comment  = Bio::Annotation::Comment->new;
-#         $comment->text("Assembled using BugBuilder from http://github.com/jamesabbott/BugBuilder");
-#         push @comments, $comment;
-#         foreach my $c (@comments) {
-#             $annot->add_Annotation( 'comment', $c );
-#         }
-#         $embl_record->annotation($annot);
+        foreach my $feat (@features) {
+            if ( $feat->primary_tag() ne 'source' ) {
+                $embl_record->add_SeqFeature($feat);
+            }
+        }
 
-#         # remove source entries from feature table
-#         my @features = $embl_record->get_SeqFeatures();
-#         $embl_record->flush_SeqFeatures();
+        $outIO->write_seq($embl_record);
+    }
 
-#         # retrieve amosvalidate results for this contig and sort by start co-ordinate...
-#         if ($amosvalidate_results) {
-#             my @amos_features =
-#               map  { $_->[0] }
-#               sort { $a->[1] <=> $b->[1] }
-#               map  { [ $_, $_->{'start'} ] } @{ $amosvalidate_results->{$orig_id} };
+    chdir $tmpdir      or die "Error chdiring to $tmpdir: $!";
+    unlink "$filename" or die "Error unlinking $filename: $!";
+    symlink( "annotation_merge/$filename", "$filename" )
+      or die "Error creating $filename symlink: $!";
 
-#             foreach my $feature (@amos_features) {
-#                 if ( $feature->{'start'} != $feature->{'end'} ) {
-#                     my $colour = $amos_colours{ $feature->{'type'} };
-#                     my $note   = $amos_notes{ $feature->{'type'} };
-#                     my $feature =
-#                       new Bio::SeqFeature::Generic(
-#                                                     -start       => $feature->{'start'} + 1,
-#                                                     -end         => $feature->{'end'},
-#                                                     -primary_tag => 'misc_feature',
-#                                                     -tag         => {
-#                                                               'note'   => $note,
-#                                                               'colour' => $colour,
-#                                                             }
-#                                                   );
-#                     push @features, $feature;
-#                 }
-#             }
-#         }
-
-#         if ($gaps) {
-#             foreach my $scaffold ( keys(%$gaps) ) {
-#                 if ( $orig_id eq $scaffold ) {
-#                     my $scaffold_gaps = $gaps->{$scaffold};
-#                     foreach my $gap (@$scaffold_gaps) {
-#                         my ( $gap_start, $gap_end ) = split( /-/, $gap );
-#                         my $est_length;
-#                         if ( $gap_end - $gap_start == 100 ) {
-#                             $est_length = 'unknown';
-#                         }
-#                         else {
-#                             $est_length = $gap_end - $gap_start;
-#                         }
-#                         my $feature =
-#                           new Bio::SeqFeature::Generic(
-#                                           -start       => $gap_start,
-#                                           -end         => $gap_end,
-#                                           -primary_tag => 'assembly_gap',
-#                                           -tag => { 'estimated_length' => $est_length, 'gap_type' => 'within_scaffold' }
-#                           );
-#                         push( @features, $feature );
-#                     }
-#                 }
-#             }
-#         }
-
-#         my $source =
-#           new Bio::SeqFeature::Generic(
-#                                         -start       => 1,
-#                                         -end         => $embl_record->length(),
-#                                         -primary_tag => 'source',
-#                                         -tag         => {
-#                                                   'organism' => "$genus $species $strain",
-#                                                   'strain'   => $strain
-#                                                 }
-#                                       );
-
-#         $embl_record->add_SeqFeature($source);
-#         @features = map { $_->[0] }
-#           sort { $a->[1] <=> $b->[1] }
-#           map { [ $_, $_->start() ] } @features;
-
-#         foreach my $feat (@features) {
-#             if ( $feat->primary_tag() ne 'source' ) {
-#                 $embl_record->add_SeqFeature($feat);
-#             }
-#         }
-
-#         $outIO->write_seq($embl_record);
-#     }
-
-#     chdir $tmpdir      or die "Error chdiring to $tmpdir: $!";
-#     unlink "$filename" or die "Error unlinking $filename: $!";
-#     symlink( "annotation_merge/$filename", "$filename" )
-#       or die "Error creating $filename symlink: $!";
-
-# }
-
+}
+"""
 # ######################################################################
 # #
 # # run_cgview
