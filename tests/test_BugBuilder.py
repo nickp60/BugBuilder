@@ -374,8 +374,12 @@ class test_BugBuilder(unittest.TestCase):
 
     def check_get_merger_and_linkage(self):
         pass
-    def parse_available_platforms():
-        pass
+
+    def test_parse_available_noconfig(self):
+        self.assertEqual(
+            [],
+            bb.parse_available("assemblers", None)
+        )
 
     @mock.patch('shutil.which')
     def test_parse_available_assemblers(self, shumock):
@@ -403,32 +407,87 @@ class test_BugBuilder(unittest.TestCase):
         self.assertEqual(linkage, None)
         self.assertEqual(scaffolder, None)
 
-    def get_merger_and_linkage(args, config, paired):
-        pass
-    def get_finisher(args, config, paired):
-        pass
-    def get_varcaller(args, config, paired):
-        pass
+    def test_get_merger_tool(self):
+        config = bb.parse_config(self.filled_config)
+        test_args = Namespace(merge_method='gfinisher',
+                              scaffolder=None,
+                              reference=self.ref_fasta)
+        merger = bb.get_merger_tool(args=test_args, config=config, paired=False)
+        self.assertEqual(merger['name'], 'gfinisher')
+
+    def test_get_finisher(self):
+        config = bb.parse_config(self.filled_config)
+        test_args = Namespace(finisher='gapfiller',
+                              scaffolder=None,
+                              reference=self.ref_fasta)
+        finisher = bb.get_finisher(args=test_args, config=config, paired=True)
+        self.assertEqual(finisher['name'], 'gapfiller')
+
+    def test_get_finisher_fail_needs_pair(self):
+        config = bb.parse_config(self.filled_config)
+        test_args = Namespace(finisher='gapfiller',
+                              scaffolder=None,
+                              reference=self.ref_fasta)
+        with self.assertRaises(ValueError):
+            bb.get_finisher(args=test_args, config=config, paired=False)
+
+    def test_get_finisher_fail_needs_refernce(self):
+        config = bb.parse_config(self.filled_config)
+        test_args = Namespace(finisher='pilon',
+                              scaffolder=None,
+                              reference=None)
+        with self.assertRaises(ValueError):
+            bb.get_finisher(args=test_args, config=config, paired=False)
+
+    def test_get_varcaller_fail_needs_reference(self):
+        config = bb.parse_config(self.filled_config)
+        test_args = Namespace(varcaller="pilon",
+                              scaffolder=None,
+                              reference=None)
+        with self.assertRaises(ValueError):
+            bb.get_varcaller(args=test_args, config=config, paired=False)
+
+    def test_get_varcaller(self):
+        config = bb.parse_config(self.filled_config)
+        test_args = Namespace(varcaller="pilon",
+                              scaffolder=None,
+                              reference=self.ref_fasta)
+        vc = bb.get_varcaller(args=test_args, config=config, paired=False)
+        self.assertEqual("pilon", vc['name'])
+
     def select_tools(args, config, reads_ns, logger):
         pass
-    def assembler_needs_downsampling(args, config):
-        pass
+
+    def test_assembler_needs_downsampling(self):
+        assemblers = [x for x in bb.parse_config(self.filled_config).assemblers if \
+                     x['name' ]== "spades"]
+        tools = Namespace(assemblers=assemblers)
+        self.assertEqual(True, bb.assembler_needs_downsampling(tools))
+
     def make_fastqc_cmd(args, outdir):
         pass
+
     def run_fastqc(reads_ns, args, logger=None):
         pass
+
     def make_sickle_cmd(args, reads_ns, out_dir):
         pass
+
     def quality_trim_reads(args, config, reads_ns, logger):
         pass
+
     def make_seqtk_ds_cmd(args, reads_ns, new_coverage, outdir, config, logger):
         pass
+
     def downsample_reads(args, reads_ns, config, new_cov=100):
         pass
+
     def make_bwa_cmds(args, config, outdir, ref, reads_ns, fastq1, fastq2):
         pass
+
     def make_samtools_cmds(config, sam, outdir, sorted_bam):
         pass
+
     def align_reads(dirname, reads_ns,  downsample, args, config, logger):
         pass
     def make_picard_stats_command(bam, config, picard_outdir):
@@ -515,10 +574,13 @@ class test_BugBuilder(unittest.TestCase):
 
     def order_scaffolds():
         pass
+
     def store_orientation(orientations, contig, or_count):
         pass
+
     def finish_assembly(args, config, reads_ns, results, logger):
         pass
+
     def test_check_spades_kmers(self):
         cmd = "spades.py -k 22,33,55,77 -o someassembly"
         self.assertEqual(

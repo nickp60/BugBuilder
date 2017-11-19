@@ -205,16 +205,21 @@ finishers:
      create_dir: 1
      ref_required: 0
      paired_reads: 1
+     needs: variable_gaps
      priority: 2
+       - SIS
+       - SSPADES
    - name: abyss-sealer
      command: run_abyss-sealer --tmpdir __TMPDIR__ --encoding __ENCODING__ --threads __THREADS__
      create_dir: 1
+     needs: fixed_gaps
      ref_required: 0
      paired_reads: 1
      priority: 3
    - name: pilon
      command: run_pilon --tmpdir __TMPDIR__ --threads __THREADS__
      create_dir: 1
+     needs: fixed_gaps
      ref_required: 0
      paired_reads: 1
      priority: 1
@@ -348,11 +353,14 @@ from .shared_methods import make_nucmer_delta_show_cmds
 from .run_sis import run as run_sis
 from .run_spades import run as run_spades
 from .run_abyss import run as run_abyss
+
 sub_mains = {
     # "canu": run_canu,
     "abyss": run_abyss,
     "spades": run_spades,
     "sis": run_sis}
+
+
 def parse_available(thing, path=None):
     if path is None: # path var is to allow easier testing
         try:
@@ -366,6 +374,7 @@ def parse_available(thing, path=None):
     thing_list = [x['name'].lower() for x in getattr(config, thing)]
     # return all the names that have an executable available
     return [x for x in thing_list if getattr(config, x.replace("-", "_")) is not None]
+
 
 def configure(config_path, hardfail=True):
     with open(config_path, 'w') as outfile:  # write header and config params
@@ -1142,14 +1151,14 @@ def get_merger_tool(args, config, paired):
     """
     if args.merge_method is None:
         return None
-    if args.merge_method not in [x.name for x in config.merge_tools]:
+    if args.merge_method not in [x['name'] for x in config.merge_tools]:
         raise ValueError("%s not an available merge_method!" % args.merge_method)
     linkage_evidence = None
-    for merger_method in config.merge_methods:
+    for merger_method in config.merge_tools:
         if merger_method['name'] == args.merge_method:
-            if merge_methods['allow_scaffolding']:
+            if merger_method['allow_scaffolding']:
                 args.scaffolder = None
-            return merge_method
+            return merger_method
 
 def get_finisher(args, config, paired):
     if args.finisher is None:
@@ -1175,9 +1184,7 @@ def get_varcaller(args, config, paired):
     for conf_varcallers in config.varcallers:
         if conf_varcallers['name'] == args.varcaller:
             if args.reference is None and conf_varcallers['ref_required']:
-                raise ValueError("%s requires reference, but you " +
-                                 "only specified one fastq file." % \
-                                 args.varcaller)
+                raise ValueError("%s requires reference"  % args.varcaller)
             return conf_varcallers
 
 
@@ -2547,8 +2554,7 @@ def order_scaffolds(args, config, results, logger):
     with open(orient_coords, "r") as inf:
         contig = '';
         for line in inf:
-            line = line.strip()
-            line = line.replace("|", "")
+            line = line.strip().replace("|", "")
             fields = re.split("\s+", line)
             if contig != fields[8]:
                 if contig != "":
@@ -2573,7 +2579,6 @@ def order_scaffolds(args, config, results, logger):
     oriented_length = 0    #track how much sequence we align ok...
     unplaced_length = 0
     unplaced = []
-
 
     # Reorientate contigs and break origin, rewriting to a new file...
     new_scaffolds = os.path.join(orient_dir, "scaffolds.fasta")
@@ -3163,16 +3168,25 @@ def main(args=None, logger=None):
             results.assemblers_results_dict_list[0]['scaffolds']
         results.current_scaffolds_source = \
             results.assemblers_results_dict_list[0]['name']
-
-    print(results.__dict__)
-    print(tools.__dict__)
-    print(args.__dict__)
+    logger.debug("RESULTS:")
+    logger.debug(results.__dict__)
+    logger.debug("TOOLS:")
+    logger.debug(tools.__dict__)
+    logger.debug("ARGS:")
+    logger.debug(args.__dict__)
 
     #TODO why do we check scaffolder here?
+    #  ensure that our reference is close enough before continuing
     if args.scaffolder and args.reference:
         results.ID_OK = check_id(args, contigs=results.current_contigs,
                                  config=config,
                                  logger=logger)
+    # if we have a reference, lets break the origin here, before scaffolding
+    if not args.skip_split_origin and results.ID_OK:
+        find_and_split_origin(args=args, config=config, results=results,
+                              tools=None, reads_ns=None, logger=logger)
+    # right.  Now our results should contain contigs and/or scaffolds.
+    # Lets do some scaffolding
     if tools.scaffolder is not None:
         if \
            (results.ID_OK and tools.scaffolder['linkage_evidence'] == "align-genus") or \
