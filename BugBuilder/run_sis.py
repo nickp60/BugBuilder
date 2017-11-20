@@ -50,11 +50,10 @@ def make_sis_etc_cmds(config, ref, contigs, scaff_dir):
 def run(config, args, results, ref, contigs, scaff_dir, logger):
     """ we need to explicitly set the reference and the contigs files cause we may have partitioned them (using blast to see which contigs go with which contigs)
     """
-    logger.warning("Using SIS to scaffold %s against %s", contigs, ref)
+    logger.info("Using SIS to scaffold %s against %s", contigs, ref)
     cmd_list = make_sis_etc_cmds(config, ref=ref, contigs=contigs, scaff_dir=scaff_dir)
     for cmd in cmd_list:
         logger.debug(cmd)
-        print(cmd)
         subprocess.run(cmd,
                        shell=sys.platform != "win32",
                        stdout=subprocess.PIPE,
@@ -69,7 +68,7 @@ def run(config, args, results, ref, contigs, scaff_dir, logger):
     multi = []
     singletons = []
     scaffolds =  glob.glob(os.path.join(scaff_dir, '*.fna'))
-    print(scaffolds)
+    logger.info("SIS scaffolds: %s", scaffolds)
     for scaf in scaffolds:
         with open(scaf, "r") as inf:
             contig_count = 0
@@ -79,8 +78,8 @@ def run(config, args, results, ref, contigs, scaff_dir, logger):
                 multi.append(scaf)
             else:
                 singletons.append(scaf)
-    print("contigs: %s singltons:%s multi:%s" %\
-          (contig_count, singletons, multi))
+    logger.debug("contigs: %s singltons:%s multi:%s" %\
+                 (contig_count, singletons, multi))
     with open(os.path.join(scaff_dir, "scaffolds.fasta"), "w") as outf:
         new_seq = ""
         for path in multi:

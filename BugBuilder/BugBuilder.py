@@ -1882,7 +1882,7 @@ def check_id(args, contigs, config, logger):
 
 def check_already_assembled_dirs(args, config, logger):
     """Ensure that the directory(ies) providded have the expect output files
-    Chances are, they do, but we need to bee exceedingly sure that they do
+    Chances are, they do, but we need to be exceedingly sure that they do
     """
     res_dict = {"contig": [],
                 "scaffold": []}
@@ -1918,8 +1918,8 @@ def check_already_assembled_dirs(args, config, logger):
 
 
 def check_already_assembled_args(args, config, logger):
-    """Ensure that the args providded have the expect output files
-    retuns a list of {assembler, contigs, scaffolds} dictionaries
+    """Ensure that the args (*_contigs or *_scaffolds) provided have the
+    expect output files retuns a list of {assembler, contigs, scaffolds} dictionaries
     """
     res_dict = {"contig": [],
                 "scaffold": []}
@@ -2968,25 +2968,25 @@ def main(args=None, logger=None):
 
 
 
-# ######################################################################
-# #
-# # build_agp
-# #
-# # Creates an AGP file from the scaffolds, while generating new
-# # contig/scaffold outputs meeting ENA requirements (no consecutive runs
-# # of >=10 N, minimum contig size of 200 bp) if running in 'submission'
-# # mode, otherwise leaves short contigs and gaps<100bp intact. The
-# # scaffold_type argument is used to determine the linkage evidence type
-# # for scaffold gaps
-# #
-# # required parameters: $ (tmpdir)
-# #		     : $ (organism description)
-# #                    : $ (mode - submission or draft)
-# #                    : $ (scaffold_type: align or mate_pair)
-# #
-# # returns            : $ (0)
-# #
-# ######################################################################
+
+
+def build_agp():
+    """
+    Creates an AGP file from the scaffolds, while generating new
+    contig/scaffold outputs meeting ENA requirements (no consecutive runs
+    of >=10 N, minimum contig size of 200 bp) if running in 'submission'
+    mode, otherwise leaves short contigs and gaps<100bp intact. The
+scaffold_type argument is used to determine the linkage evidence type
+    for scaffold gaps
+
+    required parameters: $ (tmpdir)
+		     : $ (organism description)
+                   : $ (mode - submission or draft)
+                   : $ (scaffold_type: align or mate_pair)
+
+    returns            : $ (0)
+    """
+
 
 # sub build_agp {
 

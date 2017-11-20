@@ -57,8 +57,4 @@ setup(
            'BugBuilder=BugBuilder.BugBuilder:main',
        ],
     },
-    # scripts=[
-    #     "scripts/sis/multifasta.py",
-    #     "scripts/sis/sis.py"
-    # ],
 )
