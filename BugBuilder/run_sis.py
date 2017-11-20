@@ -61,9 +61,6 @@ def run(config, args, results, ref, contigs, scaff_dir, logger):
                        check=True)
 
     ref_id = os.path.basename(scaff_dir)
-
-    #$ref_id=~s/SIS_//;
-
     # Build a multifasta file of N-gapped scaffolds
     multi = []
     singletons = []

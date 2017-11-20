@@ -29,11 +29,14 @@ class test_BugBuilder(unittest.TestCase):
         self.ref_dir = os.path.join(os.path.dirname(__file__), "references")
         self.encoding_dir = os.path.join(self.ref_dir, "encoding")
         self.test_dir = os.path.join(os.path.dirname(__file__), "tmp_tests")
+        self.aa_dir = os.path.join(os.path.dirname(__file__), "already_assembled_dir")
         self.empty_config = os.path.join(self.ref_dir, "empty_config.yaml")
         self.broken_config = os.path.join(self.ref_dir, "broken_config.yaml")
         self.filled_config = os.path.join(self.ref_dir, "semicomplete_config.yaml")
         self.ref_fasta = os.path.join(self.ref_dir, "AP017923.1.fasta")
-        self.ref_split = os.path.join(self.ref_dir, "split_AP017923.1.fasta")
+        self.ref_split = os.path.join(self.ref_dir, "2chrom.fasta")
+        self.ref_split_1 = os.path.join(self.ref_dir, "2chrom1.fq")
+        self.ref_split_2 = os.path.join(self.ref_dir, "2chrom2.fq")
         self.contigs = os.path.join(self.ref_dir, "contigs.fasta")
         self.contigs_to_scaf = os.path.join(self.ref_dir, "contigs_to_scaffold.fasta")
         self.distant_contigs = os.path.join(self.ref_dir, "distant_contigs.fasta")
@@ -176,7 +179,6 @@ class test_BugBuilder(unittest.TestCase):
         lens = bb.get_read_lens_from_fastq(fastq1=self.fastq1, logger=logger)
         self.assertEqual(150, statistics.mean(lens))
 
-
     def test_id_fastq_encoding(self):
         tests = {
             "illumina": "illumina13.fq",
@@ -190,7 +192,6 @@ class test_BugBuilder(unittest.TestCase):
                 fastq1=os.path.join(self.encoding_dir, v), long_fastq=None,
                 de_fere_contigs=None)
             self.assertEqual(k, bb.id_fastq_encoding(args=test_args, logger=logger))
-
 
     def test_assess_reads(self):
         test_args = Namespace(
@@ -323,7 +324,6 @@ class test_BugBuilder(unittest.TestCase):
              "contigs": already_ctg,
               "scaffolds": already_scf}])
 
-
     def test_check_args(self):
         config = bb.parse_config(self.filled_config)
         test_args = Namespace(
@@ -341,6 +341,8 @@ class test_BugBuilder(unittest.TestCase):
             "current_scaffolds",
             "current_scaffolds_source",
             "current_reference",
+            "current_embl",
+            "current_embl_source",
             "ID_OK",
             "old_contigs",
             "old_scaffolds",
@@ -372,8 +374,12 @@ class test_BugBuilder(unittest.TestCase):
 
     def check_get_merger_and_linkage(self):
         pass
-    def parse_available_platforms():
-        pass
+
+    def test_parse_available_noconfig(self):
+        self.assertEqual(
+            [],
+            bb.parse_available("assemblers", None)
+        )
 
     @mock.patch('shutil.which')
     def test_parse_available_assemblers(self, shumock):
@@ -383,42 +389,105 @@ class test_BugBuilder(unittest.TestCase):
             bb.parse_available("assemblers", self.filled_config)
         )
 
-    def test_parse_available_scaffolders(self):
-        pass
-    def parse_available_mergers():
-        pass
-    def parse_available_finisher():
-        pass
-    def parse_available_varcaller():
-        pass
-    def get_scaffolder_and_linkage(args, config, paired, logger):
-        pass
-    def get_merger_and_linkage(args, config, paired):
-        pass
-    def get_finisher(args, config, paired):
-        pass
-    def get_varcaller(args, config, paired):
-        pass
+    def test_get_scaffolder_and_linkage(self):
+        config = bb.parse_config(self.filled_config)
+        test_args = Namespace(scaffolder="sis",
+                              reference=self.ref_fasta)
+        scaffolder, linkage = bb.get_scaffolder_and_linkage(
+            args=test_args, config=config, paired=True, logger=logger)
+        self.assertEqual(linkage, "align_genus")
+        self.assertEqual(scaffolder['name'], "SIS")
+
+    def test_get_scaffolder_and_linkage_none(self):
+        config = bb.parse_config(self.filled_config)
+        test_args = Namespace(scaffolder=None,
+                              reference=self.ref_fasta)
+        scaffolder, linkage = bb.get_scaffolder_and_linkage(
+            args=test_args, config=config, paired=True, logger=logger)
+        self.assertEqual(linkage, None)
+        self.assertEqual(scaffolder, None)
+
+    def test_get_merger_tool(self):
+        config = bb.parse_config(self.filled_config)
+        test_args = Namespace(merge_method='gfinisher',
+                              scaffolder=None,
+                              reference=self.ref_fasta)
+        merger = bb.get_merger_tool(args=test_args, config=config, paired=False)
+        self.assertEqual(merger['name'], 'gfinisher')
+
+    def test_get_finisher(self):
+        config = bb.parse_config(self.filled_config)
+        test_args = Namespace(finisher='gapfiller',
+                              scaffolder=None,
+                              reference=self.ref_fasta)
+        finisher = bb.get_finisher(args=test_args, config=config, paired=True)
+        self.assertEqual(finisher['name'], 'gapfiller')
+
+    def test_get_finisher_fail_needs_pair(self):
+        config = bb.parse_config(self.filled_config)
+        test_args = Namespace(finisher='gapfiller',
+                              scaffolder=None,
+                              reference=self.ref_fasta)
+        with self.assertRaises(ValueError):
+            bb.get_finisher(args=test_args, config=config, paired=False)
+
+    def test_get_finisher_fail_needs_refernce(self):
+        config = bb.parse_config(self.filled_config)
+        test_args = Namespace(finisher='pilon',
+                              scaffolder=None,
+                              reference=None)
+        with self.assertRaises(ValueError):
+            bb.get_finisher(args=test_args, config=config, paired=False)
+
+    def test_get_varcaller_fail_needs_reference(self):
+        config = bb.parse_config(self.filled_config)
+        test_args = Namespace(varcaller="pilon",
+                              scaffolder=None,
+                              reference=None)
+        with self.assertRaises(ValueError):
+            bb.get_varcaller(args=test_args, config=config, paired=False)
+
+    def test_get_varcaller(self):
+        config = bb.parse_config(self.filled_config)
+        test_args = Namespace(varcaller="pilon",
+                              scaffolder=None,
+                              reference=self.ref_fasta)
+        vc = bb.get_varcaller(args=test_args, config=config, paired=False)
+        self.assertEqual("pilon", vc['name'])
+
     def select_tools(args, config, reads_ns, logger):
         pass
-    def assembler_needs_downsampling(args, config):
-        pass
+
+    def test_assembler_needs_downsampling(self):
+        assemblers = [x for x in bb.parse_config(self.filled_config).assemblers if \
+                     x['name' ]== "spades"]
+        tools = Namespace(assemblers=assemblers)
+        self.assertEqual(True, bb.assembler_needs_downsampling(tools))
+
     def make_fastqc_cmd(args, outdir):
         pass
+
     def run_fastqc(reads_ns, args, logger=None):
         pass
+
     def make_sickle_cmd(args, reads_ns, out_dir):
         pass
+
     def quality_trim_reads(args, config, reads_ns, logger):
         pass
+
     def make_seqtk_ds_cmd(args, reads_ns, new_coverage, outdir, config, logger):
         pass
+
     def downsample_reads(args, reads_ns, config, new_cov=100):
         pass
+
     def make_bwa_cmds(args, config, outdir, ref, reads_ns, fastq1, fastq2):
         pass
+
     def make_samtools_cmds(config, sam, outdir, sorted_bam):
         pass
+
     def align_reads(dirname, reads_ns,  downsample, args, config, logger):
         pass
     def make_picard_stats_command(bam, config, picard_outdir):
@@ -468,28 +537,50 @@ class test_BugBuilder(unittest.TestCase):
         self.to_be_removed.append(
             os.path.join(self.test_dir, "id_check", ""))
 
-    def check_already_assembled_dirs(args, config, logger):
-        pass
-    def check_already_assembled_args(args, config, logger):
-        pass
-    def make_empty_results_object():
-        pass
-    def log_read_and_run_data(reads_ns, args, results, logger):  # pragma nocover
-        pass
-    def run_scaffolder(args, config, reads_ns, results, run_id, logger=None):
-        pass
-    def find_origin(args, config, results, logger):
-        pass
-    def check_and_set_trim_length(reads_ns, args, logger):
-        pass
-    def use_already_assembled(args):
-        pass
+    @unittest.skipIf("TRAVIS" in os.environ and os.environ["TRAVIS"] == "true",
+                     "Skipping this test on Travis CI. Too hard to debug")
+    def test_find_origin(self):
+        test_args = Namespace(tmp_dir=self.test_dir,
+                              reference=self.ref_split,
+                              )
+        results = Namespace(current_scaffolds=self.contigs)
+        config = bb.parse_config(self.filled_config)
+        ref_dict = {'AP017923.1': 'NODE_4_length_5704_cov_4.88129:1',
+                    'AP017923.2': 'NODE_2_length_10885_cov_4.76832:869'}
+        ori = bb.find_origin(args=test_args, config=config, results=results,
+                             ori_dir=self.test_dir, flex=10,
+                             logger=logger)
+        for k, v in sorted(ori.items()):
+            self.assertEqual(ref_dict[k], v)
+
+    @unittest.skipIf("TRAVIS" in os.environ and os.environ["TRAVIS"] == "true",
+                     "Skipping this test on Travis CI. Too hard to debug")
+    def test_find_and_split_origin(self):
+        test_args = Namespace(tmp_dir=self.test_dir,
+                              reference=self.ref_split,
+                              )
+        results = Namespace(current_scaffolds=self.contigs)
+        config = bb.parse_config(self.filled_config)
+        ref_dict = {'AP017923.1': 'NODE_4_length_5704_cov_4.88129:1',
+                    'AP017923.2': 'NODE_2_length_10885_cov_4.76832:869'}
+        bb.find_and_split_origin(args=test_args, config=config, results=results,
+                                       tools=None, reads_ns=None,
+                                       logger=logger)
+        ###################
+        #  write a propper test here
+        ###################
+        self.to_be_removed.append(
+            os.path.join(self.test_dir, "origin", ""))
+
     def order_scaffolds():
         pass
+
     def store_orientation(orientations, contig, or_count):
         pass
+
     def finish_assembly(args, config, reads_ns, results, logger):
         pass
+
     def test_check_spades_kmers(self):
         cmd = "spades.py -k 22,33,55,77 -o someassembly"
         self.assertEqual(
@@ -521,7 +612,7 @@ class test_BugBuilder(unittest.TestCase):
         bb.run_ref_scaffolder(
             args=test_args, config=config, tools=tools, results=results, reads_ns=reads_ns,
             run_id=1, logger=logger)
-        # self.to_be_removed.append(os.path.join(self.test_dir, "SIS_1"))
+        self.to_be_removed.append(os.path.join(self.test_dir, "SIS_1"))
 
 
     def tearDown(self):

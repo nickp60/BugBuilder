@@ -205,16 +205,21 @@ finishers:
      create_dir: 1
      ref_required: 0
      paired_reads: 1
+     needs: variable_gaps
      priority: 2
+       - SIS
+       - SSPADES
    - name: abyss-sealer
      command: run_abyss-sealer --tmpdir __TMPDIR__ --encoding __ENCODING__ --threads __THREADS__
      create_dir: 1
+     needs: fixed_gaps
      ref_required: 0
      paired_reads: 1
      priority: 3
    - name: pilon
      command: run_pilon --tmpdir __TMPDIR__ --threads __THREADS__
      create_dir: 1
+     needs: fixed_gaps
      ref_required: 0
      paired_reads: 1
      priority: 1
@@ -336,6 +341,9 @@ import statistics
 import subprocess
 import pkg_resources
 import tabulate
+import multiprocessing
+
+
 
 from BugBuilder import __version__
 from Bio import SeqIO # , SearchIO
@@ -345,11 +353,14 @@ from .shared_methods import make_nucmer_delta_show_cmds
 from .run_sis import run as run_sis
 from .run_spades import run as run_spades
 from .run_abyss import run as run_abyss
+
 sub_mains = {
     # "canu": run_canu,
     "abyss": run_abyss,
     "spades": run_spades,
     "sis": run_sis}
+
+
 def parse_available(thing, path=None):
     if path is None: # path var is to allow easier testing
         try:
@@ -364,6 +375,7 @@ def parse_available(thing, path=None):
     # return all the names that have an executable available
     return [x for x in thing_list if getattr(config, x.replace("-", "_")) is not None]
 
+
 def configure(config_path, hardfail=True):
     with open(config_path, 'w') as outfile:  # write header and config params
         for line in __config_data__:
@@ -371,11 +383,11 @@ def configure(config_path, hardfail=True):
     all_programs_dict = {
         "mandatory_programs": [
             'seqtk', 'samtools', 'picard', 'blastn', 'makeblastdb', "nucmer",
-            'R', 'mummer', "delta-filter",  "show-coords",  'bwa'],
+            'R', 'mummer', "delta-filter",  "show-coords",  'bwa', "prokka"],
         "mandatory_python_programs": [],
         "opt_programs": [
-            'fastqc', 'sickle', 'mauve', 'prokka', "minimus",
-            'aragorn', 'prodigal', 'hmmer3', 'infernal',
+            'fastqc', 'sickle', 'mauve', 'prokka', "minimus", 'sam2afg',
+            'aragorn', 'prodigal', 'hmmer3', 'infernal','bank-transact',
             'rnammer', 'tbl2asn', 'abyss', 'celera', "abyss", "abyss-sealer",
             'gapfiller', 'sspace', 'asn2gb', 'amos' , 'masurca',
             'gfinisher', 'pilon', 'vcflib', 'cgview'],
@@ -1139,14 +1151,14 @@ def get_merger_tool(args, config, paired):
     """
     if args.merge_method is None:
         return None
-    if args.merge_method not in [x.name for x in config.merge_tools]:
+    if args.merge_method not in [x['name'] for x in config.merge_tools]:
         raise ValueError("%s not an available merge_method!" % args.merge_method)
     linkage_evidence = None
-    for merger_method in config.merge_methods:
+    for merger_method in config.merge_tools:
         if merger_method['name'] == args.merge_method:
-            if merge_methods['allow_scaffolding']:
+            if merger_method['allow_scaffolding']:
                 args.scaffolder = None
-            return merge_method
+            return merger_method
 
 def get_finisher(args, config, paired):
     if args.finisher is None:
@@ -1172,9 +1184,7 @@ def get_varcaller(args, config, paired):
     for conf_varcallers in config.varcallers:
         if conf_varcallers['name'] == args.varcaller:
             if args.reference is None and conf_varcallers['ref_required']:
-                raise ValueError("%s requires reference, but you " +
-                                 "only specified one fastq file." % \
-                                 args.varcaller)
+                raise ValueError("%s requires reference"  % args.varcaller)
             return conf_varcallers
 
 
@@ -1656,19 +1666,18 @@ def get_contig_stats(contigs, ctype):
     assert ctype in ['scaffolds', 'contigs'], "invalid contig type"
     count, count_200 = 0, 0
     all_lengths, all_lengths_200 = [], []
-    lengths, lengths_200 = [], []
+    if os.path.getsize(contigs) == 0:
+        raise ValueError("contigs file is empty!")
     with open(contigs, "r") as inf:
         for rec in SeqIO.parse(contigs, "fasta"):
             length = len(rec.seq)
             count = count + 1
             all_lengths.append(length)
             if length > 200:
-                lengths_200.append(length)
-                count_200 = count_200 + 1
                 all_lengths_200.append(length)
-
-    sorted_lengths     = sorted(all_lengths)
-    sorted_lengths_200 = sorted(all_lengths_200)
+                count_200 = count_200 + 1
+    all_lengths.sort()
+    all_lengths_200.sort()
     L50, N50 = get_L50_N50(all_lengths)
     L50_200, N50_200 = get_L50_N50(all_lengths_200)
     return [
@@ -1976,6 +1985,7 @@ def make_empty_results_object():
         ID_OK=False, # to be set by check_id
         current_contigs=None, current_scaffolds=None, current_reference=None,
         current_contigs_source=None, current_scaffolds_source=None,
+        current_embl=None, # run_prokka fills this in
         old_contigs=[[None, None]],  # [path, source]
         old_scaffolds=[[None, None]],  # [path, source]
         old_references=[[None, None]],  # [path, source]
@@ -2016,10 +2026,11 @@ def log_read_and_run_data(reads_ns, args, results, logger):  # pragma nocover
 
 
 def run_scaffolder(args, tools, config, reads_ns, results, run_id, logger=None):
-    if tool.scaffolder['linkage_evidence'] == "paired-end":
-        run_pe_scaffolder(args, tools, config, reads_ns, results, run_id, logger=logger)
+    if tools.scaffolder['linkage_evidence'] == "paired-end":
+        scaffs = run_pe_scaffolder(args, tools, config, reads_ns, results, run_id, logger=logger)
     else:
-        run_ref_scaffolder(args, tools, config, reads_ns, results, run_id, logger=logger)
+        scaffs = run_ref_scaffolder(args, tools, config, reads_ns, results, run_id, logger=logger)
+    return scaffs
 
 
 def run_ref_scaffolder(args, tools, config, reads_ns, results, run_id, logger=None):
@@ -2306,7 +2317,7 @@ def run_pe_scaffolder(args, config, reads_ns, results, run_id, logger=None):
             for scaf in merge_these_scaffolds:
                 for rec in SeqIO.parse(scaf):
                     rec.id = "scaffold_%05d" % counter
-                    SeqIO.write(rec, outf, fasta)
+                    SeqIO.write(rec, outf, "fasta")
     return resulting_scaffold
 
 #     # Create a fasta file of unplaced contigs if files of contig_ids are generated by the scaffolder wrapper
@@ -2361,7 +2372,45 @@ def run_pe_scaffolder(args, config, reads_ns, results, run_id, logger=None):
 
 # }
 
-def find_origin(args, config, results, logger):
+def find_origin(config, args, results, ori_dir, flex, logger):
+    """ attempts to find the origin for each record in the reference
+    returns a dict {seqID: "contig_name:ori",...}
+    """
+    logger.info("Attempting to identify origin...");
+    cmds =  make_nucmer_delta_show_cmds(config=config, ref=args.reference,
+                                       query=results.current_scaffolds,
+                                       out_dir=ori_dir, prefix="ori", header=False)
+    logger.debug("Running the following cmds:")
+    for cmd in cmds:
+        logger.debug(cmd)
+        subprocess.run(cmd,
+                   shell=sys.platform != "win32",
+                   stdout=subprocess.PIPE,
+                   stderr=subprocess.PIPE,
+                   check=True)
+    ori_coords = os.path.join(ori_dir, "ori.coords")
+    pattern = re.compile("\s+")
+    origin_dict = {}
+    with open(args.reference, "r") as inf:
+        for rec in SeqIO.parse(inf, "fasta"):
+            FOUND = False
+            with open(ori_coords, "r") as coords:
+                for line in coords:
+                    line = line.strip()
+                    line = line.replace("|", "")
+                    fields = pattern.split(line)
+                    # if we haven't found one already
+                    if not FOUND:
+                        #  and if the start is near 1 and on the correct record
+                        if int(fields[0]) <= flex and fields[7] == rec.id :
+                            origin_dict[rec.id] = "{0}:{1}".format(fields[8], fields[2])
+                            FOUND = True
+                            logger.info("Potential origin found at %s",
+                                        origin_dict[rec.id] )
+    return origin_dict
+
+
+def find_and_split_origin(args, config, results, tools, reads_ns, logger):
     """
     Attempts to identify location of origin based upon contig overlapping
     base 1 of the reference sequence. This assumes  each reference sequence
@@ -2380,78 +2429,81 @@ def find_origin(args, config, results, logger):
     """
     ori_dir = os.path.join(args.tmp_dir, "origin")
     os.makedirs(ori_dir)
-    logger.info("Attempting to identify origin...");
-    cmds =  make_nucmer_delta_show_cmds(config=config, ref=args.reference,
-                                       query=results.current_scaffolds,
-                                       out_dir=ori_dir, prefix="ori", header=False)
-    logger.debug("Running the following cmds:")
-    for cmd in cmds:
-        logger.debug(cmd)
-        subprocess.run(cmd,
-                   shell=sys.platform != "win32",
-                   stdout=subprocess.PIPE,
-                   stderr=subprocess.PIPE,
-                   check=True)
-    origin = None
-    ori_coords = os.path.join(ori_dir, "ori.coords")
-    with open(ori_coords, "r") as coords:
-        for line in coords:
-            line = line.strip()
-            line = line.replace("|", "")
-            fields = re.split("\s*", line)
-            if not origin and fields[0] ==1:
-                origin = "{0}:{1}".format(fields[8], fields[2])
-                logger.info("Potential origin found at %s", origin )
+
+    origin_dict = find_origin(config, args, results, ori_dir, flex=10, logger=logger)
     outIO = os.path.join(ori_dir, "split_ori_scaff.fasta")  # OutIO
     splitIO = os.path.join(ori_dir, "scaffolds_ori_split.fasta")  # SplitIO
-    if origin is not None:
-        ori_scaffold, pos = origin.split(":")
-        with open(results.current_scaffolds, "r") as inscaff:
+    counter = 0
+    if len(origin_dict) == 0:
+        raise ValueError("no origin found!")
+    else:
+    # for ref_id, origin in sorted(origin_dict.items())
+        contigs_containing_scaffolds = \
+            [x.split(":")[0] for x in origin_dict.values()]
+        with open(results.current_scaffolds, "r") as inscaff, open(splitIO, "w") as splitscaff:
             for rec in SeqIO.parse(inscaff, "fasta"):
-                if ori_scaffold == rec.id:
+                counter = counter + 1
+                if rec.id in contigs_containing_scaffolds:
+                    # get the proper entry from the dictionary, its a bit clunky
+                    origin = [x for x in origin_dict.values() if
+                              x.split(":")[0] == rec.id][0]
+                    ori_scaffold, pos = origin.split(":")
+                    logger.debug("spliting %s at origin %d", ori_scaffold, pos)
                     # write out both parts after splitting
-                    with open(splitIO, "w") as splitscaff :
-                        part_a = rec.seq[0: pos]
-                        part_b = rec.seq[pos + 1: ]
-                        ori_a = SeqRecord(id=rec.id + "_A",
-                                          seq=Seq(part_a))
-                        ori_b = SeqRecord(id=rec.id + "_B",
-                                          seq=Seq(part_b))
-                        SeqIO.write(ori_a, splitscaff, "fasta")
-                        SeqIO.write(ori_b, splitscaff, "fasta")
-                    #  now, rerun scaffolder on our split origins
-                    results.old_scaffolds.append([results.current_scaffolds,
-                                                  results.current_scaffolds_source])
-                    results.current_scaffolds = split_ori_scaff
-                    results.current_scaffolds_source = "split_ori_scaff"
-                    new_scaffolds = run_scaffolder(
-                        args=args, config=config, reads_ns=reads_ns, results=results,
-                        run_id=2, logger=logger)
-                    results.old_scaffolds.append([results.current_scaffolds,
-                                                  results.current_scaffolds_source])
-                    results.current_scaffolds = new_scaffolds
-                    results.current_scaffolds_source = "find_origin_rescaffolded"
-
-                    with open(new_scaffolds, "r") as infile, open(outIO, "a") as outfile:
-                        for new_rec in SeqIO.parse(infile):
-                            SeqIO.write(new_rec, outfile, "fasta")
+                    part_a = rec.seq[0: int(pos)]
+                    part_b = rec.seq[int(pos) + 1: ]
+                    ori_a = SeqRecord(id="Scaffold_%05d" % counter,
+                                      seq=part_a)
+                    counter = counter + 1
+                    ori_b = SeqRecord(id="Scaffold_%05d" % counter,
+                                      seq=part_b)
+                    SeqIO.write(ori_a, splitscaff, "fasta")
+                    SeqIO.write(ori_b, splitscaff, "fasta")
                 else:
-                    # these dont need splitting
-                    with open(outIO, "a") as outfile:
-                        SeqIO.write(rec, outfile, "fasta")
+                    rec.id = "Scaffold_%05d" % counter
+                    SeqIO.write(rec, splitscaff, "fasta")
 
-    #renumber scaffolds to ensure they are unique...
-    counter = 1
-    renumbered_scaffs = os.path.join(
-        os.path.dirname(splitIO), "scaffold.fasta")
-    with open(splitIO, "r") as inf, open(renumbered_scaffs, "w") as outf:
-        for rec in SeqIO.parse(inf):
-            rec.id = "scaffold_%05d" % counter
-            counter = counter + 1
-            SeqIO.write(rec, outf, fasta)
-    results.old_scaffolds.append([results.current_scaffolds, results.current_scaffolds_source])
-    results.current_scaffolds = renumbered_scaffs
-    results.current_scaffolds_source = "renumbering_after_origin_split"
+    #                 #  now, rerun scaffolder on our split origins
+    #                 results.old_scaffolds.append([results.current_scaffolds,
+    #                                               results.current_scaffolds_source])
+    #                 results.current_scaffolds = outIO
+    #                 results.current_scaffolds_source = "split_ori_scaff"
+    #                 if tools.scaffolder:
+    #                     new_scaffolds = run_scaffolder(
+    #                         args=args, config=config, tools=tools,
+    #                         reads_ns=reads_ns, results=results,
+    #                         run_id=2, logger=logger)
+    #                     results.old_scaffolds.append([results.current_scaffolds,
+    #                                                   results.current_scaffolds_source])
+    #                     results.current_scaffolds = new_scaffolds
+    #                     results.current_scaffolds_source = "find_origin_rescaffolded"
+    #                 else:
+    #                     new_scaffolds = outIO
+    #                     results.old_scaffolds.append(
+    #                         [results.current_scaffolds,
+    #                          results.current_scaffolds_source])
+    #                     results.current_scaffolds = new_scaffolds
+    #                     results.current_scaffolds_source = "find_origin_not_scaffolded"
+    #                 with open(new_scaffolds, "r") as infile, open(outIO, "a") as outfile:
+    #                     for new_rec in SeqIO.parse(infile, "fasta"):
+    #                         SeqIO.write(new_rec, outfile, "fasta")
+    #             else:
+    #                 # these dont need splitting
+    #                 with open(outIO, "a") as outfile:
+    #                     SeqIO.write(rec, outfile, "fasta")
+
+    # #renumber scaffolds to ensure they are unique...
+    # counter = 1
+    # renumbered_scaffs = os.path.join(
+    #     os.path.dirname(splitIO), "scaffold.fasta")
+    # with open(splitIO, "r") as inf, open(renumbered_scaffs, "w") as outf:
+    #     for rec in SeqIO.parse(inf, "fasta"):
+    #         rec.id = "scaffold_%05d" % counter
+    #         counter = counter + 1
+    #         SeqIO.write(rec, outf, "fasta")
+    # results.old_scaffolds.append([results.current_scaffolds, results.current_scaffolds_source])
+    # results.current_scaffolds = renumbered_scaffs
+    # results.current_scaffolds_source = "renumbering_after_origin_split"
 
 
 def check_and_set_trim_length(reads_ns, args, logger):
@@ -2471,7 +2523,7 @@ def use_already_assembled(args):
     return False
 
 
-def order_scaffolds():
+def order_scaffolds(args, config, results, logger):
     """
     Identifies origin based on homology with reference.
     Resulting scaffolds are then ordered and oriented relative to the reference...
@@ -2502,16 +2554,14 @@ def order_scaffolds():
     with open(orient_coords, "r") as inf:
         contig = '';
         for line in inf:
-            line = line.strip()
-            line = line.replace("|", "")
+            line = line.strip().replace("|", "")
             fields = re.split("\s+", line)
             if contig != fields[8]:
                 if contig != "":
-                    store_orientation(orientations, contig, orient_count )
+                    orientations = store_orientation(contig, orient_count )
             contig = fields[8]
-            start  = fields[2]
-            end    = fields[3]
-            length = ""
+            start  = int(fields[2])
+            end    = int(fields[3])
             if start < end:
                 orient = '+'
                 length = end - start;
@@ -2523,13 +2573,12 @@ def order_scaffolds():
             else:
                 orient_count[orient] = length
     # record data for last contig...
-    store_orientation(orientations, contig, orient_count )
+    orientations = store_orientation(contig, orient_count )
 
     orig_length     = 0
     oriented_length = 0    #track how much sequence we align ok...
     unplaced_length = 0
     unplaced = []
-
 
     # Reorientate contigs and break origin, rewriting to a new file...
     new_scaffolds = os.path.join(orient_dir, "scaffolds.fasta")
@@ -2537,7 +2586,7 @@ def order_scaffolds():
          open(new_scaffolds, "r") as outf:
         for i, rec in enumerate(SeqIO.parse(inf, "fasta")):
             orig_length = orig_length + len(rec.seq)
-            rec.id = "scaffold_%5d"  % str(i + 1)
+            rec.id = "scaffold_%05d"  % str(i + 1)
             if orientations[rec.id]:
                 if orientations[rec.id] == '+':
                     SeqIO.write(rec, outf, "fasta")
@@ -2572,7 +2621,7 @@ def order_scaffolds():
     results.current_scaffolds_source = "orient"
 
 
-def store_orientation(orientations, contig, or_count):
+def store_orientation(contig, or_count):
     """
     save correct contig orientation in hash passed as first parameter
 
@@ -2585,6 +2634,7 @@ def store_orientation(orientations, contig, or_count):
 
     returns           : none
     """
+    orientations = {}
     if ((or_count['+'] and or_count['-']) and (or_count['+'] > or_count['-'])) \
        or (or_count['+'] and not or_count['-']):
         orientations[contig] = '+'
@@ -2621,6 +2671,361 @@ def finish_assembly(args, config, reads_ns, results, logger):
                    check=True)
     print ("Finished assembly statistics : \n============================\n")
     get_contig_stats( "$tmpdir/scaffolds.fasta", 'scaffolds' );
+
+
+def build_agp(args, results, reads_ns, evidence, logger):
+    """
+    Creates an AGP file from the scaffolds, while generating new
+    contig/scaffold outputs meeting ENA requirements (no consecutive runs
+    of >=10 N, minimum contig size of 200 bp) if running in 'submission'
+    mode, otherwise leaves short contigs and gaps<100bp intact. The
+    scaffold_type argument is used to determine the linkage evidence type
+    for scaffold gaps
+
+    required parameters: $ (tmpdir)
+		     : $ (organism description)
+                   : $ (mode - submission or draft)
+                   : $ (scaffold_type: align or mate_pair)
+
+    returns            : $ (0)
+
+    see https://www.ncbi.nlm.nih.gov/assembly/agp/AGP_Specification/
+    """
+
+    if evidence not in ['paired-ends', 'align_genus', 'align_xgenus']:
+        logger.error("Unknown evidence type: %s", evidence)
+    logger.info("Creating AGP file...");
+    agp_dir = os.path.join(args.tmp_dir, "agp")
+    agpfile_path = os.path.join(agp_dir, "scaffolds.agp")
+    os.makedirs(agp_dir)
+    lines = []
+    lines.append(">scaffolds.agp")
+    lines.append( "##agp-version 2.0\n")
+    lines.append("#$organism\n")
+    contigs_path = os.path.join(agp_dir, "contigs.fasta")
+    scaffolds_path = os.path.join(agp_dir, "scaffolds.fasta")
+    contig_count = 0
+    scaffold_count = 0
+    gap_dict = {}    #overall per-scaffold gaps to return....
+    with open(results.current_scaffolds, "r") as scaffold_inIO:
+        for scaffold in SeqIO.parse(scaffold_inIO, "fasta"):
+            scaffold_count = scaffold_count + 1
+            contig_start = 0
+            scaffold_loc = 1
+            scaffold_id  = scaffold.id;
+            scaff_count  = scaffold_count
+            scaffold_id = "scaffold_%06s"  %scaff_count
+            scaffold_end = len(scaffold.seq);
+            contig_end, gap_start, gap_end = 0, 0, 0
+
+            bases = list(scaffold.seq)
+            # location tracking for included contigs/gaps
+            contigs_dict, gaps = {}, []
+            # this is kind of crude, but seems to work...
+            for idx, base in enumerate(bases):
+                if base != "N" and not gap_start:
+                    contig_end = idx
+                elif base == "N" and not gap_start:
+                    gap_start = idx
+                # elif base != "N" and  gap_start:
+                else:
+                    assert base != "N" and  gap_start, "something wrong with AGP"
+                    gap_end = idx
+                    gap_length = gap_end - gap_start
+
+                    if gap_length < 10 and mode == 'submission':
+                        # skip gaps <10 bp which are acceptable by EMBL
+                        gap_start = None
+                    elif mode == 'draft' and gap_length <= 1:
+                        # we can leave single ambiguous bases alone
+                        gap_start = None
+                    else:
+                        gap_end = idx
+                        if contig_end - contig_start < 200 and mode == "submission":
+                            #need to extend previous gap to new position including short contig
+                            if len(gaps) != 0:
+                                last_gap = gaps[len(gaps)]
+                                last_start, last_end = last_gaps.split("-")
+                                new_gap = "{0}-{1}".format(last_start, gap_end)
+                                gaps.append(new_gap)
+                                gap_start = None
+                                contig_start = idx
+                            else:
+                                pass
+                        else:
+                            contig_count = contig_count + 1
+                            contig_id = "contig_%06s", contig_count
+                            with open(contigs_path, "a") as  outf:
+                                SeqIO.write(
+                                    SeqRecord("".join(bases), id=contig_id),
+                                    outf, "fasta")
+                            contigs_dict[contig] = {
+                                'coords': "{}-{}".format(contig_start, contig_end),
+                                'length': len(bases)
+                            }
+                            gap = "{}-{}".foramt(gap_start, gap_end)
+                            gaps.append(gap)
+                            gap_start = None
+                            contig_start = idx
+        # Output last contig from last contig_start position to scaffold end if it is longer than
+        # 200 bp and we are running in submission mode, otherwise remove the last gap to truncate the scaffold...
+        if scaffold_end - contig_start  > 200 or mode == 'draft' or contig_count == 0:
+            contig_count = contig_count + 1
+            contig_id = "contig_%06s", contig_count
+            with open(contigsIO, "a") as  outf:
+                SeqIO.write(SeqRecord("".join(bases), id=contig_id), outf, "fasta")
+                contigs_dict[contig] = {
+                    'coords': "{}-{}".format(contig_start, contig_end),
+                    'length': len(bases)
+                }
+        else:
+            gaps.pop()
+
+        gap_dict[scaffold_id] = gaps
+        scaffold_part = 0
+
+        #write AGP output and new scaffolds fasta file
+        record_dict = SeqIO.index("example.fasta", "fasta")
+        # unlink("contigs.fasta.index") if ( -e "contigs.fasta.index" );
+        # contig_db = Bio::DB::Fasta->new("contigs.fasta");
+        scaffold_seq = None
+
+        # I think this is just a sorted list of ids
+        contig_ids = sort([k.split("_")[1] for k, v in contigs_dict.items()])
+        # my @contig_ids = map { $_->[0] }
+        #   sort { $a->[1] <=> $b->[1] }
+        #   map { [ $_, /(\d+)$/ ] } keys(%contigs);
+        if len(contig_ids) > 0:
+        # if ( $#contig_ids > -1 ) {
+            for i, contig_id in enumerate(contig_ids):
+                contig_data = contigs_dict[contig_id]
+                coords      = contig_data['coords']
+                length      = contig_data['length']
+                if contig_id != "" :  # dont know when this could possibly be true
+                    contig = record_dict['contig_id']
+                    contig_start, contig_end  = coords.split("-")
+                    scaffold_part = scaffold_part + 1
+                    lines.append(
+                        "{ob}\t{ob_beg}\t{ob_end}\t{part_number}\t{comp_type}\t{comp_id}\t{comp_beg}\t{comp_end}\t{orientation}".format(
+                            ob=scaffold_id,
+                            ob_beg=contig_start + 1,
+                            ob_end=contig_end + 1,
+                            part_number=scaffold_part,
+                            comp_type="W",
+                            comp_id=contig_id,
+                            comp_beg=1,
+                            comp_end=length,
+                            orientation="+"))
+                    scaffold_seq = scaffold_seq + str(contig.seq)
+                    if i < len(contig_ids) - 1:
+                        gap_start, gap_end = gaps[i].split("-")
+                        gap_size = gap_end - gap_start
+                        scaffold_part = scaffold_part + 1
+                        lines.append(
+                            "{ob}\t{ob_beg}\t{ob_end}\t{part_number}\t{comp_type}\t{gap_len}\t{gap_type}\t{linkage}\t{linkage_ev}".format(
+                                ob=scaffold_id,
+                                ob_beg=gap_start + 1,
+                                ob_end=gap_end + 1,
+                                part_number=scaffold_part,
+                                comp_type="N",
+                                gap_length=gap_size,
+                                gap_type="scaffold",
+                                linkage="yes",
+                                linkage_ev=evidence))
+                        scaffold_seq = scaffold_seq + "N" * gap_size
+        if scaffold_seq is not None:
+            with open(scaffolds_path, "a") as outf:
+                SeqIO.write(SeqRecord(scaffold_seq, id=scaffold_id))
+    with open(agpfile_path, "w") as outf:
+        for line in lines:
+            outf.write(line)
+    return gaps
+
+
+
+def run_prokka(config, args, results, logger):
+    """
+    generates annotation on the assembly using prokka
+
+    required parameters: $ (tmpdir)
+		       $ (genus)
+                     $ (species)
+                     $ (strain)
+                     $ (locustag)
+                     $ (centre)
+
+    returns            : $ (0)
+    """
+    logger.info("Starting PROKKA...")
+    #use scaffolds if we have them, otherwise contigs....
+    if results.curent_scaffolds is not None:
+        seqs = results.current_scaffolds
+    else:
+        seqs = results.current_contigs
+
+    prokka_dir = os.path.join(args.tmp_dir, "prokka", "")
+    # os.makedirs(prokka_dir)
+
+    cmd = "{0} --addgenes --outdir {1} --prefix prokka --genus {2} --species {3} --strain {4} --locustag {5} --centre {6} {7}> {1}prokka.log 2>&1".format(
+        config.prokka, #0
+        prokka_dir, #1
+        args.genus,#2
+        args.species,#3
+         args.strain,#4
+        args.locustag,#5
+        args.centre,#6
+        seqs)
+    logger.debug("running the following command:\n %s". cmd)
+    subprocess.run(cmd,
+                   shell=sys.platform != "win32",
+                   stdout=subprocess.PIPE,
+                   stderr=subprocess.PIPE,
+                   check=True)
+
+#     # my $inIO        = Bio::SeqIO->new( -file => "$tmpdir/prokka/prokka.gbf",     -format => 'genbank' );
+#     my $inIO        = Bio::SeqIO->new( -file => "$tmpdir/prokka/prokka.gbk",     -format => 'genbank' );
+#     my $embl_outIO  = Bio::SeqIO->new( -file => ">$tmpdir/prokka/prokka.embl",   -format => 'embl' );
+#     my $fasta_outIO = Bio::SeqIO->new( -file => ">$tmpdir/prokka/${type}.fasta", -format => 'fasta' );
+
+#     # something is losing the scaffold/contig naming so needs to be regenerated...
+#     # at least ordering should be conserved
+#     my $count = 0;
+#     while ( my $seq = $inIO->next_seq() ) {
+#         my $label;
+#         ( $type eq 'scaffolds' ) ? ( $label = 'scaffold' ) : ( $label = 'contig' );
+#         my $id = sprintf( "${label}_%06s", ++$count );
+#         $seq->display_id($id);
+#         $seq->accession($id);
+#         $embl_outIO->write_seq($seq);
+#         $fasta_outIO->write_seq($seq);
+#     }
+
+#     chdir $tmpdir or die "Error chdiring to $tmpdir: $!";
+#     unlink "scaffolds.fasta" or die "Error removing scaffolds.fasta: $!" if ( $type eq 'scaffolds' );
+    results.current_embl = os.path.join(prokka_dir, "prokka.embl")
+    print("PReIPDATE")
+    # update_results(results, "embl", path=os.path.join(prokka_dir, , source )
+    update_results(results, thing="contigs",
+                   path=os.path.join(prokkadir, "scaffolds.fasta"), source="prokka" )
+    print("POST")
+#     symlink( "prokka/prokka.embl", "$type.embl" )
+#       or die "Error creating $type.embl symlink: $!";
+#     symlink( "prokka/scaffolds.fasta", "scaffolds.fasta" )
+#       or die "Error creating scaffolds.fasta symlink: $!"
+#       if ( $type eq 'scaffolds' );
+
+#     return (0);
+# }
+
+
+def update_results(results, thing, path, source ):
+    assert thing in ["embl", "contigs", "scaffolds"], "cant update %s" % thing
+    getattr(results, "old_" + thing).append(
+        [getattr(results, "current_" + thing),
+         getattr(results,"current_" + thing + "_source")])
+    results.current_scaffolds = path
+    results.current_scaffolds_source = source
+
+
+def amosvalidate(args, seq_file, config, reads_ns):
+    """
+    Uses abyss's abyss-samtoafg script to convert spades sam and contigs
+    to an amos bank
+
+    required params: $ (tmpdir)
+                 $ (insert size)
+                 $ (insert size stddev)
+
+    returns        : $ (0)
+    """
+    amos_dir = os.path.join(args.tmp_dir, "amos", "")
+    os.makedirs(amos_dir)
+    out_sequences = os.path.join(amos_dir, os.path.basename(seq_file))
+    # copy sequences with a newline separating records
+    with open(seq_file, "r") as inf, open(out_sequences, "w") as outf:
+        for rec in SeqIO.parse(inf, "fasta"):
+            SeqIO.write(rec, outf, "fasta")
+            outf.write("\n")
+    assert reads_ns.insert_size is not None and \
+        reads_ns.insert_stddev is not None, "how did we get here with paired reads but no insert size calcualted?"
+    logger.info("Converting to amos bank...");
+    sam2afg_cmd = "{exe}  -m {ins_size} -s {ins_stddev} {infile} {sam} > {outdir}amos.afg".format(
+        exe=config.sam2afg,
+        ins_size=insert_size,
+        ins_stddev=insert_stddev,
+        infile=out_sequences,
+        sam=os.path.join(args.tmp_dir, "bwa",
+                         os.path.splitext(os.path.basename(seq_file))[0]),
+        outdir=amos_dir)
+
+    bnk_cmd = "{exe} -cb {outdir}assembly.bnk -m {outdir}amos.afg  > {outdir}bank-transact.log 2>&1".format(
+        exe=config['bank_transact'],
+        outfile=amos_dir)
+    logger.info("Running amosvalidate");
+
+    # read amosvalidate script and comment out '4xx' lines, which run SNP checks and are extreeeeemly slow....
+    new_exe = os.path.join(amos_dir, "amosvalidate")
+    regex = re.compile(r"^4.*")
+    with open(config.amosvalidate, "r") as source, open(new_exe, "w") as new_source:
+        for line in source:
+            line = regex.sub("#4", line)  # double check this line actully works
+            new_source.write(line)
+    os.chmod(new_exe, "0755")  # im twitching too...
+    validate_cmd = "{exe} {outdir}assembly.bnk > {outdir}amosvalidate.log 2>&1".format(
+        exe=new_exe,
+        outdir=amos_dir)
+    mapping_cmd = \
+    "{exe} -i -p -b {outdir}/assembly.bnk CTG 2> /dev/null | cut -f 2,3 > {outdir}/ctg_to_iid.txt".format(
+        exe=config.bank_report,
+        outdir=amos_dir)
+
+    for cmd in [sam2afg_cmd, bnk_cmd, validate_cmd, mapping_cmd]:
+        logger.debug("running the following command:\n %s". cmd)
+        subprocess.run(cmd,
+                       shell=sys.platform != "win32",
+                       stdout=subprocess.PIPE,
+                       stderr=subprocess.PIPE,
+                       check=True)
+
+
+def summarise_amosvalidate():
+    """
+    postprocesses amosvalidate outputs to make more readily digestible
+
+    required params: $ (tmpdir)
+
+    returns        : $ ($ - hashref to parsed results)
+    """
+    logger.info("processing amosvalidate results...");
+    amosvalidate = os.path.join(args.tmp_dir, "amos", "")
+    iid_mapping = os.path.join(args.tmp_dir, "amos", "ctg_to_iid.txt")
+    results_dict = {}
+
+    # Read Contig->iid mapping into a hash
+    contig_to_iid_dict = {}
+    pattern = re.compile(r"\s+")
+    with open(iid_mapping, "r") as inf:
+        for line in inf:
+            contig, iid  = pattern.split(line)
+            iid = iid.strip()
+            contig_to_iid_dict[iid] = contig
+            results_dict[contig]    = []
+
+    outputs = glob.glob(os.path.join(amosvalidate, "*feat"))
+    with open(os.path.join(amosvalidate, "assembly.all.feat")) as ALL:
+        for line in ALL:
+            fields    = patter.split(line)
+            contig_id = contig_to_iid_dict[fields[0]]
+            start     = fields[2]
+            end       = fields[3]
+            tpe      = fields[4]
+            res_arr   = results[contig_id]
+            #no idea how it ends up with a negative start...but it does...
+            start = 0 if start < 0  else start
+            #  making this a list?
+            res_arr = [start, end, tpe]
+            results[contig_id] = res_arr
+    return results_dict
 
 
 def main(args=None, logger=None):
@@ -2751,23 +3156,37 @@ def main(args=None, logger=None):
         merged_contigs_path = merge_assemblies(args=args, config=config,
                                                reads_ns=reads_ns, logger=logger)
         results.current_contigs = merged_contigs_path
+        results.current_contigs_source = "merged"
         results.current_scaffolds = None
 
     else:
         results.current_contigs = \
             results.assemblers_results_dict_list[0]['contigs']
+        results.current_contigs_source = \
+            results.assemblers_results_dict_list[0]['name']
         results.current_scaffolds = \
             results.assemblers_results_dict_list[0]['scaffolds']
-
-    print(results.__dict__)
-    print(tools.__dict__)
-    print(args.__dict__)
+        results.current_scaffolds_source = \
+            results.assemblers_results_dict_list[0]['name']
+    logger.debug("RESULTS:")
+    logger.debug(results.__dict__)
+    logger.debug("TOOLS:")
+    logger.debug(tools.__dict__)
+    logger.debug("ARGS:")
+    logger.debug(args.__dict__)
 
     #TODO why do we check scaffolder here?
+    #  ensure that our reference is close enough before continuing
     if args.scaffolder and args.reference:
         results.ID_OK = check_id(args, contigs=results.current_contigs,
                                  config=config,
                                  logger=logger)
+    # if we have a reference, lets break the origin here, before scaffolding
+    if not args.skip_split_origin and results.ID_OK:
+        find_and_split_origin(args=args, config=config, results=results,
+                              tools=None, reads_ns=None, logger=logger)
+    # right.  Now our results should contain contigs and/or scaffolds.
+    # Lets do some scaffolding
     if tools.scaffolder is not None:
         if \
            (results.ID_OK and tools.scaffolder['linkage_evidence'] == "align-genus") or \
@@ -2775,7 +3194,7 @@ def main(args=None, logger=None):
             results.old_scaffolds.append(["either nowhere or straight from assembler",
                                          results.current_scaffolds])
             results.current_scaffolds = run_scaffolder(
-                args=args, config=config, reads_ns=reads_ns, results=results,
+                args=args, config=config, tools=tools, reads_ns=reads_ns, results=results,
                 run_id=1, logger=logger)
 
     if results.current_scaffolds is not None:
@@ -2783,49 +3202,58 @@ def main(args=None, logger=None):
         # scaffolder is used for these by default
         args.scaffolder = "mauve" if args.scaffolder is None else args.scaffolder
         if not args.skip_split_origin and args.reference is not None:
-            find_origin(args,config, results,  logger )
+            find_origin(args,config, results,  tools, reads_ns, logger )
         if results.ID_OK:
-            order_scaffolds(args, logger)
+            order_scaffolds(args, config, results, logger)
         if args.finisher and results.ID_OK:
             finish_assembly(args, config, reads_ns, results, logger=logger)
-
     if results.current_scaffolds is not None:
-        pass
-         # gaps = build_agp( $tmpdir, $organism, $mode, $scaffold_type );
+        try:
+            evidence = tools.scaffolder['linkage_evidence']
+        except:
+            evidence = "paired-ends"
+        gaps = build_agp(args, results, reads_ns,
+                         evidence=evidence,
+                         logger=logger)
+    # sequence stable from this point, only annotations altered
+    #  it looks this this is attempting to be multiprocessed.
+    #  for now, lets just do this in serial, as this cant save much time;
+    #  id rather prokka have all the cores it can
+    # simul_cmds = []
+    # pool = multiprocessing.Pool(processes=split_cores)
+    # logger.debug("running the following commands:")
+    # logger.debug("\n".join(simul_cmds))
+    # spades_results = [
+    #     pool.apply_async(subprocess.run,
+    #                      (cmd,),
+    #               { "shell": sys.platform != "win32",
+    #                "stdout": subprocess.PIPE,
+    #                "stderr": subprocess.PIPE,
+    #                "check": True})
+    #     for cmd in simul_cmds]
+    # pool.close()
+    # pool.join()
+    # logger.debug(spades_results)
+    # logger.info("Sum of return codes (should be 0):")
+    # spades_results_sum = sum([r.get() for r in spades_results])
 
-#     # sequence stable from this point, only annotations altered
-#     for my $i (qw(1 2)) {
-# 	print "pm: $i \n";
-#         $pm->start and next();
-#         if ( $i == 1 ) {
+    ##amosvalidate fails if we don't have mate-pairs
+    print(results)
+    if reads_ns.paired and args.mode == 'draft':
+            seq_file = results.current_contigs
+            if results.current_scaffolds is not None:
+                seq_file = results.current_scaffolds
+            sorted_bam = align_reads(
+                dirname="align", reads_ns=reads_ns,
+                config=config, downsample=True, args=args, logger=logger)
+            amosvalidate( tmpdir, insert_size, stddev )
+            # get_contig_to_iid_mapping($tmpdir);
+            amosvalidate_results = summarise_amosvalidate(tmpdir)
+    run_prokka(config, args, results, logger)
 
-#             ##amosvalidate fails if we don't have mate-pairs
-#             if ( -e "$tmpdir/read2.fastq" && ( $mode eq 'draft' ) ) {
-#                 my $seq_file;
-#                 ( -e "$tmpdir/scaffolds.fasta" ) ? ( $seq_file = 'scaffolds.fasta' ) : ( $seq_file = 'contigs.fasta' );
-
-#                 align_reads( $tmpdir, $seq_file, $read_length_mean );
-#                 amosvalidate( $tmpdir, $insert_size, $stddev );
-#             }
-#         }
-#         elsif ( $i == 2 ) {
-
-#             run_prokka( $tmpdir, $genus, $species, $strain, $locustag, $centre );
-#         }
-
-#         $pm->finish();
-#     }
-
-#     $pm->wait_all_children();
-
-#     my $amosvalidate_results;
-#     if ( -e "$tmpdir/read2.fastq" && ( $mode eq 'draft' ) ) {
-#         get_contig_to_iid_mapping($tmpdir);
-#         $amosvalidate_results = summarise_amosvalidate($tmpdir);
-#     }
-
-#     run_varcaller( $tmpdir, $varcall, $threads, $read_length_mean ) if ($varcall);
-#     merge_annotations( $tmpdir, $amosvalidate_results, $gaps, $genus, $species, $strain );
+    amosvalidate_results = None
+    # run_varcaller( tmpdir, varcall, threads, read_length_mean ) if (varcall)
+    # merge_annotations( tmpdir, amosvalidate_results, gaps, genus, species, strain )
 #     #  This kept throwing an error about Bio::SeqIO
 #     # run_cgview($tmpdir);
 
@@ -2961,419 +3389,15 @@ def main(args=None, logger=None):
 
 
 
+# def run_varcaller():
+#     """"
+# Carries out variant calling using requested variant caller
+
+# required params: $ (tmpdir)
+#                  $ (varcall)
+#                  $ (no. threads)
+#                  $ (read length)
 
-
-
-
-
-
-
-
-
-def build_agp():
-    """
-    Creates an AGP file from the scaffolds, while generating new
-    contig/scaffold outputs meeting ENA requirements (no consecutive runs
-    of >=10 N, minimum contig size of 200 bp) if running in 'submission'
-    mode, otherwise leaves short contigs and gaps<100bp intact. The
-scaffold_type argument is used to determine the linkage evidence type
-    for scaffold gaps
-
-    required parameters: $ (tmpdir)
-		     : $ (organism description)
-                   : $ (mode - submission or draft)
-                   : $ (scaffold_type: align or mate_pair)
-
-    returns            : $ (0)
-    """
-
-
-# sub build_agp {
-
-#     my $tmpdir   = shift;
-#     my $organism = shift;
-#     my $mode     = shift;
-#     my $evidence = shift;
-
-#     die "Unknown evidence type: $evidence"
-#       unless (    $evidence eq 'paired-ends'
-#                || $evidence eq 'align_genus'
-#                || $evidence eq 'align_xgenus' );
-
-#     message("Creating AGP file...");
-
-#     mkdir "$tmpdir/agp" or die "Error creating agp dir: $!";
-#     chdir "$tmpdir/agp" or die "Error chdiring to $tmpdir/agp: $!";
-
-#     open AGP, ">scaffolds.agp"
-#       or die "Error opening scaffolds.agp for writing: $! ";
-#     print AGP "##agp-version 2.0\n";
-#     print AGP "#$organism\n";
-
-#     my $scaffold_inIO  = Bio::SeqIO->new( -file => "$tmpdir/scaffolds.fasta", -format => 'fasta' );
-#     my $scaffold_outIO = Bio::SeqIO->new( -file => ">scaffolds.fasta",        -format => "fasta" );
-#     my $contig_outIO   = Bio::SeqIO->new( -file => ">contigs.fasta",          -format => 'fasta' );
-
-#     my $contig_count = 0;
-#     my %gaps;    #overall per-scaffold gaps to return....
-
-#     while ( my $scaffold = $scaffold_inIO->next_seq() ) {
-
-#         my $contig_start = 0;
-#         my $scaffold_loc = 1;
-#         my $scaffold_id  = $scaffold->display_id();
-#         my $scaff_count  = $1 if ( $scaffold_id =~ /([0-9]+)$/ );
-#         $scaffold_id = sprintf( "scaffold_%06s", $scaff_count );
-#         my $scaffold_end = $scaffold->length();
-#         my ( $contig_end, $gap_start, $gap_end );
-
-#         my @bases = split( //, $scaffold->seq() );
-#         my ( %contigs, @gaps );    #location tracking for included contigs/gaps
-
-#         # this is kind of crude, but seems to work...
-#       BASE: for ( my $b_count = 0 ; $b_count <= $#bases ; $b_count++ ) {
-#             if ( ( $bases[$b_count] ne 'N' ) && ( !$gap_start ) ) {
-#                 $contig_end = $b_count;
-#                 next BASE;
-#             }
-#             elsif ( ( $bases[$b_count] eq 'N' ) & !($gap_start) ) {
-#                 $gap_start = $b_count if ( !$gap_start );
-#                 next BASE;
-#             }
-#             elsif ( ( $bases[$b_count] ne 'N' ) && ($gap_start) ) {
-
-#                 #we have left the gap
-#                 $gap_end = $b_count;
-#                 my $gap_length = $gap_end - $gap_start;
-#                 if ( ( $gap_length < 10 ) && ( $mode eq 'submission' ) ) {
-
-#                     # skip gaps <10 bp which are acceptable by EMBL
-#                     $gap_start = undef;
-#                     next BASE;
-#                 }
-#                 elsif ( ( $mode eq 'draft' ) && ( $gap_length <= 1 ) ) {
-
-#                     # we can leave single ambiguous bases alone
-#                     $gap_start = undef;
-#                     next BASE;
-#                 }
-#                 else {
-#                     $gap_end = $b_count;
-
-#                     # Output contigs only > 200 bp
-#                     if (    ( ( $contig_end - $contig_start ) < 200 )
-#                          && ( $mode eq 'submission' ) )
-#                     {
-
-#                         #need to extend previous gap to new position including short contig
-#                         if ( scalar(@gaps) ) {
-#                             my $last_gap = pop @gaps;
-#                             my ( $last_start, $last_end ) = split( /-/, $last_gap );
-#                             my $new_gap = $last_start . '-' . $gap_end;
-#                             push @gaps, $new_gap;
-#                             $gap_start    = undef;
-#                             $contig_start = $b_count;
-#                             next BASE;
-#                         }
-#                     }
-#                     else {
-#                         my $contig_id = sprintf( "contig_%06s", ++$contig_count );
-#                         my $contig_seq =
-#                           Bio::Seq->new( -display_id => $contig_id,
-#                                          -seq        => join( '', @bases[ $contig_start .. $contig_end ] ) );
-#                         $contig_outIO->write_seq($contig_seq);
-#                         $contigs{$contig_id} = {
-#                                                  'coords' => $contig_start . '-' . $contig_end,
-#                                                  length   => $contig_seq->length()
-#                                                };
-#                         my $gap = $gap_start . '-' . $gap_end;
-#                         push @gaps, $gap;
-
-#                         $gap_start    = undef;
-#                         $contig_start = $b_count;
-#                     }
-#                 }
-#             }
-#         }
-
-#         # Output last contig from last contig_start position to scaffold end if it is longer than
-#         # 200 bp and we are running in submission mode, otherwise remove the last gap to truncate the scaffold...
-#         if (    ( ( $scaffold_end - $contig_start ) > 200 )
-#              || ( $mode eq 'draft' )
-#              || $contig_count == 0 )
-#         {
-#             my $contig_id = sprintf( "contig_%06s", ++$contig_count );
-#             my $contig_seq =
-#               Bio::Seq->new( -display_id => $contig_id,
-#                              -seq        => join( '', @bases[ $contig_start .. $#bases ] ) );
-#             $contig_outIO->write_seq($contig_seq);
-#             $contigs{$contig_id} = {
-#                                      'coords' => $contig_start . '-' . $scaffold_end,
-#                                      length   => $contig_seq->length()
-#                                    };
-#         }
-#         else {
-#             pop @gaps;
-#         }
-
-#         $gaps{$scaffold_id} = \@gaps;
-
-#         my $scaffold_part = 0;
-
-#         #write AGP output and new scaffolds fasta file
-#         unlink("contigs.fasta.index") if ( -e "contigs.fasta.index" );
-#         my $contig_db = Bio::DB::Fasta->new("contigs.fasta");
-#         my $scaffold_seq;
-
-#         my @contig_ids = map { $_->[0] }
-#           sort { $a->[1] <=> $b->[1] }
-#           map { [ $_, /(\d+)$/ ] } keys(%contigs);
-
-#         if ( $#contig_ids > -1 ) {
-#             for ( my $i = 0 ; $i <= $#contig_ids ; $i++ ) {
-#                 my $contig_id   = $contig_ids[$i];
-#                 my $contig_data = $contigs{$contig_id};
-#                 my $coords      = $contig_data->{'coords'};
-#                 my $length      = $contig_data->{'length'};
-
-#                 if ( $contig_id ne "" ) {
-#                     my $contig = $contig_db->get_Seq_by_id($contig_id);
-
-#                     my ( $contig_start, $contig_end ) = split( /-/, $coords );
-
-#                     print AGP "$scaffold_id\t"
-#                       . ( $contig_start + 1 ) . "\t"
-#                       . ( $contig_end + 1 ) . "\t"
-#                       . ++$scaffold_part
-#                       . "\tW\t$contig_id\t1\t$length\t+\n";
-#                     $scaffold_seq .= $contig->seq();
-#                     if ( $i < $#contig_ids ) {
-
-#                         my $gap = $gaps[$i];
-#                         my ( $gap_start, $gap_end ) = split( /-/, $gap );
-#                         my $gap_size = $gap_end - $gap_start;
-
-#                         print AGP "$scaffold_id\t"
-#                           . ( $gap_start + 1 )
-#                           . "\t$gap_end\t"
-#                           . ++$scaffold_part
-#                           . "\tN\t$gap_size\tscaffold\tyes\t$evidence\n";
-#                         $scaffold_seq .= 'N' x $gap_size;
-#                     }
-#                 }
-#             }
-#         }
-#         if ($scaffold_seq) {
-#             my $scaffold_seqobj = Bio::Seq->new( -display_id => $scaffold_id, -seq => $scaffold_seq );
-#             $scaffold_outIO->write_seq($scaffold_seqobj);
-#         }
-#     }
-
-#     close AGP     or warn "Error closring $tmpdir/scaffolds.agp: $!";
-#     chdir $tmpdir or die "Error chdiring to $tmpdir: $!";
-
-#     unlink "scaffolds.fasta" or die "Error removing scaffolds.fasta: $!";
-#     unlink "contigs.fasta"   or die "Error removing contigs.fasta; $!";
-
-#     symlink( "agp/scaffolds.agp", "scaffolds.agp" )
-#       or die "Error creating scaffolds.agp symlink: $!";
-#     symlink( "agp/scaffolds.fasta", "scaffolds.fasta" )
-#       or die "Error creating scaffolds.fasta symlink: $!";
-#     symlink( "agp/contigs.fasta", "contigs.fasta" )
-#       or die "Error creating contigs.fasta symlink: $!";
-
-#     return ( \%gaps );
-
-# }
-
-# ######################################################################
-# #
-# # run_prokka
-# #
-# # generates annotation on the assembly using prokka
-# #
-# # required parameters: $ (tmpdir)
-# #		       $ (genus)
-# #                      $ (species)
-# #                      $ (strain)
-# #                      $ (locustag)
-# #                      $ (centre)
-# #
-# # returns            : $ (0)
-# #
-# ######################################################################
-
-# sub run_prokka {
-
-#     my $tmpdir   = shift;
-#     my $genus    = shift;
-#     my $species  = shift;
-#     my $strain   = shift;
-#     my $locustag = shift;
-#     my $centre   = shift;
-
-#     message("Starting PROKKA...");
-
-#     #use scaffolds if we have them, otherwise contigs....
-#     my $seqs;
-#     if ( -e "$tmpdir/scaffolds.fasta" ) {
-#         $seqs = "$tmpdir/scaffolds.fasta";
-#     }
-#     else {
-#         $seqs = "$tmpdir/contigs.fasta";
-#     }
-
-#     my $type = $1 if ( $seqs =~ /\/(contigs|scaffolds).fasta/ );
-
-#     my $cmd = "prokka --addgenes --outdir $tmpdir/prokka --prefix prokka ";
-#     $cmd .= "--genus $genus " if ( $genus && ( $genus ne "unknown_genus" ) );
-#     $cmd .= "--species $species "
-#       if ( $species && ( $species ne "unknown_species" ) );
-#     $cmd .= "--strain $strain "
-#       if ( $strain && ( $strain ne "unknown_strain" ) );
-#     $cmd .= "--locustag $locustag " if ($locustag);
-#     $cmd .= "--centre $centre "     if ($centre);
-#     $cmd .= " $seqs ";
-#     $cmd .= " >prokka.log 2>&1";
-
-#     system($cmd);
-#     if ( $? != 0 ) { print "prokka exited with $?...\n" }
-
-#     # my $inIO        = Bio::SeqIO->new( -file => "$tmpdir/prokka/prokka.gbf",     -format => 'genbank' );
-#     my $inIO        = Bio::SeqIO->new( -file => "$tmpdir/prokka/prokka.gbk",     -format => 'genbank' );
-#     my $embl_outIO  = Bio::SeqIO->new( -file => ">$tmpdir/prokka/prokka.embl",   -format => 'embl' );
-#     my $fasta_outIO = Bio::SeqIO->new( -file => ">$tmpdir/prokka/${type}.fasta", -format => 'fasta' );
-
-#     # something is losing the scaffold/contig naming so needs to be regenerated...
-#     # at least ordering should be conserved
-#     my $count = 0;
-#     while ( my $seq = $inIO->next_seq() ) {
-#         my $label;
-#         ( $type eq 'scaffolds' ) ? ( $label = 'scaffold' ) : ( $label = 'contig' );
-#         my $id = sprintf( "${label}_%06s", ++$count );
-#         $seq->display_id($id);
-#         $seq->accession($id);
-#         $embl_outIO->write_seq($seq);
-#         $fasta_outIO->write_seq($seq);
-#     }
-
-#     chdir $tmpdir or die "Error chdiring to $tmpdir: $!";
-#     unlink "scaffolds.fasta" or die "Error removing scaffolds.fasta: $!" if ( $type eq 'scaffolds' );
-
-#     symlink( "prokka/prokka.embl", "$type.embl" )
-#       or die "Error creating $type.embl symlink: $!";
-#     symlink( "prokka/scaffolds.fasta", "scaffolds.fasta" )
-#       or die "Error creating scaffolds.fasta symlink: $!"
-#       if ( $type eq 'scaffolds' );
-
-#     return (0);
-# }
-
-# ######################################################################
-# #
-# # amosvalidate
-# #
-# # Uses abyss's abyss-samtoafg script to convert spades sam and contigs
-# # to an amos bank
-# #
-# # required params: $ (tmpdir)
-# #                  $ (insert size)
-# #                  $ (insert size stddev)
-# #
-# # returns        : $ (0)
-# #
-# ######################################################################
-
-# sub amosvalidate {
-
-#     my $tmpdir        = shift;
-#     my $insert_size   = shift;
-#     my $insert_stddev = shift;
-
-#     mkdir "$tmpdir/amos" or die "Error creating $tmpdir/amos: $!";
-#     chdir "$tmpdir/amos" or die "Error running chdir $tmpdir/amos: $!";
-
-#     my $seq_file;
-#     ( -e "$tmpdir/scaffolds.fasta" ) ? ( $seq_file = "scaffolds.fasta" ) : ( $seq_file = "contigs.fasta" );
-
-#     open SEQS, "$tmpdir/$seq_file"
-#       or die "Error opening $tmpdir/$seq_file: $!";
-#     open OUT, ">$tmpdir/amos/$seq_file"
-#       or die "Error opening $tmpdir/amos/contigs.fasta: $!";
-
-#     my $first_line = 0;    #kludgetastic...
-#     while ( my $line = <SEQS> ) {
-#         if ( $line =~ /^>/ ) {
-#             if ( $first_line > 0 ) {
-#                 print OUT "\n$line";
-#             }
-#             else {
-#                 print OUT "$line";
-#                 $first_line++;
-#             }
-#         }
-#         else {
-#             chomp $line;
-#             print OUT $line;
-#         }
-#     }
-#     close SEQS;
-#     close OUT;
-
-#     message("Converting to amos bank...");
-#     my $cmd = $config->{'sam2afg'};
-#     $cmd .= " -m $insert_size -s $insert_stddev " if ( $insert_size && $insert_stddev );
-#     $cmd .= " $tmpdir/amos/${seq_file} $tmpdir/bwa/${seq_file}.sam";
-#     $cmd .= " > amos.afg";
-
-#     system($cmd) == 0 or die "Error executing $cmd: $!";
-
-#     $cmd = $config->{'amos_dir'}
-#       . "bank-transact -cb $tmpdir/amos/assembly.bnk -m $tmpdir/amos/amos.afg  > $tmpdir/amos/bank-transact.log 2>&1";
-#     system($cmd) == 0 or die "Error executing $cmd: $!";
-
-#     message("Running amosvalidate");
-
-#     # read amosvalidate script and comment out '4xx' lines, which run SNP checks and are extreeeeemly slow....
-#     open AMOSVALIDATE, $config->{'amos_dir'} . "/amosvalidate"
-#       or die "Error opening " . $config->{'amos_dir'} . "/amosvalidate: $!";
-#     open SCRIPT, ">$tmpdir/amos/amosvalidate" or die "Error opening $tmpdir/amos/amosvalidate: $!";
-#     while ( my $line = <AMOSVALIDATE> ) {
-#         $line =~ s/^4/#4/;
-#         print SCRIPT $line;
-#     }
-#     close AMOSVALIDATE;
-#     close SCRIPT;
-#     chmod 0755, "$tmpdir/amos/amosvalidate" or die "Error running chmod $tmpdir/amos/amosvalidate: $!";
-
-#     $cmd = "$tmpdir/amos/amosvalidate $tmpdir/amos/assembly.bnk > $tmpdir/amos/amosvalidate.log 2>&1";
-#     system($cmd) == 0 or die "Error executing $cmd: $!";
-
-#     chdir $tmpdir or die "Error chainging to $tmpdir: $!";
-#     return (0);
-
-# }
-
-
-
-
-
-
-
-# ######################################################################
-# #
-# # run_varcaller
-# #
-# # Carries out variant calling using requested variant caller
-# #
-# # required params: $ (tmpdir)
-# #                  $ (varcall)
-# #                  $ (no. threads)
-# #                  $ (read length)
-# #
-# # returns        : $ (0)
-# #
-# ######################################################################
 
 # sub run_varcaller {
 
@@ -3548,260 +3572,151 @@ scaffold_type argument is used to determine the linkage evidence type
 
 # }
 
-# ######################################################################
-# #
-# # get_contig_to_iid_mapping
-# #
-# # generates a mapping of contig ids to amos IID
-# #
-# # required params: $ (tmpdir)
-# #
-# # returns        : $ (0)
-# #
-# ######################################################################
 
-# sub get_contig_to_iid_mapping {
 
-#     my $tmpdir = shift;
-#     message("Extracting contig -> AMOS iid mapping...");
 
-#     my $amos_dir = $config->{'amos_dir'};
-#     my $mapping =
-# `$amos_dir/bank-report -i -p -b $tmpdir/amos/assembly.bnk CTG 2> /dev/null|cut -f2,3 > $tmpdir/amos/ctg_to_iid.txt`;
 
-#     return (0);
-# }
+def merge_annotations():
+    """
+    updates annotated generated embl file with amosvalidate results
+    and gap locations
 
-# ######################################################################
-# #
-# # summarise_amosvalidate
-# #
-# # postprocesses amosvalidate outputs to make more readily digestible
-# #
-# # required params: $ (tmpdir)
-# #
-# # returns        : $ ($ - hashref to parsed results)
-# #
-# ######################################################################
+    required parameters: $ (tmpdir)
+                     $ (hashref of amosvalidate results, keyed on contigid)
+                     $ (hashref of scaffold gaps)
+                     $ (genus)
+                     $ (species)
+                     $ (strain)
 
-# sub summarise_amosvalidate {
+    returns            : $ (none)
+    """
 
-#     my $tmpdir = shift;
+    logger.info("Merging annotations");
+    merge_dir = os.path.join(args.tmp_dir, "annotation_merge")
+    os.makedirs(merge_dir)
+    filename = None
+    new_embl = os.path.join(merge_dir, os.path.basename(results.current_embl))
+    with open(results.current_embl, "r") as IO, open(new_embl, "w") as outIO:
 
-#     message("processing amosvalidate results...");
+        amos_colours = {
+            'CE_STRETCH'     :  '0 128 128',
+            'CE_COMPRESS'    :  '0 128 128',
+            'HIGH_SNP'       :  '128 128 0',
+            'HIGH_READ_CVG'  :  '255 0 0',
+            'HIGH_KMER'      :  '255 0 0',
+            'KMER_COV'       :  '255 0 0',
+            'HIGH_OUTIE_CVG' :  '255 0 0',
+            'HIGH_NORMAL_CVG':  '255 0 0',
+            'LOW_GOOD_CVG'   :  '0 0 255',
+        }
 
-#     my $amosvalidate = $tmpdir . "/amos";
-#     my $iid_mapping  = $tmpdir . "/amos/ctg_to_iid.txt";
-#     my %results;
+        amos_notes = {
+            'CE_STRETCH'      : 'Stretched mate-pairs: Possible repeat copy number expansion or other insertion',
+            'CE_COMPRESS'     :  'Compressed mate-pairs; Possible collapsed repeat',
+            'HIGH_SNP'        :  'High SNP frequency',
+            'HIGH_READ_CVG'   :'High read coverage; Possible collapsed repeat',
+            'HIGH_KMER'       :  'High frequency of normalized kmers: Possible collapsed repeat',
+            'KMER_COV'        :'High frequency of normalized kmers: Possible collapsed repeat',
+            'LOW_GOOD_CVG'    : 'Low coverage',
+            'HIGH_NORMAL_CVG' : 'High coverage',
+            'HIGH_OUTIE_CVG'  : 'High outie coverage',
+                     }
+        for embl_record in SeqIO.parse(IO, "embl"):
+            orig_id = embl_record.id
+            embl_record.id = orig_id
+            embl_record.accession_number = orig_id
+            embl_record.division = 'PRO'
+            embl_record.molecule = 'genomic DNA'
+            embl_record.is_circular = 1
+            embl_record.date = arrow.now().format("DD-MMM-YYYY").upper()
+            embl_record.description = "{0} {1} {2} genome scaffold".format(
+                args.genus, args.species, args.strain)
 
-#     # Read Contig->iid mapping into a hash
-#     my %contig_to_iid;
-#     open IID, $iid_mapping or die "Error opening $iid_mapping: $!";
-#     while (<IID>) {
-#         my ( $contig, $iid ) = split(/\s+/);
-#         chomp $iid;
-#         $contig_to_iid{$iid} = $contig;
-#         $results{$contig}    = [];
-#     }
-#     close IID;
+            embl_record.comment = "Assembled using BugBuilder from http://github.com/jamesabbott/BugBuilder"
+            # remove source entries from feature table
+            features = [x for x in  embl_record.features]
+            # retrieve amosvalidate results for this contig and sort by start co-ordinate...
+"""
+            if ($amosvalidate_results) {
+                    my @amos_features =
+                    map  { $_->[0] }
+                    sort { $a->[1] <=> $b->[1] }
+                    map  { [ $_, $_->{'start'} ] } @{ $amosvalidate_results->{$orig_id} };
 
-#     opendir AMOSVALIDATE, $amosvalidate
-#       or die "Error opening $amosvalidate: $!";
-#     my @outputs = grep /feat$/, readdir AMOSVALIDATE;
-#     close AMOSVALIDATE;
+                foreach my $feature (@amos_features) {
+                    if ( $feature->{'start'} != $feature->{'end'} ) {
+                            my $colour = $amos_colours{ $feature->{'type'} };
+                            my $note   = $amos_notes{ $feature->{'type'} };
+                            my $feature =
+                            new Bio::SeqFeature::Generic(
+                                -start       => $feature->{'start'} + 1,
+                                -end         => $feature->{'end'},
+                                -primary_tag => 'misc_feature',
+                                -tag         => {
+                                    'note'   => $note,
+                                    'colour' => $colour,
+                                }
+                            );
+                            push @features, $feature;
+####
+        if ($gaps) {
+            foreach my $scaffold ( keys(%$gaps) ) {
+                if ( $orig_id eq $scaffold ) {
+                    my $scaffold_gaps = $gaps->{$scaffold};
+                    foreach my $gap (@$scaffold_gaps) {
+                        my ( $gap_start, $gap_end ) = split( /-/, $gap );
+                        my $est_length;
+                        if ( $gap_end - $gap_start == 100 ) {
+                            $est_length = 'unknown';
+                        }
+                        else {
+                            $est_length = $gap_end - $gap_start;
+                        }
+                        my $feature =
+                          new Bio::SeqFeature::Generic(
+                                          -start       => $gap_start,
+                                          -end         => $gap_end,
+                                          -primary_tag => 'assembly_gap',
+                                          -tag => { 'estimated_length' => $est_length, 'gap_type' => 'within_scaffold' }
+                          );
+                        push( @features, $feature );
+                    }
+                }
+            }
+        }
 
-#     open ALL, "$amosvalidate/assembly.all.feat" or die "Could not open $amosvalidate/assembly.all.feat: $!";
-#     while (<ALL>) {
-#         my @fields    = split(/\s+/);
-#         my $contig_id = $contig_to_iid{ $fields[0] };
-#         my $start     = $fields[2];
-#         my $end       = $fields[3];
-#         my $type      = $fields[4];
-#         my $res_arr   = $results{$contig_id};
-#         $start = 0 if ( $start < 0 );    #no idea how it ends up with a negative start...but it does...
-#         push @$res_arr, { 'start' => $start, 'end' => $end, type => $type, };
-#         $results{$contig_id} = $res_arr;
-#     }
-#     close ALL;
-#     return ( \%results );
-# }
-# ######################################################################
-# #
-# # merge_annotations
-# #
-# # updates annotated generated embl file with amosvalidate results
-# # and gap locations
-# #
-# # required parameters: $ (tmpdir)
-# #                      $ (hashref of amosvalidate results, keyed on contigid)
-# #                      $ (hashref of scaffold gaps)
-# #                      $ (genus)
-# #                      $ (species)
-# #                      $ (strain)
-# #
-# # returns            : $ (none)
-# #
-# ######################################################################
+        my $source =
+          new Bio::SeqFeature::Generic(
+                                        -start       => 1,
+                                        -end         => $embl_record->length(),
+                                        -primary_tag => 'source',
+                                        -tag         => {
+                                                  'organism' => "$genus $species $strain",
+                                                  'strain'   => $strain
+                                                }
+                                      );
 
-# sub merge_annotations {
+        $embl_record->add_SeqFeature($source);
+        @features = map { $_->[0] }
+          sort { $a->[1] <=> $b->[1] }
+          map { [ $_, $_->start() ] } @features;
 
-#     my $tmpdir               = shift;
-#     my $amosvalidate_results = shift;
-#     my $gaps                 = shift;
-#     my $genus                = shift;
-#     my $species              = shift;
-#     my $strain               = shift;
+        foreach my $feat (@features) {
+            if ( $feat->primary_tag() ne 'source' ) {
+                $embl_record->add_SeqFeature($feat);
+            }
+        }
 
-#     message("Merging annotations");
+        $outIO->write_seq($embl_record);
+    }
 
-#     mkdir "$tmpdir/annotation_merge"
-#       or die "Error creating $tmpdir/annotation_merge: $!";
-#     chdir "$tmpdir/annotation_merge"
-#       or die "Error chdiring to $tmpdir/annotation_merge: $!";
-#     my $filename;
+    chdir $tmpdir      or die "Error chdiring to $tmpdir: $!";
+    unlink "$filename" or die "Error unlinking $filename: $!";
+    symlink( "annotation_merge/$filename", "$filename" )
+      or die "Error creating $filename symlink: $!";
 
-#     ( -e "$tmpdir/scaffolds.embl" ) ? ( $filename = "scaffolds.embl" ) : ( $filename = "contigs.embl" );
-
-#     my $IO = Bio::SeqIO->new( -format => 'embl',
-#                               -file   => "$tmpdir/$filename" );
-
-#     my $outIO =
-#       Bio::SeqIO->new( -format => 'embl',
-#                        -file   => ">$filename" );
-
-#     my %amos_colours = (
-#                          'CE_STRETCH'      => '0 128 128',
-#                          'CE_COMPRESS'     => '0 128 128',
-#                          'HIGH_SNP'        => '128 128 0',
-#                          'HIGH_READ_CVG'   => '255 0 0',
-#                          'HIGH_KMER'       => '255 0 0',
-#                          'KMER_COV'        => '255 0 0',
-#                          'HIGH_OUTIE_CVG'  => '255 0 0',
-#                          'HIGH_NORMAL_CVG' => '255 0 0',
-#                          'LOW_GOOD_CVG'    => '0 0 255',
-#                        );
-
-#     my %amos_notes = (
-#                        'CE_STRETCH' => 'Stretched mate-pairs: Possible repeat copy number expansion or other insertion',
-#                        'CE_COMPRESS'     => 'Compressed mate-pairs; Possible collapsed repeat',
-#                        'HIGH_SNP'        => 'High SNP frequency',
-#                        'HIGH_READ_CVG'   => 'High read coverage; Possible collapsed repeat',
-#                        'HIGH_KMER'       => 'High frequency of normalized kmers: Possible collapsed repeat',
-#                        'KMER_COV'        => 'High frequency of normalized kmers: Possible collapsed repeat',
-#                        'LOW_GOOD_CVG'    => 'Low coverage',
-#                        'HIGH_NORMAL_CVG' => 'High coverage',
-#                        'HIGH_OUTIE_CVG'  => 'High outie coverage',
-#                      );
-
-#     while ( my $embl_record = $IO->next_seq() ) {
-#         my $orig_id = $embl_record->display_id();
-#         $embl_record->display_id("$orig_id");
-#         $embl_record->accession_number("$orig_id");
-#         $embl_record->division('PRO');
-#         $embl_record->molecule('genomic DNA');
-#         $embl_record->is_circular(1);
-
-#         $embl_record->add_date( get_embl_date() );
-#         $embl_record->description("$genus $species $strain genome scaffold");
-
-#         my @comments = $embl_record->annotation->get_Annotations('comment');
-#         my $annot    = new Bio::Annotation::Collection;
-#         my $comment  = Bio::Annotation::Comment->new;
-#         $comment->text("Assembled using BugBuilder from http://github.com/jamesabbott/BugBuilder");
-#         push @comments, $comment;
-#         foreach my $c (@comments) {
-#             $annot->add_Annotation( 'comment', $c );
-#         }
-#         $embl_record->annotation($annot);
-
-#         # remove source entries from feature table
-#         my @features = $embl_record->get_SeqFeatures();
-#         $embl_record->flush_SeqFeatures();
-
-#         # retrieve amosvalidate results for this contig and sort by start co-ordinate...
-#         if ($amosvalidate_results) {
-#             my @amos_features =
-#               map  { $_->[0] }
-#               sort { $a->[1] <=> $b->[1] }
-#               map  { [ $_, $_->{'start'} ] } @{ $amosvalidate_results->{$orig_id} };
-
-#             foreach my $feature (@amos_features) {
-#                 if ( $feature->{'start'} != $feature->{'end'} ) {
-#                     my $colour = $amos_colours{ $feature->{'type'} };
-#                     my $note   = $amos_notes{ $feature->{'type'} };
-#                     my $feature =
-#                       new Bio::SeqFeature::Generic(
-#                                                     -start       => $feature->{'start'} + 1,
-#                                                     -end         => $feature->{'end'},
-#                                                     -primary_tag => 'misc_feature',
-#                                                     -tag         => {
-#                                                               'note'   => $note,
-#                                                               'colour' => $colour,
-#                                                             }
-#                                                   );
-#                     push @features, $feature;
-#                 }
-#             }
-#         }
-
-#         if ($gaps) {
-#             foreach my $scaffold ( keys(%$gaps) ) {
-#                 if ( $orig_id eq $scaffold ) {
-#                     my $scaffold_gaps = $gaps->{$scaffold};
-#                     foreach my $gap (@$scaffold_gaps) {
-#                         my ( $gap_start, $gap_end ) = split( /-/, $gap );
-#                         my $est_length;
-#                         if ( $gap_end - $gap_start == 100 ) {
-#                             $est_length = 'unknown';
-#                         }
-#                         else {
-#                             $est_length = $gap_end - $gap_start;
-#                         }
-#                         my $feature =
-#                           new Bio::SeqFeature::Generic(
-#                                           -start       => $gap_start,
-#                                           -end         => $gap_end,
-#                                           -primary_tag => 'assembly_gap',
-#                                           -tag => { 'estimated_length' => $est_length, 'gap_type' => 'within_scaffold' }
-#                           );
-#                         push( @features, $feature );
-#                     }
-#                 }
-#             }
-#         }
-
-#         my $source =
-#           new Bio::SeqFeature::Generic(
-#                                         -start       => 1,
-#                                         -end         => $embl_record->length(),
-#                                         -primary_tag => 'source',
-#                                         -tag         => {
-#                                                   'organism' => "$genus $species $strain",
-#                                                   'strain'   => $strain
-#                                                 }
-#                                       );
-
-#         $embl_record->add_SeqFeature($source);
-#         @features = map { $_->[0] }
-#           sort { $a->[1] <=> $b->[1] }
-#           map { [ $_, $_->start() ] } @features;
-
-#         foreach my $feat (@features) {
-#             if ( $feat->primary_tag() ne 'source' ) {
-#                 $embl_record->add_SeqFeature($feat);
-#             }
-#         }
-
-#         $outIO->write_seq($embl_record);
-#     }
-
-#     chdir $tmpdir      or die "Error chdiring to $tmpdir: $!";
-#     unlink "$filename" or die "Error unlinking $filename: $!";
-#     symlink( "annotation_merge/$filename", "$filename" )
-#       or die "Error creating $filename symlink: $!";
-
-# }
-
+}
+"""
 # ######################################################################
 # #
 # # run_cgview
@@ -3848,163 +3763,4 @@ scaffold_type argument is used to determine the linkage evidence type
 #     symlink( "cgview/$outfile", "$outfile" ) or die "Error creating symlink: $!";
 
 #     return (0);
-# }
-
-
-# ######################################################################
-# #
-# #  Pretty formats a status message
-# #
-# #  requried params: $ (message to display)
-# #
-# #  returns        : $ (0)
-# #
-# ######################################################################
-
-# sub message {
-
-#     my $message = shift;
-#     print "\n\n", "*" x 80, "\n";
-#     print "*",    " " x 78, "*\n";
-#     print "* $message", " " x ( 77 - length($message) ), "*\n";
-#     print "*", " " x 78, "*\n";
-#     print "*" x 80, "\n\n";
-
-# }
-
-# ######################################################################
-# #
-# # get_embl_date
-# #
-# # returns the current date in EMBL style...
-# #
-# # required params: none
-# #
-# # returns: $ (formatted date)
-# #
-# ######################################################################
-
-# sub get_embl_date {
-
-#     my @months = qw( JAN FEB MAR APR MAY JUN JUL AUG SEP OCT NOV DEC );
-#     my @vals   = ( localtime() )[ 3 .. 5 ];
-#     my $date   = $vals[0] . '-' . $months[ $vals[1] ] . '-' . ( 1900 + $vals[2] );
-
-#     return ($date);
-
-# }
-
-# ######################################################################
-# #
-# # parse_fasta_id
-# #
-# # attempt to parse an ID from the reference fasta file. Different fasta formats
-# # make this tricky, so we will specifically parse plain IDs, ENA and NCBI
-# # formats
-# #
-# # required params: $ (fasta file)
-# #
-# # returns: $ (hashref of parsed sequence IDs)=
-# #
-# ######################################################################
-
-# sub parse_fasta_id {
-
-#     my $file = shift;
-#     my $IO = Bio::SeqIO->new( -format => 'fasta', -file => $file );
-#     my @seq_ids;
-#     while ( my $seq = $IO->next_seq() ) {
-#         my $id = $seq->display_id();
-#         if ( $id =~ /\|/ ) {
-#             my @fields = split( /\|/, $id );
-#             if ( $fields[0] eq 'ENA' ) {
-#                 push( @seq_ids, $fields[1] );
-#             }
-#             elsif ( $fields[0] eq 'gi' ) {
-#                 push( @seq_ids, $fields[3] );
-#             }
-#         }
-#         else {
-#             if ( $id =~ />([^ ])/ ) {
-#                 push( @seq_ids, $1 );
-#             }
-#         }
-#     }
-#     return (@seq_ids);
-# }
-
-# ######################################################################
-# #
-# # parse_ref_id
-# #
-# # Similar to parse_fasta_id above, but works directly on a passed ID
-# #
-# # required params: $ (id)
-# #
-# # returns: $ (id)
-# #
-# ######################################################################
-
-# sub parse_ref_id {
-
-#     my $id = shift;
-#     my $parsed_id;
-#     if ( $id =~ /\|/ ) {
-#         my @fields = split( /\|/, $id );
-#         if ( $fields[0] eq 'ENA' ) {
-#             $parsed_id = $fields[1];
-#         }
-#         elsif ( $fields[0] eq 'gi' ) {
-#             $parsed_id = $fields[3];
-#         }
-#     }
-#     else {
-#         if ( $id =~ />([^ ])/ ) {
-#             $parsed_id = $1;
-#         }
-#         else {
-#             $parsed_id = $id;
-#         }
-#     }
-#     return ($parsed_id);
-# }
-
-# ######################################################################
-# #
-# # show_tools
-# #
-# # Reports on configured assemblers, scaffolders and platforms
-# #
-# # Required params: $ (config hash)
-# #
-# # Returns:         $ ()
-# #
-# ######################################################################
-
-# sub show_tools {
-
-#     my $config = shift;
-
-#     my @available_assemblers  = map { $_->{'name'} } @{ $config->{'assemblers'} };
-#     my @available_scaffolders = map { $_->{'name'} } @{ $config->{'scaffolders'} };
-#     my @available_mergers     = map { $_->{'name'} } @{ $config->{'merge_tools'} };
-#     my @available_finishers   = map { $_->{'name'} } @{ $config->{'finishers'} };
-#     my @platforms             = map { $_->{'platforms'} } @{ $config->{'assembler_categories'} };
-
-#     my %available_platforms;
-#     foreach my $platform (@platforms) {
-#         foreach my $p (@$platform) {
-#             $available_platforms{$p}++;
-#         }
-#     }
-#     my @available_platforms = sort( keys(%available_platforms) );
-
-#     print "\nWelcome to BugBuilder\n\n";
-#     print "Available assemblers: " . join( ", ",                @available_assemblers ),
-#       "\n" . "Available scaffolders: " . join( ", ",            @available_scaffolders ),
-#       "\n" . "Available assembly merging tools: " . join( ", ", @available_mergers ),
-#       "\n" . "Available finishing tools: " . join( ", ",        @available_finishers ),
-#       "\n" . "Configured platforms: " . join( ", ", @available_platforms ), "\n\n";
-
-#     return ();
 # }
