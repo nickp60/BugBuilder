@@ -330,6 +330,7 @@ use strict;
 
 import argparse
 import os
+import string
 import hashlib
 import re
 import yaml
@@ -633,6 +634,17 @@ def get_args():  # pragma: no cover
     optional.add_argument("--memory", dest='memory', action="store",
                           help="how much memory to use",
                           type=int, default=4)
+    optional.add_argument("--stages", dest='stages', action="store",
+                          help="how much memory to use:" +
+                          "qQ = QC reads" +
+                          "tT = trim reads" +
+                          "dD = downsample reads" +
+                          "aA = run assembler (s)" +
+                          "bB = break contig at the origin" +
+                          "sS = scaffold the contigs " +
+                          "fF = run polishing finisher on the assembly"+
+                          "pP = add annotations with prokka",
+                          type=str, default="qtabsfp")
     optional.add_argument("-v", "--verbosity", dest='verbosity',
                           action="store",
                           default=2, type=int, choices=[1, 2, 3, 4, 5],
@@ -737,6 +749,34 @@ def match_assembler_args(args):
         for i, v in enumerate(args.assemblers):
             assembler_list.append([v, None])
     return assembler_list
+
+
+def parse_stages(args, reads_ns, logger):
+    """ pare the "stages" arg to determine the steps to be performed
+    We want to be able to run all the stages individualy if possible
+    """
+    stages = [
+        ["q", "QC reads", "QC"],
+        ["t", "trim reads", "TRIM"],
+        ["d", "downsample reads", "DOWNSAMPLE"],
+        ["a", "run assembler(s)", "ASSEMBLE"],
+        ["b", "break contig at the origin ", "BREAK"],
+        ["s", "scaffold the contigs", "SCAFFOLD"],
+        ["f", "run genome polishing", "FINISH"],
+        ["v", "run variant caller", "VARCALL"],
+        ["p", "add annotations with prokka", "ASSEMBLE"]
+    ]
+    allowed= stages.keys()
+    nonos = [x for x in string.ascii_lowercase if x not in allowed]
+    illegal_in_arg = [letter for letter in args.stages if letter not in nonos]
+    if len(illegal_in_arg) > 0:
+        logger.error("%s is not a valid stage; see --help",
+                     " and ".join(illegal_in_arg))
+    logger.debug("Stages to be run:")
+    for flag, message, attribute in stages:
+        if flag in args.stages:
+            setattr(reads_ns, attribute, True)
+            logger.debug(message)
 
 
 def check_files_present(args):
@@ -2871,7 +2911,7 @@ def run_prokka(config, args, results, logger):
         prokka_dir, #1
         args.genus,#2
         args.species,#3
-         args.strain,#4
+        args.strain,#4
         args.locustag,#5
         args.centre,#6
         seqs)
@@ -3070,6 +3110,7 @@ def main(args=None, logger=None):
     logger.debug(config)
     # lets not be hasty
     check_args(args, config)
+
     setup_tmp_dir(args, output_root=args.outdir, logger=logger)
     # if args.reference is None:
     #     reference = None
@@ -3085,36 +3126,43 @@ def main(args=None, logger=None):
     reads_ns  = assess_reads(args=args, config=config,
                              platform=args.platform, logger=logger)
     logger.debug(reads_ns)
+    # determine which steps we will be doing
+    parse_stages(args, reads_ns, logger)
 
     logger.info("Determining if a reference is needed")
     check_ref_needed(args=args, lib_type=reads_ns.lib_type)
 
     logger.info("Preparing config and tools")
     tools = select_tools(args, config=config, reads_ns=reads_ns, logger=logger)
-
+    #-------------------------   QC
     logger.debug("Determining if fastqc will be run")
-    if not args.skip_fastqc and config.fastqc is not None:
-        logger.info("Running fastqc on reads")
-        run_fastqc(reads_ns, args, logger=logger)
-    else:
-        logger.info("Skipping fastqc")
+    if reads_ns.QC:
+        if  config.fastqc is not None:
+            logger.info("Running fastqc on reads")
+            run_fastqc(reads_ns, args, logger=logger)
+        else:
+            logger.info("Skipping fastqc, as no executable is in PATH")
 
-    logger.debug("Ensuring appropriate trim length")
-    args.trim_length = check_and_set_trim_length(reads_ns, args, logger)
+    #-------------------------- TRIM
+    if reads_ns.TRIM:
+        logger.debug("Ensuring appropriate trim length")
+        args.trim_length = check_and_set_trim_length(reads_ns, args, logger)
+        logger.debug("Determining whether to perfrom trimming")
+        if reads_ns.lib_type != "long" and not args.skip_trim:
+            logger.info("Trimming reads based on quality")
+            quality_trim_reads(args, config, reads_ns, logger)
 
-    logger.debug("Determining whether to perfrom trimming")
-    if reads_ns.lib_type != "long" and not args.skip_trim:
-        logger.info("Trimming reads based on quality")
-        quality_trim_reads(args, config, reads_ns, logger)
+    #-------------------------- DOWNSAMPLE
+    if reads_ns.DOWNSAMPLE:
+        logger.debug("Determining whether to downsample")
+        if (reads_ns.coverage is not None and reads_ns.coverage > 100) and \
+           (assembler_needs_downsampling(tools) or args.downsample != 0):
+            logger.info("Downsampling reads to %dx coverage", args.downsample)
+            reads_ns.downsampled_coverage = downsample_reads(
+                args=args, reads_ns=reads_ns,
+                config=config, new_cov=args.downsample)
 
-    logger.debug("Determining whether to downsample")
-    if (reads_ns.coverage is not None and reads_ns.coverage > 100) and \
-       (assembler_needs_downsampling(tools) or args.downsample != 0):
-        logger.info("Downsampling reads to %dx coverage", args.downsample)
-        reads_ns.downsampled_coverage = downsample_reads(
-            args=args, reads_ns=reads_ns,
-            config=config, new_cov=args.downsample)
-
+    #-------------------------- Report status, pre assembly
     if args.fastq2 and args.reference:
         logger.info("Aligning reads to reference for determinging insert size")
         sorted_bam = align_reads(dirname="align", reads_ns=reads_ns,
@@ -3125,8 +3173,11 @@ def main(args=None, logger=None):
     # print out the run data we have so far
     log_read_and_run_data(reads_ns, args, results, logger)
 
+    #-------------------------- ASSEMBLE (and merge)
     # Righto, now the fun starts. First up, we assemble with 1 or 2 assemblers
     # (or check and read in results from a prior assembly)
+    # if not reads_ns.ASSEMBLE:
+
 
     if use_already_assembled(args):
         logger.info("Using provided assembly(s) results")
@@ -3175,19 +3226,23 @@ def main(args=None, logger=None):
     logger.debug("ARGS:")
     logger.debug(args.__dict__)
 
+    #-------------------------- BREAK at origin
+    if reads_ns.BREAK:
     #TODO why do we check scaffolder here?
     #  ensure that our reference is close enough before continuing
-    if args.scaffolder and args.reference:
-        results.ID_OK = check_id(args, contigs=results.current_contigs,
-                                 config=config,
-                                 logger=logger)
-    # if we have a reference, lets break the origin here, before scaffolding
-    if not args.skip_split_origin and results.ID_OK:
-        find_and_split_origin(args=args, config=config, results=results,
-                              tools=None, reads_ns=None, logger=logger)
+        if args.scaffolder and args.reference:
+            results.ID_OK = check_id(args, contigs=results.current_contigs,
+                                     config=config,
+                                     logger=logger)
+        # if we have a reference, lets break the origin here, before scaffolding
+        if not args.skip_split_origin and results.ID_OK:
+            find_and_split_origin(args=args, config=config, results=results,
+                                  tools=None, reads_ns=None, logger=logger)
+
+    #-------------------------- SCAFFOLD
     # right.  Now our results should contain contigs and/or scaffolds.
     # Lets do some scaffolding
-    if tools.scaffolder is not None:
+    if reads_ns.SCAFFOLD:
         if \
            (results.ID_OK and tools.scaffolder['linkage_evidence'] == "align-genus") or \
              not (results.ID_OK and tools.scaffolder['linkage_evidence'] == "paired-ends"):
@@ -3205,8 +3260,13 @@ def main(args=None, logger=None):
             find_origin(args,config, results,  tools, reads_ns, logger )
         if results.ID_OK:
             order_scaffolds(args, config, results, logger)
+
+    #-------------------------- FINISHING
+    if reads_ns.FINISH:
         if args.finisher and results.ID_OK:
             finish_assembly(args, config, reads_ns, results, logger=logger)
+
+    #-------------------------- ANNOTATE WITH PROKKA
     if results.current_scaffolds is not None:
         try:
             evidence = tools.scaffolder['linkage_evidence']
@@ -3215,6 +3275,8 @@ def main(args=None, logger=None):
         gaps = build_agp(args, results, reads_ns,
                          evidence=evidence,
                          logger=logger)
+
+
     # sequence stable from this point, only annotations altered
     #  it looks this this is attempting to be multiprocessed.
     #  for now, lets just do this in serial, as this cant save much time;
@@ -3249,7 +3311,8 @@ def main(args=None, logger=None):
             amosvalidate( tmpdir, insert_size, stddev )
             # get_contig_to_iid_mapping($tmpdir);
             amosvalidate_results = summarise_amosvalidate(tmpdir)
-    run_prokka(config, args, results, logger)
+    if reads_ns.ANNOTATE:
+        run_prokka(config, args, results, logger)
 
     amosvalidate_results = None
     # run_varcaller( tmpdir, varcall, threads, read_length_mean ) if (varcall)

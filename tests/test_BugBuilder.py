@@ -204,6 +204,18 @@ class test_BugBuilder(unittest.TestCase):
         self.assertEqual("sanger", reads_ns.encoding)
         self.assertEqual("long_illumina", reads_ns.lib_type)
 
+    def test_assess_reads_nanopore(self):
+        test_args = Namespace(
+            fastq1=self.fastq1, fastq2=self.fastq2, long_fastq=None,
+            de_fere_contigs=None, reference=self.ref_fasta, genome_size=0)
+        config = bb.parse_config(self.filled_config)
+        reads_ns = bb.assess_reads(args=test_args, config=config,
+                                platform="illumina", logger=logger)
+        self.assertEqual(9.996, reads_ns.coverage)
+        self.assertEqual("sanger", reads_ns.encoding)
+        self.assertEqual("long_illumina", reads_ns.lib_type)
+
+
     def test_check_ref_needed(self):
         test_args = Namespace(genome_size=0, reference=None)
         with self.assertRaises(ValueError):
@@ -455,8 +467,14 @@ class test_BugBuilder(unittest.TestCase):
         vc = bb.get_varcaller(args=test_args, config=config, paired=False)
         self.assertEqual("pilon", vc['name'])
 
-    def select_tools(args, config, reads_ns, logger):
-        pass
+    def test_select_tools(self):
+        config = bb.parse_config(self.filled_config)
+        test_args = Namespace(scaffolder="pilon",
+                              reference=self.ref_fasta)
+        tools = select_tools(args=test_args, config=config,
+                             reads_ns=Namespace(read_length_mean=45),
+                             logger=logger)
+        self.assertEqual("pilon", tools.scaffolder['name'])
 
     def test_assembler_needs_downsampling(self):
         assemblers = [x for x in bb.parse_config(self.filled_config).assemblers if \
@@ -464,14 +482,19 @@ class test_BugBuilder(unittest.TestCase):
         tools = Namespace(assemblers=assemblers)
         self.assertEqual(True, bb.assembler_needs_downsampling(tools))
 
-    def make_fastqc_cmd(args, outdir):
-        pass
-
     def run_fastqc(reads_ns, args, logger=None):
         pass
 
-    def make_sickle_cmd(args, reads_ns, out_dir):
-        pass
+    def test_make_sickle_cmd(self):
+        test_args = Namespace(
+            fastq1=self.fastq1,
+            reference=self.ref_fasta)
+        test_cmd = "sickle se -f {0} -1 sanger -q 10 -l 50 -o sickle".format(self.fastq1, trim_qv=10, trim_length=50,
+        self.assertEqual(
+            make_sickle_cmd(
+                args=test_args,
+                reads_ns=Namespace(encoding="sanger"), out_dir="sickle")
+            test_cmd)
 
     def quality_trim_reads(args, config, reads_ns, logger):
         pass
