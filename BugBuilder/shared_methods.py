@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
+import os
+import subprocess
+import sys
 
 def make_nucmer_delta_show_cmds(config, ref, query, out_dir, prefix="out", header=True):
     """results list of cmds
@@ -18,7 +20,6 @@ def make_nucmer_delta_show_cmds(config, ref, query, out_dir, prefix="out", heade
             config.show_coords, out_dir, prefix,
             "" if header else "-H ")
     coords_file = os.path.join(out_dir, prefix + ".coords")
-            "" if header else "-H ")
     return ([nucmer_cmd, delta_filter_cmd, show_coords_cmd], coords_file)
 
 def run_nucmer_cmds(cmds, logger):

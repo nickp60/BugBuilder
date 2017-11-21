@@ -335,7 +335,7 @@ import hashlib
 import re
 import yaml
 import sys
-import arrow
+import time
 import shutil
 import logging
 import statistics
@@ -350,7 +350,7 @@ from BugBuilder import __version__
 from Bio import SeqIO # , SearchIO
 from Bio.SeqRecord import SeqRecord
 from argparse import Namespace
-from .shared_methods import make_nucmer_delta_show_cmds
+from .shared_methods import make_nucmer_delta_show_cmds, run_nucmer_cmds
 from .run_sis import run as run_sis
 from .run_spades import run as run_spades
 from .run_abyss import run as run_abyss
@@ -524,7 +524,7 @@ def get_args():  # pragma: no cover
                           action="store",
                           help="args to pass to the scaffolder, in single quotes",
                           type=str)
-    optional.add_argument("--merge-method", dest='merge_method', action="store",
+    optional.add_argument("--merger", dest='merger', action="store",
                           help="merge method to use",
                           choices=parse_available("merge_tools"),
                           type=str)
@@ -571,10 +571,10 @@ def get_args():  # pragma: no cover
                           help="Mode to run in",
                           choices=["submission", "draft"], default="submission",
                           type=str)
-    optional.add_argument("--skip-fastqc", dest='skip_fastqc', action="store_true",
-                          help="size of the genome ", default=False)
-    optional.add_argument("--skip-trim", dest='skip_trim', action="store_true",
-                          help="Quality threshold for trimming reads ", default=False)
+    # optional.add_argument("--skip-fastqc", dest='skip_fastqc', action="store_true",
+    #                       help="size of the genome ", default=False)
+    # optional.add_argument("--skip-trim", dest='skip_trim', action="store_true",
+    #                       help="Quality threshold for trimming reads ", default=False)
     optional.add_argument("--trim-qv", dest='trim_qv', action="store",
                           help="quality threshold to trim  ", default=20,
                           type=int)
@@ -582,9 +582,9 @@ def get_args():  # pragma: no cover
                           help="min read klength to retain;" +
                           "50 (25 for reads <50bp)", default=50,
                           type=int)
-    optional.add_argument("--skip-split-origin", dest='skip_split_origin',
-                          action="store_true",
-                          help="split at origin ", default=False)
+    # optional.add_argument("--skip-split-origin", dest='skip_split_origin',
+    #                       action="store_true",
+    #                       help="split at origin ", default=False)
     optional.add_argument("--keepall", dest='keepall',
                           action="store_true",
                           help="keep all intermediate files ", default=False)
@@ -764,19 +764,20 @@ def parse_stages(args, reads_ns, logger):
         ["s", "scaffold the contigs", "SCAFFOLD"],
         ["f", "run genome polishing", "FINISH"],
         ["v", "run variant caller", "VARCALL"],
-        ["p", "add annotations with prokka", "ASSEMBLE"]
+        ["g", "gene call with prokka", "GENECALL"]
     ]
-    allowed= stages.keys()
-    nonos = [x for x in string.ascii_lowercase if x not in allowed]
-    illegal_in_arg = [letter for letter in args.stages if letter not in nonos]
+    allowed= [x[0] for x in stages]
+    illegal_in_arg = [letter for letter in args.stages if letter not in allowed]
     if len(illegal_in_arg) > 0:
-        logger.error("%s is not a valid stage; see --help",
-                     " and ".join(illegal_in_arg))
+        raise ValueError("%s is not a valid stage; see --help" %
+                         " and ".join(illegal_in_arg))
     logger.debug("Stages to be run:")
     for flag, message, attribute in stages:
         if flag in args.stages:
             setattr(reads_ns, attribute, True)
             logger.debug(message)
+        else:
+            setattr(reads_ns, attribute, False)
 
 
 def check_files_present(args):
@@ -958,7 +959,7 @@ def id_fastq_encoding(args, logger):
             else:
                 counter = counter - 1
                 continue
-    logger.info("Quality score Min: %d;  Max:  %d", min_val, max_val)
+    logger.debug("Quality score Min: %d;  Max:  %d", min_val, max_val)
     if min_val <= 59 and max_val <= 74:
         encoding = 'sanger'
     elif min_val > 59 and min_val < 64 and max_val < 104:
@@ -969,7 +970,7 @@ def id_fastq_encoding(args, logger):
         logger.error("Error detecting fastq encoding!")
         raise ValueError
         encoding = 'illumina'
-    logger.info("Read encoding detection summary:\n" + tabulate.tabulate(
+    logger.debug("Read encoding detection summary:\n" + tabulate.tabulate(
         [["min:", min_val],["max", max_val], ["encoding" , encoding]]))
     return encoding
 
@@ -1166,36 +1167,35 @@ def check_and_get_assemblers(args, config, reads_ns, logger):
 
 
 def get_scaffolder_and_linkage(args, config, paired, logger):
+    logger.debug(config.scaffolders)
     if args.scaffolder is None:
         return None, None
-    logger.debug(config.scaffolders)
     if args.scaffolder not in [k['name'].lower() for k in config.scaffolders]:
         raise ValueError("%s not an available scaffolder!" %args.scaffolder)
-    linkage_evidence = None
-    for conf_scaffolder in config.scaffolders:
-        if conf_scaffolder['name'].lower() == args.scaffolder:
-            if conf_scaffolder['linkage_evidence'] == "paired-ends" and not paired:
-                    raise ValueError(str(
-                        "%s requires paired reads, but you only specified " +
-                        "one fastq file.") % args.scaffolder)
-            elif "align" in conf_scaffolder['linkage_evidence'] and args.reference is None:
-                raise ValueError(str("%s requires a reference for alignment, " +
-                                     "but none is specified.") % args.scaffolder)
-            else:
-                pass
-            return (conf_scaffolder, conf_scaffolder['linkage_evidence'])
-
+    conf_scaffolder = [x for x in config.scaffolders if \
+                       x['name'].lower() == args.scaffolder][0]
+    if len(conf_scaffolder) == 0:
+        raise ValueError("%s no a configured scaffolder" % args.scaffolder)
+    if conf_scaffolder['linkage_evidence'] == "paired-ends" and not paired:
+        raise ValueError(str(
+            "%s requires paired reads, but you only specified " +
+            "one fastq file.") % args.scaffolder)
+    elif "align" in conf_scaffolder['linkage_evidence'] and args.reference is None:
+        raise ValueError(str("%s requires a reference for alignment, " +
+                             "but none is specified.") % args.scaffolder)
+    else:
+        return (conf_scaffolder, conf_scaffolder['linkage_evidence'])
 
 def get_merger_tool(args, config, paired):
     """must be used before scaffolder getter
     """
-    if args.merge_method is None:
+    if args.merger is None:
         return None
-    if args.merge_method not in [x['name'] for x in config.merge_tools]:
-        raise ValueError("%s not an available merge_method!" % args.merge_method)
+    if args.merger not in [x['name'] for x in config.merge_tools]:
+        raise ValueError("%s not an available merger!" % args.merger)
     linkage_evidence = None
     for merger_method in config.merge_tools:
-        if merger_method['name'] == args.merge_method:
+        if merger_method['name'] == args.merger:
             if merger_method['allow_scaffolding']:
                 args.scaffolder = None
             return merger_method
@@ -1252,7 +1252,7 @@ def select_tools(args, config, reads_ns, logger):
         args=args, config=config, reads_ns=reads_ns, logger=logger)
     logger.debug("get scaffolder")
     # merge tool can disqalify scaffolder, so it must be checked first
-    merge_tool = get_merger_tool(args, config, paired=reads_ns.paired)
+    merger = get_merger_tool(args, config, paired=reads_ns.paired)
     scaffolder_tool, linkage_evidence = get_scaffolder_and_linkage(
         args=args, config=config, paired=reads_ns.paired, logger=logger)
     logger.debug("getting merger")
@@ -1263,9 +1263,9 @@ def select_tools(args, config, reads_ns, logger):
     return Namespace(assemblers=assembler_tools,
                      scaffolder=scaffolder_tool,
                      scaffold_type=linkage_evidence,
-                     merge_method=args.merge_method,
+                     merger=args.merger,
                      finisher=finisher_tool,
-                     varcall=varcall_tool)
+                     varcaller=varcall_tool)
 
 
 def assembler_needs_downsampling(tools):
@@ -1406,6 +1406,8 @@ def quality_trim_reads(args, config, reads_ns, logger):
 
 
 def make_seqtk_ds_cmd(args, reads_ns, new_coverage, outdir, config, logger):
+    """
+    """
     assert isinstance(new_coverage, int), "new_coverage must be an int"
     frac = float(new_coverage / reads_ns.coverage)
     cmd_list = []
@@ -1448,6 +1450,8 @@ def downsample_reads(args, reads_ns, config, new_cov=100):
 
 def make_bwa_cmds(args, config, outdir, ref, reads_ns, fastq1, fastq2):
     """ map with bwa
+    we dont use the reference to args.fastq or args.fastq2 in case
+    we are downsampling
     returns a list of cmds and the path to the mapping file, as a tuple
     """
     cmd_list = []
@@ -1567,7 +1571,7 @@ def get_insert_stats(bam, reads_ns, args, config, logger):
                    : $ (stddev)
     """
     logger.info("Collecting insert size statistics ")
-    stat_dir = os.path.join(args.tmp_dir, "insert_stats")
+    stat_dir = os.path.join(args.tmp_dir, "insert_stats", "")
     os.makedirs(stat_dir)
     pic_cmd, statfile = make_picard_stats_command(bam, config=config, picard_outdir=stat_dir)
     logger.debug(pic_cmd)
@@ -1846,16 +1850,16 @@ def merge_assemblies(args, config, reads_ns, logger):
 
     returns        : $ (0)
     """
-    logger.info("Merging assemblies (%s)...", args.merge_tool)
+    logger.info("Merging assemblies (%s)...", args.merger)
     try:
-        tool = getattr(config, args.merge_tool)
+        tool = getattr(config, args.merger)
     except AttributeError:
-        raise ValueError("%s merge tool not available" % args.merge_tool)
+        raise ValueError("%s merge tool not available" % args.merger)
 
     cmd = tool['command']
     contig_output = tool['contig_output']
     if tool['create_dir']:
-        outdir = os.path.join(args.tmpdir, args.merge_tool)
+        outdir = os.path.join(args.tmpdir, args.merger)
         os.makedirs(outdir)
     merge_cmd = replace_placeholders(string=cmd, config=config,
                                      reads_ns=reads_ns, args=args)
@@ -1992,7 +1996,7 @@ def check_already_assembled_args(args, config, logger):
 
 def check_args(args, config):
     # ensure reference-requiring things are accounted for
-    if args.merge_method is None and len(args.assemblers) > 1:
+    if args.merger is None and len(args.assemblers) > 1:
         raise ValueError("Must provide merge method if using multiple assemblers")
     for thing in ["scaffolder", "finisher"]:
         if getattr(config, thing + "s") is None:
@@ -2005,12 +2009,10 @@ def check_args(args, config):
     # ensure exes are there for fastqc, seqtk
     if args.downsample != 0 and config.seqtk is None:
         raise ValueError("Seqtk is needed for downsampling")
-    if not args.skip_fastqc != 0 and config.fastqc is None:
-        raise ValueError("fastqc not found; must enable --skip-fastqc")
-    if not args.skip_fastqc and config.fastqc is None:
-        raise ValueError("fastqc not found; must enable --skip-fastqc")
-    if not args.skip_trim  and config.sickle is None:
-        raise ValueError("sickle-trim not found; must enable --skip-trim")
+    if "q" in args.stages.lower() and config.fastqc is None:
+        raise ValueError("fastqc not found; remove 'q' from --stages")
+    if "t" in args.stages.lower() and config.sickle is None:
+        raise ValueError("sickle-trim not found; remove 't' from --stages")
 
 
 def make_empty_results_object():
@@ -2054,13 +2056,13 @@ def log_read_and_run_data(reads_ns, args, results, logger):  # pragma nocover
     run_table = [
         ["Assembly category",        reads_ns.lib_type],
         ["Selected assemblers",      " ".join(args.assemblers)],
-        ["Selected assembly merger", args.merge_method],
+        ["Selected assembly merger", args.merger],
         ["Selected scaffolder",      args.scaffolder],
         ["Selected finisher",        args.finisher],
         ["Selected variant caller",  args.varcaller],
         ["Trim QV",                  args.trim_qv],
         ["Trim length",              args.trim_length],
-        ["Split Origin",             not args.skip_split_origin]
+        ["Break Origin",             'b' in args.stages]
     ]
     logger.info("ASSEMBLER DETAILS:\n" + tabulate.tabulate(run_table))
 
@@ -2417,18 +2419,10 @@ def find_origin(config, args, results, ori_dir, flex, logger):
     returns a dict {seqID: "contig_name:ori",...}
     """
     logger.info("Attempting to identify origin...");
-    cmds =  make_nucmer_delta_show_cmds(config=config, ref=args.reference,
+    cmds, ori_coords =  make_nucmer_delta_show_cmds(config=config, ref=args.reference,
                                        query=results.current_scaffolds,
                                        out_dir=ori_dir, prefix="ori", header=False)
-    logger.debug("Running the following cmds:")
-    for cmd in cmds:
-        logger.debug(cmd)
-        subprocess.run(cmd,
-                   shell=sys.platform != "win32",
-                   stdout=subprocess.PIPE,
-                   stderr=subprocess.PIPE,
-                   check=True)
-    ori_coords = os.path.join(ori_dir, "ori.coords")
+    run_nucmer_cmds(cmds, logger)
     pattern = re.compile("\s+")
     origin_dict = {}
     with open(args.reference, "r") as inf:
@@ -2576,19 +2570,10 @@ def order_scaffolds(args, config, results, logger):
     orient_dir = os.path.join(args.tmp_dir,  "orientating")
     os.makedirs(orient_dir)
     logger.info("Orienting scaffolds vs. reference...")
-    cmds =  make_nucmer_delta_show_cmds(config=config, ref=args.reference,
+    cmds, orient_coords =  make_nucmer_delta_show_cmds(config=config, ref=args.reference,
                                        query=results.current_scaffolds,
                                        out_dir=orient_dir, prefix="ori2", header=False)
-    logger.debug("Running the following cmds:")
-    for cmd in cmds:
-        logger.debug(cmd)
-        subprocess.run(cmd,
-                       shell=sys.platform != "win32",
-                       stdout=subprocess.PIPE,
-                       stderr=subprocess.PIPE,
-                       check=True)
-
-    orient_coords = os.path.join(orient_dir, "ori2.coords")
+    run_nucmer_cmds(cmds, logger=logger)
     orient_count = { '+': 0,
                      '-': 0 }
     with open(orient_coords, "r") as inf:
@@ -3075,7 +3060,7 @@ def main(args=None, logger=None):
     results = make_empty_results_object()
     results.assemblers_list = match_assembler_args(args=args)
     results.organism = "{0}{1}{2}".format(args.genus, " " + args.species, " sp. " + args.strain)
-    dt = arrow.now()
+    t0 = time.time()
     if not args.outdir:
         if "unknown" in results.organism:
             args.outdir = "BugBuilder_" + dt.local.format('YYYY-MM-DD_HHmmss')
@@ -3128,7 +3113,6 @@ def main(args=None, logger=None):
     logger.debug(reads_ns)
     # determine which steps we will be doing
     parse_stages(args, reads_ns, logger)
-
     logger.info("Determining if a reference is needed")
     check_ref_needed(args=args, lib_type=reads_ns.lib_type)
 
@@ -3148,7 +3132,7 @@ def main(args=None, logger=None):
         logger.debug("Ensuring appropriate trim length")
         args.trim_length = check_and_set_trim_length(reads_ns, args, logger)
         logger.debug("Determining whether to perfrom trimming")
-        if reads_ns.lib_type != "long" and not args.skip_trim:
+        if reads_ns.lib_type != "long":  # and not args.skip_trim:
             logger.info("Trimming reads based on quality")
             quality_trim_reads(args, config, reads_ns, logger)
 
@@ -3235,7 +3219,7 @@ def main(args=None, logger=None):
                                      config=config,
                                      logger=logger)
         # if we have a reference, lets break the origin here, before scaffolding
-        if not args.skip_split_origin and results.ID_OK:
+        if results.ID_OK:
             find_and_split_origin(args=args, config=config, results=results,
                                   tools=None, reads_ns=None, logger=logger)
 
@@ -3243,6 +3227,9 @@ def main(args=None, logger=None):
     # right.  Now our results should contain contigs and/or scaffolds.
     # Lets do some scaffolding
     if reads_ns.SCAFFOLD:
+        results.ID_OK = check_id(args, contigs=results.current_contigs,
+                                 config=config, logger=logger)
+
         if \
            (results.ID_OK and tools.scaffolder['linkage_evidence'] == "align-genus") or \
              not (results.ID_OK and tools.scaffolder['linkage_evidence'] == "paired-ends"):
@@ -3252,14 +3239,14 @@ def main(args=None, logger=None):
                 args=args, config=config, tools=tools, reads_ns=reads_ns, results=results,
                 run_id=1, logger=logger)
 
-    if results.current_scaffolds is not None:
-        # we may have been given a reference for a long read assembly but no
-        # scaffolder is used for these by default
-        args.scaffolder = "mauve" if args.scaffolder is None else args.scaffolder
-        if not args.skip_split_origin and args.reference is not None:
-            find_origin(args,config, results,  tools, reads_ns, logger )
-        if results.ID_OK:
-            order_scaffolds(args, config, results, logger)
+        if results.current_scaffolds is not None:
+            # we may have been given a reference for a long read assembly but no
+            # scaffolder is used for these by default
+            args.scaffolder = "mauve" if args.scaffolder is None else args.scaffolder
+            if not args.skip_split_origin and args.reference is not None:
+                find_origin(args,config, results,  tools, reads_ns, logger )
+            if results.ID_OK:
+                order_scaffolds(args, config, results, logger)
 
     #-------------------------- FINISHING
     if reads_ns.FINISH:
@@ -3267,15 +3254,6 @@ def main(args=None, logger=None):
             finish_assembly(args, config, reads_ns, results, logger=logger)
 
     #-------------------------- ANNOTATE WITH PROKKA
-    if results.current_scaffolds is not None:
-        try:
-            evidence = tools.scaffolder['linkage_evidence']
-        except:
-            evidence = "paired-ends"
-        gaps = build_agp(args, results, reads_ns,
-                         evidence=evidence,
-                         logger=logger)
-
 
     # sequence stable from this point, only annotations altered
     #  it looks this this is attempting to be multiprocessed.
@@ -3301,7 +3279,8 @@ def main(args=None, logger=None):
 
     ##amosvalidate fails if we don't have mate-pairs
     print(results)
-    if reads_ns.paired and args.mode == 'draft':
+    if reads_ns.GENECALL:
+        if reads_ns.paired and args.mode == 'draft':
             seq_file = results.current_contigs
             if results.current_scaffolds is not None:
                 seq_file = results.current_scaffolds
@@ -3309,12 +3288,21 @@ def main(args=None, logger=None):
                 dirname="align", reads_ns=reads_ns,
                 config=config, downsample=True, args=args, logger=logger)
             amosvalidate( tmpdir, insert_size, stddev )
+
             # get_contig_to_iid_mapping($tmpdir);
             amosvalidate_results = summarise_amosvalidate(tmpdir)
-    if reads_ns.ANNOTATE:
+        try:
+            evidence = tools.scaffolder['linkage_evidence']
+        except:
+            evidence = "paired-ends"
+        gaps = build_agp(args, results, reads_ns,
+                         evidence=evidence,
+                         logger=logger)
         run_prokka(config, args, results, logger)
 
     amosvalidate_results = None
+    logger.info("Done building your Bug!")
+    logger.info("Elapsed time: %.2fm" % ((time.time() - t0) / 60))
     # run_varcaller( tmpdir, varcall, threads, read_length_mean ) if (varcall)
     # merge_annotations( tmpdir, amosvalidate_results, gaps, genus, species, strain )
 #     #  This kept throwing an error about Bio::SeqIO

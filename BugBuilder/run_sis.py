@@ -33,7 +33,7 @@ from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 
 def make_sis_etc_cmds(config, ref, contigs, scaff_dir):
-    cmds = make_nucmer_delta_show_cmds(
+    cmds, sis_coords = make_nucmer_delta_show_cmds(
         config, ref=ref, query=contigs,
         out_dir=scaff_dir, prefix="sis", header=True)
     # sis

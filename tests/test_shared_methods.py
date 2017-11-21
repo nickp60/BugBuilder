@@ -33,7 +33,7 @@ class test_shared_methods(unittest.TestCase):
         """ test pandas import
         """
         config = Namespace(nucmer = "nuc", delta_filter="df", show_coords="sc")
-        cmds = sm.make_nucmer_delta_show_cmds(
+        cmds, coords_file = sm.make_nucmer_delta_show_cmds(
             config, ref="genome", query="contigs",
             out_dir="res", prefix="sis", header=False)
 
@@ -44,6 +44,7 @@ class test_shared_methods(unittest.TestCase):
         ]
         for idx, cmd in enumerate(cmds):
             self.assertEqual(ref_cmds[idx], cmd)
+        self.assertEqual(coords_file, os.path.join("res", "sis.coords"))
 
 
     def tearDown(self):

@@ -339,7 +339,7 @@ class test_BugBuilder(unittest.TestCase):
     def test_check_args(self):
         config = bb.parse_config(self.filled_config)
         test_args = Namespace(
-            merge_method=None, assemblers=["spades", "shovels"])
+            merger=None, assemblers=["spades", "shovels"])
         with self.assertRaises(ValueError):
             bb.check_args(test_args, config)
 
@@ -384,14 +384,12 @@ class test_BugBuilder(unittest.TestCase):
         with self.assertRaises(ValueError):
             bb.replace_placeholders(string, args=test_args)
 
-    def check_get_merger_and_linkage(self):
-        pass
 
-    def test_parse_available_noconfig(self):
-        self.assertEqual(
-            [],
-            bb.parse_available("assemblers", None)
-        )
+    # def test_parse_available_noconfig(self):
+    #     self.assertEqual(
+    #         [],
+    #         bb.parse_available("assemblers", None)
+    #     )
 
     @mock.patch('shutil.which')
     def test_parse_available_assemblers(self, shumock):
@@ -421,7 +419,7 @@ class test_BugBuilder(unittest.TestCase):
 
     def test_get_merger_tool(self):
         config = bb.parse_config(self.filled_config)
-        test_args = Namespace(merge_method='gfinisher',
+        test_args = Namespace(merger='gfinisher',
                               scaffolder=None,
                               reference=self.ref_fasta)
         merger = bb.get_merger_tool(args=test_args, config=config, paired=False)
@@ -469,12 +467,17 @@ class test_BugBuilder(unittest.TestCase):
 
     def test_select_tools(self):
         config = bb.parse_config(self.filled_config)
-        test_args = Namespace(scaffolder="pilon",
+        test_args = Namespace(scaffolder="sis",
+                              assemblers=["spades"],
+                              merger=None,
+                              finisher="pilon",
+                              varcaller="pilon",
                               reference=self.ref_fasta)
-        tools = select_tools(args=test_args, config=config,
-                             reads_ns=Namespace(read_length_mean=45),
+        tools = bb.select_tools(args=test_args, config=config,
+                             reads_ns=Namespace(read_length_mean=45,
+                                                paired=True),
                              logger=logger)
-        self.assertEqual("pilon", tools.scaffolder['name'])
+        self.assertEqual("SIS", tools.scaffolder['name'])
 
     def test_assembler_needs_downsampling(self):
         assemblers = [x for x in bb.parse_config(self.filled_config).assemblers if \
@@ -488,25 +491,57 @@ class test_BugBuilder(unittest.TestCase):
     def test_make_sickle_cmd(self):
         test_args = Namespace(
             fastq1=self.fastq1,
+            trim_length=50,
+            trim_qv=10,
             reference=self.ref_fasta)
-        test_cmd = "sickle se -f {0} -1 sanger -q 10 -l 50 -o sickle".format(self.fastq1, trim_qv=10, trim_length=50,
+        test_cmd = "sickle se -f {0} -t sanger -q 10 -l 50 -o sickle/read1.fastq > sickle/sickle.log".format(
+            self.fastq1)
         self.assertEqual(
-            make_sickle_cmd(
+            bb.make_sickle_cmd(
                 args=test_args,
-                reads_ns=Namespace(encoding="sanger"), out_dir="sickle")
+                reads_ns=Namespace(encoding="sanger", paired=False), out_dir="sickle/",
+                paired=False),
             test_cmd)
 
     def quality_trim_reads(args, config, reads_ns, logger):
         pass
 
-    def make_seqtk_ds_cmd(args, reads_ns, new_coverage, outdir, config, logger):
-        pass
+    def test_make_seqtk_ds_cmd(test):
+        cmds = bb.make_seqtk_ds_cmd(
+            args=Namespace(fastq1="reads_1.fq", fastq2="reads_2.fq"),
+            reads_ns=Namespace(coverage=1000),
+            new_coverage=100, outdir="./seqtk/",
+            config=Namespace(seqtk="seqtk"), logger=logger)
+        ref_cmds = [
+            "seqtk sample -s 100 .1 reads_1.fq > ./seqtk/reads1.fq",
+            "seqtk sample -s 100 .1 reads_2.fq > ./seqtk/reads2.fq"]
+        for i, cmd in enumerate(cmds):
+            self.assertEqual(cmd, ref_cmds[i])
 
     def downsample_reads(args, reads_ns, config, new_cov=100):
         pass
 
-    def make_bwa_cmds(args, config, outdir, ref, reads_ns, fastq1, fastq2):
-        pass
+    def test_make_bwa_cmds_aln_se(self):
+        config = bb.parse_config(self.filled_config)
+        config.bwa = "bWA"
+        cmds, mapping_sam = bb.make_bwa_cmds(
+            ref="ref.fasta",
+            fastq1="reads_1.fq",
+            fastq2=None,
+            reads_ns=Namespace(read_length_mean=75),
+            args=Namespace(# fastq2="reads_2.fq",
+                           threads=13),
+            outdir="./bwa/",
+            config=config)
+        ref_cmds = [
+            "bWA index ref.fasta  > ./bwa/bwa_index.log 2>&1",
+            "bWA aln -t 13 ref.fasta reads_1.fq > ./bwa/read1.sai",
+            "bWA samse ref.fasta ./bwa/read1.sai reads_1.fq " +
+            "2> ./bwa/sampe.log > ./bwa/mapping.sam"]
+        for i, cmd in enumerate(cmds):
+            self.assertEqual(cmd, ref_cmds[i])
+        self.assertEqual(mapping_sam, "./bwa/mapping.sam")
+
 
     def make_samtools_cmds(config, sam, outdir, sorted_bam):
         pass
