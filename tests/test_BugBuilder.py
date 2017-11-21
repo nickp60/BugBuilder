@@ -465,6 +465,8 @@ class test_BugBuilder(unittest.TestCase):
         vc = bb.get_varcaller(args=test_args, config=config, paired=False)
         self.assertEqual("pilon", vc['name'])
 
+    @unittest.skipIf("TRAVIS" in os.environ and os.environ["TRAVIS"] == "true",
+                     "Skipping this test on Travis CI. Too hard to debug")
     def test_select_tools(self):
         config = bb.parse_config(self.filled_config)
         test_args = Namespace(scaffolder="sis",

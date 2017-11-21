@@ -643,8 +643,9 @@ def get_args():  # pragma: no cover
                           "bB = break contig at the origin" +
                           "sS = scaffold the contigs " +
                           "fF = run polishing finisher on the assembly"+
-                          "pP = add annotations with prokka",
-                          type=str, default="qtabsfp")
+                          "vV = call variants"
+                          "gG = gene-call with prokka",
+                          type=str, default="qtdabsfvg")
     optional.add_argument("-v", "--verbosity", dest='verbosity',
                           action="store",
                           default=2, type=int, choices=[1, 2, 3, 4, 5],
@@ -676,27 +677,6 @@ def set_up_logging(verbosity, outfile, name):
     if (verbosity * 10) not in range(10, 60, 10):
         raise ValueError('Invalid log level: %s' % verbosity)
     # logging.basicConfig(level=logging.DEBUG)
-    logger.setLevel(logging.DEBUG)
-    # create console handler and set level to given verbosity
-    console_err = logging.StreamHandler(sys.stderr)
-    console_err.setLevel(level=(verbosity * 10))
-    console_err_format = logging.Formatter(
-        str("%(asctime)s " + "%(levelname)s" +" %(message)s"),
-        "%H:%M:%S")
-    console_err.setFormatter(console_err_format)
-    # set some pretty colors, shorten names of loggers to keep lines aligned
-    # logging.addLevelName(logging.DEBUG, "\u001b[30m%s\033[1;0m" % "..")
-    # logging.addLevelName(logging.INFO,  "\u001b[32m%s\033[1;0m" % "--")
-    # logging.addLevelName(logging.WARNING, "\u001b[33m%s\033[1;0m" % "!!")
-    # logging.addLevelName(logging.ERROR, "\u001b[31m%s\033[1;0m" % "xx")
-    # logging.addLevelName(logging.CRITICAL, "\u001b[31m%s\033[1;0m" % "XX")
-    logging.addLevelName(logging.DEBUG, "..")
-    logging.addLevelName(logging.INFO,  "--")
-    logging.addLevelName(logging.WARNING, "!!")
-    logging.addLevelName(logging.ERROR, "xx")
-    logging.addLevelName(logging.CRITICAL,  "XX")
-    logger.addHandler(console_err)
-    # create debug file handler and set level to debug
     try:
         logfile_handler = logging.FileHandler(outfile, "w")
         logfile_handler.setLevel(logging.DEBUG)
@@ -707,6 +687,27 @@ def set_up_logging(verbosity, outfile, name):
     except:
         logger.error("Could not open {0} for logging".format(outfile))
         sys.exit(1)
+    logger.setLevel(logging.DEBUG)
+    # create console handler and set level to given verbosity
+    console_err = logging.StreamHandler(sys.stderr)
+    console_err.setLevel(level=(verbosity * 10))
+    console_err_format = logging.Formatter(
+        str("%(asctime)s " + "%(levelname)s" +" %(message)s"),
+        "%H:%M:%S")
+    console_err.setFormatter(console_err_format)
+    # set some pretty colors, shorten names of loggers to keep lines aligned
+    # logging.addLevelName(logging.DEBUG,    "\u001b[30m%s\033[1;0m" % "..")
+    # logging.addLevelName(logging.INFO,     "\u001b[32m%s\033[1;0m" % "--")
+    # logging.addLevelName(logging.WARNING,  "\u001b[33m%s\033[1;0m" % "!!")
+    # logging.addLevelName(logging.ERROR,    "\u001b[31m%s\033[1;0m" % "xx")
+    # logging.addLevelName(logging.CRITICAL, "\u001b[31m%s\033[1;0m" % "XX")
+    logging.addLevelName(logging.DEBUG, "..")
+    logging.addLevelName(logging.INFO,  "--")
+    logging.addLevelName(logging.WARNING, "!!")
+    logging.addLevelName(logging.ERROR, "xx")
+    logging.addLevelName(logging.CRITICAL,  "XX")
+    logger.addHandler(console_err)
+    # create debug file handler and set level to debug
     logger.debug("Initializing logger")
     logger.debug("logging at level {0}".format(verbosity))
     return logger
@@ -778,6 +779,7 @@ def parse_stages(args, reads_ns, logger):
             logger.debug(message)
         else:
             setattr(reads_ns, attribute, False)
+    # ok, so our stages are decided, but lets see if they are valid
 
 
 def check_files_present(args):
