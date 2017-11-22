@@ -379,7 +379,12 @@ def parse_available(thing, path=None):
     # get all the potential names from the config
     thing_list = [x['name'].lower() for x in getattr(config, thing)]
     # return all the names that have an executable available
-    return [x for x in thing_list if getattr(config, x.replace("-", "_")) is not None]
+    # sometimes, if configuring fails, this can result in an attribute arrow
+    try:
+        return [x for x in thing_list if getattr(config, x.replace("-", "_")) is not None]
+    except AttributeError:
+        configure(config)
+        return(parse_available(thing=thing, path=config))
 
 
 def configure(config_path, hardfail=True):
@@ -437,6 +442,7 @@ def return_config(config_path, force=False, hardfail=True, logger=None):
         configure(config_path, hardfail=hardfail)
         config = parse_config(config_path)
     return config
+
 
 class JustConfigure(argparse.Action):
     def __call__(self, parser, args, values, option_string=None):
