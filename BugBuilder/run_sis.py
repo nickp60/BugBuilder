@@ -32,6 +32,7 @@ from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 
+
 def make_sis_etc_cmds(config, ref, contigs, scaff_dir):
     cmds, sis_coords = make_nucmer_delta_show_cmds(
         config, ref=ref, query=contigs,
@@ -50,7 +51,7 @@ def make_sis_etc_cmds(config, ref, contigs, scaff_dir):
 def run(config, args, results, ref, contigs, scaff_dir, logger):
     """ we need to explicitly set the reference and the contigs files cause we may have partitioned them (using blast to see which contigs go with which contigs)
     """
-    logger.info("Using SIS to scaffold %s against %s", contigs, ref)
+    logger.debug("Using SIS to scaffold %s against %s", contigs, ref)
     cmd_list = make_sis_etc_cmds(config, ref=ref, contigs=contigs, scaff_dir=scaff_dir)
     for cmd in cmd_list:
         logger.debug(cmd)

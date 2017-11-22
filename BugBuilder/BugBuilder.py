@@ -521,7 +521,9 @@ def get_args():  # pragma: no cover
                           type=str, required="--fastq1" not in sys.argv)
     optional.add_argument("--reference", dest='reference',
                           action="store",
-                          help="Path to fasta formatted reference sequence",
+                          nargs="*",
+                          default=[],
+                          help="Path(s) to fasta formatted reference sequence",
                           type=str)
     optional.add_argument("--prefix", dest='prefix',
                           action="store",
@@ -703,7 +705,7 @@ def set_up_logging(verbosity, outfile, name):
         logfile_handler = logging.FileHandler(outfile, "w")
         logfile_handler.setLevel(logging.DEBUG)
         logfile_handler_formatter = \
-            logging.Formatter("%(asctime)s - %(levelname).7s - %(message)s")
+            logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
         logfile_handler.setFormatter(logfile_handler_formatter)
         logger.addHandler(logfile_handler)
     except:
@@ -714,10 +716,10 @@ def set_up_logging(verbosity, outfile, name):
     console_err = logging.StreamHandler(sys.stderr)
     console_err.setLevel(level=(verbosity * 10))
     console_err_format = logging.Formatter(
-        str("%(asctime)s "+"\u001b[3" + "%(levelname)s" + "\033[1;0m" + " %(message)s"), "%H:%M:%S")
+        str("%(asctime)s \u001b[3%(levelname)s\033[1;0m  %(message)s"), "%H:%M:%S")
     console_err.setFormatter(console_err_format)
     # set some pretty colors, shorten names of loggers to keep lines aligned
-    logging.addLevelName(logging.DEBUG,    "0m ..")
+    logging.addLevelName(logging.DEBUG,    "4m ..")
     logging.addLevelName(logging.INFO,     "2m --")
     logging.addLevelName(logging.WARNING,  "3m !!")
     logging.addLevelName(logging.ERROR,    "1m xx")
@@ -1439,7 +1441,7 @@ def make_seqtk_ds_cmd(args, reads_ns, new_coverage, outdir, config, logger):
     return cmd_list
 
 
-def downsample_reads(args, reads_ns, config, new_cov=100):
+def downsample_reads(args, reads_ns, config, new_cov=100, logger=None):
     """
     Downsamples reads by default to a maximum of 100x if higher
     coverages are present, or to specified coverage
@@ -1451,7 +1453,7 @@ def downsample_reads(args, reads_ns, config, new_cov=100):
                  $ (number of bases in original reds)
                  $ (mean read length)
     """
-    ds_dir = os.path.join(tmp_dir, "seqtk_dir", "")
+    ds_dir = os.path.join(args.tmp_dir, "seqtk_dir", "")
     os.makedirs(ds_dir)
     ds_cmds = make_seqtk_ds_cmd(args=args, reads_ns=reads_ns, config=config,
                                 new_coverage=new_cov, outdir=ds_dir, logger=logger)
@@ -1516,7 +1518,7 @@ def make_samtools_cmds(config, sam, outdir, sorted_bam):
     return [convert, index]
 
 
-def align_reads(dirname, reads_ns,  downsample, args, config, logger):
+def align_reads(ref, dirname, reads_ns,  downsample, args, config, logger):
     """
     Maps reads to reference using bwa
 
@@ -1533,8 +1535,8 @@ def align_reads(dirname, reads_ns,  downsample, args, config, logger):
     seqtk_dir = os.path.join(args.tmp_dir, "seqtk" + dirname, "")
     for d in [align_dir, bwa_dir, samtools_dir, seqtk_dir]:
         os.makedirs(d)
-    bwa_reference = os.path.join(bwa_dir, os.path.basename(args.reference))
-    shutil.copyfile(args.reference, bwa_reference)
+    bwa_reference = os.path.join(bwa_dir, os.path.basename(ref))
+    shutil.copyfile(ref, bwa_reference)
     if downsample:
         logger.debug("Downsampling reads for insert-size estimation...")
         ds_cmds = make_seqtk_ds_cmd(args=args, reads_ns=reads_ns, config=config,
@@ -1753,6 +1755,7 @@ def get_contig_stats(contigs, ctype):
 
 
 def get_contig_info(contigs, x):
+    Ns, Ns_x = 0, 0
     count, count_x = 0, 0
     all_lengths, all_lengths_x = [], []
     if os.path.getsize(contigs) == 0:
@@ -1760,10 +1763,12 @@ def get_contig_info(contigs, x):
     with open(contigs, "r") as inf:
         for rec in SeqIO.parse(contigs, "fasta"):
             length = len(rec.seq)
+            Ns = Ns + rec.seq.lower().count("n")
             count = count + 1
             all_lengths.append(length)
             if length > x:
                 all_lengths_x.append(length)
+                Ns_x = Ns_x + rec.seq.lower().count("n")
                 count_x = count_x + 1
     all_lengths.sort()
     all_lengths_x.sort()
@@ -1774,6 +1779,7 @@ def get_contig_info(contigs, x):
             "all_lengths_x": all_lengths_x,
             "L50": L50, "N50": N50,
             "L50_x": L50_x, "N50_x": N50_x,
+            "Ns": Ns, "Ns_x": Ns_x,
             #  I know this is bad, but if you have slashes in our names,
             # you had this coming
             "path": "/".join(contigs.split( "/")[-2:])}
@@ -1796,8 +1802,9 @@ def get_contig_stats2(contigs, old_contigs=None):
         ["Max Length"],    #2
         ["Assembly size"], #3
         ["L50"],           #4
-        ["N50"],            #5
-        ["path"]            #6
+        ["N50"],           #5
+        ["N's"],           #6
+        ["path"]           #7
     ]
     ctype= "seqs"
     if old_contigs is not None:
@@ -1808,7 +1815,8 @@ def get_contig_stats2(contigs, old_contigs=None):
         output[3].extend([sum(results['all_lengths']), sum(results['all_lengths_x'])])
         output[4].extend([results['L50'], results['L50_x']])
         output[5].extend([results['N50'], results['N50_x']])
-        output[6].extend([results['path'], ""])
+        output[6].extend([results["Ns"], results["Ns_x"]])
+        output[7].extend([results['path'], ""])
     results = get_contig_info(contigs, x=200)
     output[0].extend(["New seqs", "New seqs > %d" % 200])
     output[1].extend([results['count'], results['count_x']])
@@ -1816,7 +1824,8 @@ def get_contig_stats2(contigs, old_contigs=None):
     output[3].extend([sum(results['all_lengths']), sum(results['all_lengths_x'])])
     output[4].extend([results['L50'], results['L50_x']])
     output[5].extend([results['N50'], results['N50_x']])
-    output[6].extend([results['path'], ""])
+    output[6].extend([results["Ns"], results["Ns_x"]])
+    output[7].extend([results['path'], ""])
     return output
 
 
@@ -1886,7 +1895,7 @@ def run_assembler(assembler, assembler_args, args, reads_ns, config, logger):
         assembler_args=assembler_args,
         args=args,
         config=config, reads_ns=reads_ns)
-    logger.info(" Starting %s assembly ... ", assembler)
+    logger.info("Starting %s assembly ... ", assembler)
     # here we execute the "run" function from the appropriate runner script
     sub_mains[assembler](getattr(config, assembler), assembler_cmd, logger)
 
@@ -1960,11 +1969,12 @@ def merge_assemblies(args, config, reads_ns, logger):
     #   or die " Error creating symlink : $! ";
 
     report = get_contig_stats(contig_output, 'contigs' )
-    logger.info("MERGED ASSEMBLY STATISTICS:\n" + tabulate.tabulate(report))
+    logger.info("\n\nMERGED ASSEMBLY STATISTICS:" +
+                "\n=========================\n\n" + tabulate.tabulate(report))
     return contig_output
 
 
-def check_id(args, contigs, config, logger):
+def check_id(ref, args, contigs, config, results, logger):
     """
     Checks wether the assembled contigs have sufficient identity to the
     reference for reference-based scaffolding
@@ -1979,7 +1989,7 @@ def check_id(args, contigs, config, logger):
     os.makedirs(check_dir)
     cmd = str("{0} -query {1} -subject {2} -outfmt 6 -evalue 0.01 -out " +
               "{3}blastout.tab 2>&1 > {3}blastn.log").format(
-        config.blastn, contigs, args.reference, check_dir)
+        config.blastn, contigs, ref, check_dir)
     logger.debug(cmd)
     subprocess.run(cmd,
                    shell=sys.platform != "win32",
@@ -2016,7 +2026,7 @@ def check_id(args, contigs, config, logger):
                        " too low (%.2f)", percent_id)
         logger.warning("Reference will not be used for scaffolding or " +
                        "ordering contigs")
-    return ID_OK
+    return ID_OK, percent_id
 
 
 def check_already_assembled_dirs(args, config, logger):
@@ -2089,7 +2099,7 @@ def check_args(args, config):
             continue
         for tool in getattr(config, thing + "s"):
             if tool['name'].lower() == getattr(args, thing):
-                if args.reference is None and tool['ref_required']:
+                if len(args.reference) is None and tool['ref_required']:
                     raise ValueError("%s %s requires a reference." % \
                                      (thing, getattr(args, thing)))
     # ensure exes are there for fastqc, seqtk
@@ -2116,8 +2126,11 @@ def make_empty_results_object():
         organism=None,
         assemblers_list=None, # to be filled by match_assembler args
         assemblers_results_dict_list=[], # {name:None, contigs:None, scaffold:None}
-        ID_OK=False, # to be set by check_id
-        current_contigs=None, current_scaffolds=None, current_reference=None,
+        ID_OK=None, # to be set by check_id
+        reference_percent_sim=None, # to be set by check_id
+        current_contigs=None, current_scaffolds=None,
+        current_reference=None,
+        reference_percent_sim=None,
         current_contigs_source=None, current_scaffolds_source=None,
         current_embl=None, # run_prokka fills this in
         old_contigs=[[None, None]],  # [path, source]
@@ -2143,7 +2156,9 @@ def log_read_and_run_data(reads_ns, args, results, logger):  # pragma nocover
         ["Projected Coverage (Downsampled)", str(reads_ns.downsampled_coverage) + "x"],
         ["Projected Long Read Coverage", str(reads_ns.long_read_coverage) + "x"]
         ]
-    logger.info("LIBRARY DETAILS:\n" + tabulate.tabulate(read_table))
+    logger.info("\n\nLIBRARY DETAILS:" +
+                "\n=========================\n" +
+                tabulate.tabulate(read_table) + "\n")
 
     run_table = [
         ["Assembly category",        reads_ns.lib_type],
@@ -2156,7 +2171,9 @@ def log_read_and_run_data(reads_ns, args, results, logger):  # pragma nocover
         ["Trim length",              args.trim_length],
         ["Break Origin",             'b' in args.stages]
     ]
-    logger.info("ASSEMBLER DETAILS:\n" + tabulate.tabulate(run_table))
+    logger.info("\n\nASSEMBLER DETAILS:" +
+                "\n=========================\n" +
+                tabulate.tabulate(run_table) + "\n")
 
 
 def run_scaffolder(args, tools, config, reads_ns, results, run_id, logger=None):
@@ -2176,7 +2193,7 @@ def run_ref_scaffolder(args, tools, config, reads_ns, results, run_id, logger=No
     IDs of contigs scaffolded. These will then be used following scaffolding
     to create our own file of unscaffolded contigs
     """
-    logger.info(" Starting %s", tools.scaffolder['name'])
+    logger.info("Starting %s", tools.scaffolder['name'])
     exec_cmd = replace_placeholders(string=tools.scaffolder['command'],
                                     config=config, results=results,
                                     reads_ns=reads_ns, args=args)
@@ -2220,14 +2237,13 @@ def run_ref_scaffolder(args, tools, config, reads_ns, results, run_id, logger=No
     # sequences
 
     # moved ID parsing out, so we can keep naming the same
-    if not len(ref_list) > 1:
-        # if we don't have mulitple references, we just need to make the
-        # reference and contigs available under consistent names
-        reference = ref_list[0]
-        # contigs = contigs_output
-    else:
-        # blast indexing doesn't produce a workable index from a symlink, so
-        # need to copy the reference sequences
+    # if not len(ref_list) > 1:
+    #     # if we don't have mulitple references, we just need to make the
+    #     # reference and contigs available under consistent names
+    #     reference = ref_list[0]
+    #     # contigs = contigs_output
+    # else:
+    if True:
         reference_copy = os.path.join(run_dir, "reference_for_scaffolding.fasta")
         contigs_copy = os.path.join(run_dir, "contigs_to_be_scaffolded.fasta")
         shutil.copyfile(args.reference, reference_copy)
@@ -2287,6 +2303,8 @@ def run_ref_scaffolder(args, tools, config, reads_ns, results, run_id, logger=No
                                        scaff_dir=subscaff_dir,
                                        logger=logger)
             resulting_scaffold = os.path.join(run_dir, "scaffolds.fasta")
+        else:
+            raise ValueError("%s not found, or empty!" % scaff_contigs)
     counter = 1
     with open(resulting_scaffold, "w") as outf:
         for scaf_path in merge_these_scaffolds:
@@ -2316,9 +2334,10 @@ def run_ref_scaffolder(args, tools, config, reads_ns, results, run_id, logger=No
 #         }
 #     }
 
-
-    logger.info ("\nScaffolded assembly stats\n=========================\n\n")
-    get_contig_stats(resulting_scaffold, 'scaffolds' );
+    report = get_contig_stats2(resulting_scaffold, old_contigs=results.current_contigs);
+    logger.info ("\n\nScaffolded assembly stats" +
+                 "\n=========================\n" +
+                 tabulate.tabulate(report) + "\n")
     return resulting_scaffold
 
 #     if ( $run_id == 1 ) {
@@ -2411,7 +2430,7 @@ def run_pe_scaffolder(args, config, reads_ns, results, run_id, logger=None):
     # so need to get this by read alignment vs the assembly.
     if reads_ns.mean_insert is None:
         logger.info("Aligning reads to contigs to determine insert size")
-        sorted_bam = align_reads(dirname="align_to_contigs", reads_ns=reads_ns,
+        sorted_bam = align_reads(ref=results.current_reference, dirname="align_to_contigs", reads_ns=reads_ns,
                                  config=config, downsample=True, args=args,
                                  logger=logger)
         reads_ns.insert_mean, reads_ns.insert_stddev = get_insert_stats(
@@ -2573,7 +2592,7 @@ def find_and_split_origin(args, config, results, tools, reads_ns, logger):
                     origin = [x for x in origin_dict.values() if
                               x.split(":")[0] == rec.id][0]
                     ori_scaffold, pos = origin.split(":")
-                    logger.debug("spliting %s at origin %d", ori_scaffold, pos)
+                    logger.debug("Splitting %s at origin %s", ori_scaffold, pos)
                     # write out both parts after splitting
                     part_a = rec.seq[0: int(pos)]
                     part_b = rec.seq[int(pos) + 1: ]
@@ -2661,7 +2680,7 @@ def order_scaffolds(args, config, results, logger):
     orient_dir = os.path.join(args.tmp_dir,  "orientating")
     os.makedirs(orient_dir)
     logger.info("Orienting scaffolds vs. reference...")
-    cmds, orient_coords =  make_nucmer_delta_show_cmds(config=config, ref=args.reference,
+    cmds, orient_coords =  make_nucmer_delta_show_cmds(config=config, ref=results.current_reference,
                                        query=results.current_scaffolds,
                                        out_dir=orient_dir, prefix="ori2", header=False)
     run_nucmer_cmds(cmds, logger=logger)
@@ -2721,7 +2740,7 @@ def order_scaffolds(args, config, results, logger):
             SeqIO.write(unpl_rec, outf, "fasta")
     # now we ned the length of the reference
     ref_length = 0
-    with open(args.reference, "r") as ref:
+    with open(results.current_reference, "r") as ref:
         for rec in SeqIO.parse(ref, "fasta"):
             ref_length = ref_length + len(rec.seq)
     report = [
@@ -2794,8 +2813,10 @@ def run_finisher(args, config, reads_ns, tools, results, logger):
     #                stderr=subprocess.PIPE,
     #                check=True)
     report = get_contig_stats2(finished_scaffolds, results.current_scaffolds )
-    logger.info("Genome finishing with " + tools.finisher['name'] +
-                " statistics:\n" + tabulate.tabulate(report))
+    logger.info ("\n\nGenome finishing with " + tools.finisher['name'] +
+                 " statistics:\n"
+                 "=========================\n" +
+                 tabulate.tabulate(report) + "\n")
 
 
 def build_agp(args, results, reads_ns, evidence, logger):
@@ -2965,7 +2986,6 @@ def build_agp(args, results, reads_ns, evidence, logger):
         for line in lines:
             outf.write(line)
     return gaps
-
 
 
 def run_prokka(config, args, results, logger):
@@ -3218,11 +3238,11 @@ def main(args=None, logger=None):
 
     logger.info("Preparing config and tools")
     tools = select_tools(args, config=config, reads_ns=reads_ns, logger=logger)
+
     #-------------------------   QC
     logger.debug("Determining if fastqc will be run")
     if reads_ns.QC:
         if  config.fastqc is not None:
-            logger.info("Running fastqc on reads")
             run_fastqc(reads_ns, args, logger=logger)
         else:
             logger.info("Skipping fastqc, as no executable is in PATH")
@@ -3231,7 +3251,7 @@ def main(args=None, logger=None):
     if reads_ns.TRIM:
         logger.debug("Ensuring appropriate trim length")
         args.trim_length = check_and_set_trim_length(reads_ns, args, logger)
-        logger.debug("Determining whether to perfrom trimming")
+        logger.debug("Determining whether to perform trimming")
         if reads_ns.lib_type != "long":  # and not args.skip_trim:
             logger.info("Trimming reads based on quality")
             quality_trim_reads(args, config, reads_ns, logger)
@@ -3239,17 +3259,18 @@ def main(args=None, logger=None):
     #-------------------------- DOWNSAMPLE
     if reads_ns.DOWNSAMPLE:
         logger.debug("Determining whether to downsample")
-        if (reads_ns.coverage is not None and reads_ns.coverage > 100) and \
+        if (reads_ns.coverage is not None or reads_ns.coverage > 100) and \
            (assembler_needs_downsampling(tools) or args.downsample != 0):
             logger.info("Downsampling reads to %dx coverage", args.downsample)
             reads_ns.downsampled_coverage = downsample_reads(
                 args=args, reads_ns=reads_ns,
-                config=config, new_cov=args.downsample)
+                config=config, new_cov=args.downsample, logger=logger)
 
     #-------------------------- Report status, pre assembly
-    if args.fastq2 and args.reference:
-        logger.info("Aligning reads to reference for determinging insert size")
-        sorted_bam = align_reads(dirname="align", reads_ns=reads_ns,
+    if args.fastq2 and len(args.reference) != 0:
+        logger.info("Aligning reads to first reference " +
+                    "%s for determinging insert size" % args.reference[0])
+        sorted_bam = align_reads(ref=args.reference[0], dirname="align", reads_ns=reads_ns,
                                  config=config, downsample=True, args=args, logger=logger)
         reads_ns.insert_mean, reads_ns.insert_stddev = get_insert_stats(
             bam=sorted_bam, config=config, args=args, reads_ns=reads_ns, logger=logger)
@@ -3309,15 +3330,34 @@ def main(args=None, logger=None):
     logger.debug(tools.__dict__)
     logger.debug("ARGS:")
     logger.debug(args.__dict__)
+    #-------------------------  Check our reference(s)
+    if len(args.reference) > 0:
+        if len(args.reference) == 1:
+            results.current_reference = args.reference[0]
+            results.ID_OK, results.reference_percent_sim = check_id(args.reference, args, contigs=results.current_contigs,
+                                     results=results, config=config, logger=logger)
+        if len(args.reference) > 1:
+            # if multiple references provided, select the primary, most similar one
+            percent_list = []  # [ref, 5]
+            for reference in args.references:
+                ID_OK, percent = check_id(args, contigs=results.current_contigs,
+                                     results=results, config=config, logger=logger)
+                if ID_OK:  # ignore any dodgey ones from the list
+                    percent_list.append([percent, reference])
+                else:
+                    logger.warning(
+                        "ignoring reference %s, which only bears ~ %d similarity" %
+                        (reference, percent))
+                    args.reference = [x for x in args.reference if x != reference]
+            best_hit = sorted(percent_list)[-1]
+            results.current_reference = best_hit[1]
+            results.reference_percent_sim = best_hit[0]
 
     #-------------------------- BREAK at origin
     if reads_ns.BREAK:
     #TODO why do we check scaffolder here?
     #  ensure that our reference is close enough before continuing
-        if args.scaffolder and args.reference:
-            results.ID_OK = check_id(args, contigs=results.current_contigs,
-                                     config=config,
-                                     logger=logger)
+        if args.scaffolder and results.current_reference:
         # if we have a reference, lets break the origin here, before scaffolding
         if results.ID_OK:
             find_and_split_origin(args=args, config=config, results=results,
@@ -3327,8 +3367,10 @@ def main(args=None, logger=None):
     # right.  Now our results should contain contigs and/or scaffolds.
     # Lets do some scaffolding
     if reads_ns.SCAFFOLD:
-        results.ID_OK = check_id(args, contigs=results.current_contigs,
-                                 config=config, logger=logger)
+        # if we didnt break scaffolds, we wont have already checked our reference
+        if results.ID_OK is None:
+            results.ID_OK, ref_id = check_id(args, contigs=results.current_contigs,
+                                     results=results, config=config, logger=logger)
 
         if \
            (results.ID_OK and tools.scaffolder['linkage_evidence'] == "align-genus") or \
@@ -3343,7 +3385,7 @@ def main(args=None, logger=None):
             # we may have been given a reference for a long read assembly but no
             # scaffolder is used for these by default
             args.scaffolder = "mauve" if args.scaffolder is None else args.scaffolder
-            if not args.skip_split_origin and args.reference is not None:
+            if not args.skip_split_origin and results.current_reference is not None:
                 find_origin(args,config, results,  tools, reads_ns, logger )
             if results.ID_OK:
                 order_scaffolds(args, config, results, logger)
@@ -3351,8 +3393,9 @@ def main(args=None, logger=None):
     #-------------------------- FINISHING
     if reads_ns.FINISH:
         REFERENCE_BASED_FINISHER = True
-        results.ID_OK = check_id(args, contigs=results.current_contigs,
-                                 config=config, logger=logger)
+        if results.ID_OK is None:
+            results.ID_OK, ref_per = check_id(args, contigs=results.current_contigs,
+                                     results=results, config=config, logger=logger)
         if args.finisher and results.ID_OK:
             run_finisher(args, config, reads_ns, tools, results, logger=logger)
 
@@ -3381,13 +3424,14 @@ def main(args=None, logger=None):
     # spades_results_sum = sum([r.get() for r in spades_results])
 
     ##amosvalidate fails if we don't have mate-pairs
-    print(results)
+    # print(results)
     if reads_ns.GENECALL:
         if reads_ns.paired and args.mode == 'draft':
             seq_file = results.current_contigs
             if results.current_scaffolds is not None:
                 seq_file = results.current_scaffolds
             sorted_bam = align_reads(
+                reference=results.current_reference,
                 dirname="align", reads_ns=reads_ns,
                 config=config, downsample=True, args=args, logger=logger)
             amosvalidate( tmpdir, insert_size, stddev )
