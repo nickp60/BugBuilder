@@ -65,7 +65,7 @@ def run(config, args, results, ref, contigs, scaff_dir, logger):
     multi = []
     singletons = []
     scaffolds =  glob.glob(os.path.join(scaff_dir, '*.fna'))
-    logger.info("SIS scaffolds: %s", scaffolds)
+    logger.debug("SIS scaffolds: %s", scaffolds)
     for scaf in scaffolds:
         with open(scaf, "r") as inf:
             contig_count = 0

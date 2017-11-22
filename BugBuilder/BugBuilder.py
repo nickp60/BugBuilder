@@ -205,6 +205,7 @@ finishers:
      create_dir: 1
      ref_required: 0
      paired_reads: 1
+     output_scaffolds: pilon.fasta
      needs: variable_gaps
      priority: 2
        - SIS
@@ -212,12 +213,14 @@ finishers:
    - name: abyss-sealer
      command: run_abyss-sealer --tmpdir __TMPDIR__ --encoding __ENCODING__ --threads __THREADS__
      create_dir: 1
+     output_scaffolds: abyss.fasta
      needs: fixed_gaps
      ref_required: 0
      paired_reads: 1
      priority: 3
    - name: pilon
      command: run_pilon --tmpdir __TMPDIR__ --threads __THREADS__
+     output_scaffolds: pilon.fasta
      create_dir: 1
      needs: fixed_gaps
      ref_required: 0
@@ -354,11 +357,13 @@ from .shared_methods import make_nucmer_delta_show_cmds, run_nucmer_cmds
 from .run_sis import run as run_sis
 from .run_spades import run as run_spades
 from .run_abyss import run as run_abyss
+from .run_pilon import run as run_pilon
 
 sub_mains = {
     # "canu": run_canu,
     "abyss": run_abyss,
     "spades": run_spades,
+    "pilon": run_pilon,
     "sis": run_sis}
 
 
@@ -445,6 +450,16 @@ class JustConfigure(argparse.Action):
         sys.exit(1)
         # setattr(args, self.dest, values)
 
+
+class SmartFormatter(argparse.HelpFormatter):
+    """ poached from https://stackoverflow.com/questions/3853722
+    """
+    def _split_lines(self, text, width):
+        if text.startswith('R|'):
+            return text[2:].splitlines()
+        # this is the RawTextHelpFormatter._split_lines
+        return argparse.HelpFormatter._split_lines(self, text, width)
+
 def get_args():  # pragma: no cover
     """
     """
@@ -454,6 +469,7 @@ def get_args():  # pragma: no cover
         "Automated pipeline for assembly of draft quality " +
         "bacterial genomes with reference guided scaffolding and annotation." +
         "Please see accompanying userguide for full documentation",
+        formatter_class=SmartFormatter,
         add_help=False)  # to allow for custom help
     requiredNamed = parser.add_argument_group('required named arguments')
     requiredNamed.add_argument("--platform", dest='platform', action="store",
@@ -531,7 +547,6 @@ def get_args():  # pragma: no cover
     optional.add_argument("--finisher", dest='finisher', action="store",
                           help="finisher to use",
                           choices=parse_available("finishers"),
-                          nargs="*",
                           type=str)
     optional.add_argument("--varcaller", dest='varcaller', action="store",
                           help="varcaller to use",
@@ -635,24 +650,25 @@ def get_args():  # pragma: no cover
                           help="how much memory to use",
                           type=int, default=4)
     optional.add_argument("--stages", dest='stages', action="store",
-                          help="how much memory to use:" +
-                          "qQ = QC reads" +
-                          "tT = trim reads" +
-                          "dD = downsample reads" +
-                          "aA = run assembler (s)" +
-                          "bB = break contig at the origin" +
-                          "sS = scaffold the contigs " +
-                          "fF = run polishing finisher on the assembly"+
-                          "vV = call variants"
-                          "gG = gene-call with prokka",
+                          help="R| which stages of BugBuilder will run:\n" +
+                          "  qQ = QC reads\n" +
+                          "  tT = trim reads\n" +
+                          "  dD = downsample reads\n" +
+                          "  aA = run assembler (s)\n" +
+                          "  bB = break contig at the origin\n" +
+                          "  sS = scaffold the contigs\n" +
+                          "  fF = run polishing finisher on the assembly\n"+
+                          "  vV = call variants\n"
+                          "  gG = gene-call with prokka\n" +
+                          "default: %(default)s",
                           type=str, default="qtdabsfvg")
     optional.add_argument("-v", "--verbosity", dest='verbosity',
                           action="store",
                           default=2, type=int, choices=[1, 2, 3, 4, 5],
-                          help="Logger writes debug to file in output dir; " +
-                          "this sets verbosity level sent to stderr. " +
-                          " 1 = debug(), 2 = info(), 3 = warning(), " +
-                          "4 = error() and 5 = critical(); " +
+                          help="R|Logger writes debug to file in output dir;\n" +
+                          "this sets verbosity level sent to stderr. \n" +
+                          "  1 = debug()\n  2 = info()\n  3 = warning()\n" +
+                          "  4 = error() \n  5 = critical(); " +
                           "default: %(default)s")
     optional.add_argument("-h", "--help",
                           action="help", default=argparse.SUPPRESS,
@@ -681,7 +697,7 @@ def set_up_logging(verbosity, outfile, name):
         logfile_handler = logging.FileHandler(outfile, "w")
         logfile_handler.setLevel(logging.DEBUG)
         logfile_handler_formatter = \
-            logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+            logging.Formatter("%(asctime)s - %(levelname).7s - %(message)s")
         logfile_handler.setFormatter(logfile_handler_formatter)
         logger.addHandler(logfile_handler)
     except:
@@ -692,20 +708,14 @@ def set_up_logging(verbosity, outfile, name):
     console_err = logging.StreamHandler(sys.stderr)
     console_err.setLevel(level=(verbosity * 10))
     console_err_format = logging.Formatter(
-        str("%(asctime)s " + "%(levelname)s" +" %(message)s"),
-        "%H:%M:%S")
+        str("%(asctime)s "+"\u001b[3" + "%(levelname)s" + "\033[1;0m" + " %(message)s"), "%H:%M:%S")
     console_err.setFormatter(console_err_format)
     # set some pretty colors, shorten names of loggers to keep lines aligned
-    # logging.addLevelName(logging.DEBUG,    "\u001b[30m%s\033[1;0m" % "..")
-    # logging.addLevelName(logging.INFO,     "\u001b[32m%s\033[1;0m" % "--")
-    # logging.addLevelName(logging.WARNING,  "\u001b[33m%s\033[1;0m" % "!!")
-    # logging.addLevelName(logging.ERROR,    "\u001b[31m%s\033[1;0m" % "xx")
-    # logging.addLevelName(logging.CRITICAL, "\u001b[31m%s\033[1;0m" % "XX")
-    logging.addLevelName(logging.DEBUG, "..")
-    logging.addLevelName(logging.INFO,  "--")
-    logging.addLevelName(logging.WARNING, "!!")
-    logging.addLevelName(logging.ERROR, "xx")
-    logging.addLevelName(logging.CRITICAL,  "XX")
+    logging.addLevelName(logging.DEBUG,    "0m ..")
+    logging.addLevelName(logging.INFO,     "2m --")
+    logging.addLevelName(logging.WARNING,  "3m !!")
+    logging.addLevelName(logging.ERROR,    "1m xx")
+    logging.addLevelName(logging.CRITICAL, "1m XX")
     logger.addHandler(console_err)
     # create debug file handler and set level to debug
     logger.debug("Initializing logger")
@@ -852,7 +862,7 @@ def setup_tmp_dir(args, output_root, logger):
     """
     if args.tmp_dir is None:
         args.tmp_dir = os.path.join(output_root, "temp_dir")
-    logger.info("Created working directory: %s" % args.tmp_dir)
+    logger.debug("Creating working directory: %s" % args.tmp_dir)
     try:
         os.makedirs(args.tmp_dir, exist_ok=False)
     except FileExistsError: #OSError:
@@ -906,7 +916,7 @@ def get_read_lens_from_fastq(fastq1, logger=None):
             lengths.append(len(read))
     tot = sum(lengths)
     if logger:
-        logger.info("mean read length is {0} in {1}".format(
+        logger.debug("mean read length is {0} in {1}".format(
             os.path.basename(fastq1),
             float(tot / len(lengths))))
     file_handle.close()
@@ -997,7 +1007,7 @@ def assess_reads(args, config, platform, logger=None):
          $ (number of reads)
     my ( @mean, @stddev, $long_mean, $long_stddev, $tot_length, $long_tot_length );
     """
-    logger.info("Checking reads...");
+    logger.debug("Checking reads...");
     counts = []
     means = []
     stddevs = []
@@ -1058,7 +1068,7 @@ def assess_reads(args, config, platform, logger=None):
     long_coverage = 0
 
     if args.genome_size == 0:
-        logger.info("Infering genome size from reference")
+        logger.debug("Infering genome size from reference")
         if args.reference is not None and os.path.exists(args.reference):
             with open(args.reference, "r") as inf:
                 for rec in SeqIO.parse(inf, "fasta"):
@@ -1120,7 +1130,7 @@ def parse_config(config_file):
 def check_and_get_assemblers(args, config, reads_ns, logger):
     """
     """
-    logger.info("Requested assemblers: %s", " ".join(args.assemblers))
+    logger.debug("Requested assemblers: %s", " ".join(args.assemblers))
     if len(args.assemblers) > 2:
         raise ValueError("A maximum of 2 assemblers can be requested")
     # sanity check assemblers where these have been manually requested...
@@ -1261,7 +1271,7 @@ def select_tools(args, config, reads_ns, logger):
     finisher_tool = get_finisher(args, config, paired=reads_ns.paired)
     varcall_tool = get_varcaller(args, config, paired=reads_ns.paired)
 
-    logger.info("linkage: %s" % linkage_evidence)
+    logger.debug("linkage: %s" % linkage_evidence)
     return Namespace(assemblers=assembler_tools,
                      scaffolder=scaffolder_tool,
                      scaffold_type=linkage_evidence,
@@ -1520,7 +1530,7 @@ def align_reads(dirname, reads_ns,  downsample, args, config, logger):
     bwa_reference = os.path.join(bwa_dir, os.path.basename(args.reference))
     shutil.copyfile(args.reference, bwa_reference)
     if downsample:
-        logger.info("Downsampling reads for insert-size estimation...")
+        logger.debug("Downsampling reads for insert-size estimation...")
         ds_cmds = make_seqtk_ds_cmd(args=args, reads_ns=reads_ns, config=config,
                                 new_coverage=10, outdir=seqtk_dir, logger=logger)
         for cmd in ds_cmds:
@@ -1534,7 +1544,7 @@ def align_reads(dirname, reads_ns,  downsample, args, config, logger):
     else:
         fastq1 = args.fastq1
         fastq2 = args.fastq2
-    logger.info("BWA aligning reads vs $reference...")
+    logger.debug("BWA aligning reads vs reference...")
     bwa_cmds, mapping_sam = make_bwa_cmds(args, config, outdir=bwa_dir, ref=bwa_reference,
                                       reads_ns=reads_ns, fastq1=fastq1,
                                       fastq2=fastq2)
@@ -1572,7 +1582,7 @@ def get_insert_stats(bam, reads_ns, args, config, logger):
     returns        : $ (insert size)
                    : $ (stddev)
     """
-    logger.info("Collecting insert size statistics ")
+    logger.debug("Collecting insert size statistics ")
     stat_dir = os.path.join(args.tmp_dir, "insert_stats", "")
     os.makedirs(stat_dir)
     pic_cmd, statfile = make_picard_stats_command(bam, config=config, picard_outdir=stat_dir)
@@ -1736,6 +1746,74 @@ def get_contig_stats(contigs, ctype):
     ]
 
 
+def get_contig_info(contigs, x):
+    count, count_x = 0, 0
+    all_lengths, all_lengths_x = [], []
+    if os.path.getsize(contigs) == 0:
+        raise ValueError("contigs file is empty!")
+    with open(contigs, "r") as inf:
+        for rec in SeqIO.parse(contigs, "fasta"):
+            length = len(rec.seq)
+            count = count + 1
+            all_lengths.append(length)
+            if length > x:
+                all_lengths_x.append(length)
+                count_x = count_x + 1
+    all_lengths.sort()
+    all_lengths_x.sort()
+    L50, N50 = get_L50_N50(all_lengths)
+    L50_x, N50_x = get_L50_N50(all_lengths_x)
+    return {"count": count, "count_x": count_x,
+            "all_lengths": all_lengths,
+            "all_lengths_x": all_lengths_x,
+            "L50": L50, "N50": N50,
+            "L50_x": L50_x, "N50_x": N50_x,
+            #  I know this is bad, but if you have slashes in our names,
+            # you had this coming
+            "path": "/".join(contigs.split( "/")[-2:])}
+
+
+def get_contig_stats2(contigs, old_contigs=None):
+    """
+    Reports contig statistics on assembly. Reports on scaffolds or
+    contigs depending upon 2nd argument passed - contigs gives values
+    for all contigs and those >200xbp
+
+    required params: $ (path to contigs)
+                 $ ('scaffolds'|'contigs')
+
+    returns          $ (0)
+    """
+    output = [
+        ["Name"],          #0
+        ["count"],         #1
+        ["Max Length"],    #2
+        ["Assembly size"], #3
+        ["L50"],           #4
+        ["N50"],            #5
+        ["path"]            #6
+    ]
+    ctype= "seqs"
+    if old_contigs is not None:
+        results = get_contig_info(old_contigs, x=200)
+        output[0].extend(["Old seqs", "Old seqs > %d" % 200])
+        output[1].extend([results['count'], results['count_x']])
+        output[2].extend([max(results['all_lengths']), max(results['all_lengths_x'])])
+        output[3].extend([sum(results['all_lengths']), sum(results['all_lengths_x'])])
+        output[4].extend([results['L50'], results['L50_x']])
+        output[5].extend([results['N50'], results['N50_x']])
+        output[6].extend([results['path'], ""])
+    results = get_contig_info(contigs, x=200)
+    output[0].extend(["New seqs", "New seqs > %d" % 200])
+    output[1].extend([results['count'], results['count_x']])
+    output[2].extend([max(results['all_lengths']), max(results['all_lengths_x'])])
+    output[3].extend([sum(results['all_lengths']), sum(results['all_lengths_x'])])
+    output[4].extend([results['L50'], results['L50_x']])
+    output[5].extend([results['N50'], results['N50_x']])
+    output[6].extend([results['path'], ""])
+    return output
+
+
 def check_spades_kmers(assembler, cmd, readlen, min_diff=2, logger=None):
     """ warns and fixes bad kmers
     spades = "k=21,23,55"
@@ -1761,13 +1839,13 @@ def check_spades_kmers(assembler, cmd, readlen, min_diff=2, logger=None):
     new_ks = []
     for i in klist:
         if i > readlen:
-            logger.info("removing %d from list of kmers: exceeds read length",
+            logger.warning("removing %d from list of kmers: exceeds read length",
                         i)
         elif readlen - i <= min_diff:
-            logger.info("removing %d from list of kmers: too close " +
+            logger.warning("removing %d from list of kmers: too close " +
                         "to read length", i)
         elif i % 2 == 0:
-            logger.info("removing %d from list of kmers: must be odd", i)
+            logger.warning("removing %d from list of kmers: must be odd", i)
         else:
             new_ks.append(i)
     return "{0} -k {1} {2}".format(
@@ -2015,6 +2093,12 @@ def check_args(args, config):
         raise ValueError("fastqc not found; remove 'q' from --stages")
     if "t" in args.stages.lower() and config.sickle is None:
         raise ValueError("sickle-trim not found; remove 't' from --stages")
+    if "s" in args.stages.lower() and args.scaffolder is None:
+        raise ValueError("scaffolder arg empty; either provide " +
+                         "scaffolder or remove 's' from --stages")
+    if "f" in args.stages.lower() and args.finisher is None:
+        raise ValueError("finisher arg empty; either provide " +
+                         "finisher or remove 'f' from --stages")
 
 
 def make_empty_results_object():
@@ -2187,7 +2271,7 @@ def run_ref_scaffolder(args, tools, config, reads_ns, results, run_id, logger=No
                 unscaffolded_output = replace_placeholders(
                     string=unscaffolded_output,config=config,
                     reads_ns=reads_ns, args=args)
-            subscaff_dir = os.path.join(run_dir, "SIS_" + ref_id)
+            subscaff_dir = os.path.join(run_dir, "SIS_" + ref_id, "")
             os.makedirs(subscaff_dir)
             merge_these_scaffolds.append(os.path.join(subscaff_dir, "scaffolds.fasta"))
             # here we execute the "run" function from the appropriate runner script
@@ -2200,7 +2284,6 @@ def run_ref_scaffolder(args, tools, config, reads_ns, results, run_id, logger=No
     counter = 1
     with open(resulting_scaffold, "w") as outf:
         for scaf_path in merge_these_scaffolds:
-            print(scaf_path)
             with open(scaf_path, "r") as scaf:
                 for rec in SeqIO.parse(scaf, "fasta"):
                     rec.id = "scaffold_%05d" % counter
@@ -2228,7 +2311,7 @@ def run_ref_scaffolder(args, tools, config, reads_ns, results, run_id, logger=No
 #     }
 
 
-    print ("\nScaffolded assembly stats\n=========================\n\n")
+    logger.info ("\nScaffolded assembly stats\n=========================\n\n")
     get_contig_stats(resulting_scaffold, 'scaffolds' );
     return resulting_scaffold
 
@@ -2669,7 +2752,7 @@ def store_orientation(contig, or_count):
         orientations[contig] = '-'
 
 
-def finish_assembly(args, config, reads_ns, results, logger):
+def run_finisher(args, config, reads_ns, tools, results, logger):
     """
     Carried out assembly finishing using selected method
     required params: $ (tmpdir)
@@ -2681,23 +2764,32 @@ def finish_assembly(args, config, reads_ns, results, logger):
 
     returns        : $ (0)
     """
-    logger.info("Finishing assembly with %s", args.finisher)
-    tool = [x for x in config.finishers if x['name'].lower() == args.finisher.lower()]
-    outdir = os.path.join(args.tmp_dir, args.finisher)
-    if tool['create_dir']:
-        os.makedirs(outdir)
-    cmd = replace_placeholders(
-        string=tool['command'],
-        config=config,
-        reads_ns=reads_ns, args=args)
-    logger.debug("running the following command:\n %s". cmd)
-    subprocess.run(cmd,
-                   shell=sys.platform != "win32",
-                   stdout=subprocess.PIPE,
-                   stderr=subprocess.PIPE,
-                   check=True)
-    print ("Finished assembly statistics : \n============================\n")
-    get_contig_stats( "$tmpdir/scaffolds.fasta", 'scaffolds' );
+    logger.info("Finishing assembly with %s", tools.finisher['name'])
+    finisher_dir = os.path.join(args.tmp_dir, tools.finisher['name'], "")
+    os.makedirs(finisher_dir)
+    finished_scaffolds = os.path.join(finisher_dir, tools.finisher['output_scaffolds'])
+    # here we execute the "run" function from the appropriate runner script
+    sub_mains[tools.finisher['name']](config=config, args=args, results=results,
+                               reads_ns=reads_ns,
+                               scaffolds=results.current_scaffolds,
+                               finisher_dir=finisher_dir,
+                               logger=logger)
+    # resulting_scaffold = os.path.join(run_dir, "scaffolds.fasta")
+    # if tool['create_dir']:
+    #     os.makedirs(outdir)
+    # cmd = replace_placeholders(
+    #     string=tool['command'],
+    #     config=config,
+    #     reads_ns=reads_ns, args=args)
+    # logger.debug("running the following command:\n %s". cmd)
+    # subprocess.run(cmd,
+    #                shell=sys.platform != "win32",
+    #                stdout=subprocess.PIPE,
+    #                stderr=subprocess.PIPE,
+    #                check=True)
+    report = get_contig_stats2(finished_scaffolds, results.current_scaffolds )
+    logger.info("Genome finishing with " + tools.finisher['name'] +
+                " statistics:\n" + tabulate.tabulate(report))
 
 
 def build_agp(args, results, reads_ns, evidence, logger):
@@ -3240,8 +3332,8 @@ def main(args=None, logger=None):
             results.current_scaffolds = run_scaffolder(
                 args=args, config=config, tools=tools, reads_ns=reads_ns, results=results,
                 run_id=1, logger=logger)
-
-        if results.current_scaffolds is not None:
+        #TODO why is this here? I still dont understand so we will skip for now
+        if results.current_scaffolds is not None and False:
             # we may have been given a reference for a long read assembly but no
             # scaffolder is used for these by default
             args.scaffolder = "mauve" if args.scaffolder is None else args.scaffolder
@@ -3252,8 +3344,11 @@ def main(args=None, logger=None):
 
     #-------------------------- FINISHING
     if reads_ns.FINISH:
+        REFERENCE_BASED_FINISHER = True
+        results.ID_OK = check_id(args, contigs=results.current_contigs,
+                                 config=config, logger=logger)
         if args.finisher and results.ID_OK:
-            finish_assembly(args, config, reads_ns, results, logger=logger)
+            run_finisher(args, config, reads_ns, tools, results, logger=logger)
 
     #-------------------------- ANNOTATE WITH PROKKA
 
