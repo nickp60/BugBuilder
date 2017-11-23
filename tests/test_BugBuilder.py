@@ -398,9 +398,7 @@ class test_BugBuilder(unittest.TestCase):
     #         bb.parse_available("assemblers", None)
     #     )
 
-    @mock.patch('shutil.which')
-    def test_parse_available_assemblers(self, shumock):
-        shumock.which = "exectuable"
+    def test_parse_available_assemblers(self):
         self.assertEqual(
             ["abyss", "spades", "ribo"],
             bb.parse_available("assemblers", self.static_config)
