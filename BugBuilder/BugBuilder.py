@@ -135,6 +135,17 @@ assemblers:
      default_args: -t __THREADS__ --careful
      insert_size_required: 0
      downsample_reads: 1
+   - name: ribo
+     create_dir: 0
+     min_length: null
+     max_length: null
+     command_se: ribo run -r __REFERENCE__ -S1 __FASTQ1__ -o __TMPDIR__/riboSeed/ --memory __MEMORY__ --cores __THREADS__
+     command_pe: ribo run -r __REFERENCE__ -F __FASTQ1__ --R __FASTQ2__ -o __TMPDIR__/riboSeed/ --memory __MEMORY__ --cores __THREADS__
+     contig_output: __TMPDIR__/seed/final_de_fere_novo_assebmly/contigs.fasta
+     scaffold_output: __TMPDIR__/seed/final_de_fere_novo_assebmly/scaffolds.fasta
+     default_args: null
+     insert_size_required: 0
+     downsample_reads: 1
    - name: celera
      create_dir: 1
      min_length: 75
@@ -368,9 +379,10 @@ sub_mains = {
 
 
 def parse_available(thing, path=None):
+    config_path = get_config_path()
     if path is None: # path var is to allow easier testing
         try:
-            config = return_config(get_config_path(), force=False, hardfail=False, logger=None)
+            config = return_config(config_path, force=False, hardfail=False, logger=None)
         except Exception as e:
             return []
     else:
@@ -380,11 +392,16 @@ def parse_available(thing, path=None):
     thing_list = [x['name'].lower() for x in getattr(config, thing)]
     # return all the names that have an executable available
     # sometimes, if configuring fails, this can result in an attribute arrow
-    try:
-        return [x for x in thing_list if getattr(config, x.replace("-", "_")) is not None]
-    except AttributeError:
-        configure(config)
-        return(parse_available(thing=thing, path=config))
+    # try:
+    return [x for x in thing_list if getattr(config, x.replace("-", "_")) is not None]
+    # except AttributeError:
+    #     print(AttributeError.msg)
+    #     print("It looks like there is a damaged config file; Fixing!")
+    #     sys.exit()
+    #     with open(get_config_path(), "w") as conf:
+    #         conf.write("STATUS: INCOMPLETE")
+    #     configure(config_path)
+    #     return(parse_available(thing=thing, path=get_config_path()))
 
 
 def configure(config_path, hardfail=True):
@@ -393,35 +410,53 @@ def configure(config_path, hardfail=True):
             outfile.write(line)
     all_programs_dict = {
         "mandatory_programs": [
-            'seqtk', 'samtools', 'picard', 'blastn', 'makeblastdb', "nucmer",
-            'R', 'mummer', "delta-filter",  "show-coords",  'bwa', "prokka"],
-        "mandatory_python_programs": [],
+            ['seqtk', 'seqtk'],
+            ['samtools','samtools'],
+            ['picard', 'Picard'],
+            ['blastn', "BLASTn"],
+            ['makeblastdb', "makeblastdb"],
+            ["nucmer", "MUMmer"],
+            ["mummer", "MUMmer"],
+            ["delta-filter", "MUMmer"],
+            ["show-coords", "MUMmer"],
+            ['R', "R"],
+            ['bwa', 'BWA'],
+            ],
         "opt_programs": [
-            'fastqc', 'sickle', 'mauve', 'prokka', "minimus", 'sam2afg',
-            'aragorn', 'prodigal', 'hmmer3', 'infernal','bank-transact',
-            'rnammer', 'tbl2asn', 'abyss', 'celera', "abyss", "abyss-sealer",
-            'gapfiller', 'sspace', 'asn2gb', 'amos' , 'masurca',
-            'gfinisher', 'pilon', 'vcflib', 'cgview'],
-        "opt_python_programs": [
-            'spades', 'sis', 'multifasta', 'barrnap']
+            ["prokka", "PROKKA"],
+            ['fastqc', 'FastQC'],
+            ['sickle', 'sickle-trim'],
+            ['mauve','mauve'],
+            ['ribo', 'riboSeed'],
+            ["minimus", "minimus"], ['sam2afg','sam2afg'],
+            ['aragorn', 'aragorn'], ['prodigal','prodigal'],
+            ['hmmer3', 'hmmer3'], ['infernal','infernal'],
+            ['bank-transact','bank-transact'],
+            ['rnammer','rnammer'], ['tbl2asn','tbl2asn'], ['abyss','abyss'],
+            ['celera','celera'], ["abyss","abyss"], ["abyss-sealer","abyss-sealer"],
+            ['gapfiller','gapfiller'], ['sspace','sspace'], ['asn2gb','asn2gb'],
+            ['amos','amos'] , ['masurca','masurca'],
+            ['gfinisher', 'gfinisher'], ['pilon','pilon'],
+            ['vcflib','vcflib'], ['cgview','cgview'],
+            ['spades.py','spades'],
+            ['sis.py','sis'], ['multifasta.py','multifasta'], ['barrnap','barrnap'],
+            ],
         }
     output_dict = {}
     for category, programs in all_programs_dict.items():
         if len(programs) == 0: # pyyaml will write out curly brackets otherwise
             continue
-        program_dict = dict((k, None) for k in programs)
-        for prog in programs:
+        for prog, name in programs:
             # append .py if we need to (like for spades, sis, etc)
             # cant modify prog cause we need to be able to access name without exention
-            extension = ".py" if "python" in category else ""
-            if shutil.which(prog + extension):
-                # replace dashes with underscores in config names but not in prog
-                output_dict[prog.replace("-", "_")] = shutil.which(prog + extension)
+            if shutil.which(prog):
+                # trim off extension, replace dashes with underscores in config names but not in prog
+                output_dict[os.path.splitext(prog)[0].lower().replace("-", "_")] = shutil.which(prog)
             else:
-                output_dict[prog.replace("-", "_")] = None
+                output_dict[os.path.splitext(prog)[0].lower().replace("-", "_")] = None
                 if "mandatory" in category:
                     if hardfail:
-                        raise OSError("%s is a mandatory program; please install" % prog)
+                        raise OSError("%s is a mandatory program; please install" % name)
     with open(config_path, 'a') as outfile:  # write paths to exes
         yaml.dump(output_dict, outfile, default_flow_style=False)
 
@@ -519,12 +554,11 @@ def get_args():  # pragma: no cover
     optional.add_argument("--long_fastq", dest='long_fastq', action="store",
                           help="Path to fastq file from long-read sequencer",
                           type=str, required="--fastq1" not in sys.argv)
-    optional.add_argument("--reference", dest='reference',
+    optional.add_argument("--references", dest='references',
                           action="store",
-                          nargs="*",
+                          nargs="*", type=str,
                           default=[],
-                          help="Path(s) to fasta formatted reference sequence",
-                          type=str)
+                          help="Path(s) to fasta formatted reference sequence(s)")
     optional.add_argument("--prefix", dest='prefix',
                           action="store",
                           help="Prefix to use for output file naming",
@@ -573,7 +607,7 @@ def get_args():  # pragma: no cover
     optional.add_argument("--downsample", dest='downsample', action="store",
                           help="Downsample depth; set to 0 to skip " +
                           "downsampling. default is 100x ",
-                          type=int, default=None)
+                          type=int, default=100)
     optional.add_argument("--species", dest='species', action="store",
                           help="species of your bug", default="unknown_species",
                           type=str)
@@ -602,7 +636,7 @@ def get_args():  # pragma: no cover
                           help="quality threshold to trim  ", default=20,
                           type=int)
     optional.add_argument("--trim-length", dest='trim_length', action="store",
-                          help="min read klength to retain;" +
+                          help="min read length to retain;" +
                           "50 (25 for reads <50bp)", default=50,
                           type=int)
     # optional.add_argument("--skip-split-origin", dest='skip_split_origin',
@@ -659,15 +693,15 @@ def get_args():  # pragma: no cover
                           type=int, default=4)
     optional.add_argument("--stages", dest='stages', action="store",
                           help="R| which stages of BugBuilder will run:\n" +
-                          "  qQ = QC reads\n" +
-                          "  tT = trim reads\n" +
-                          "  dD = downsample reads\n" +
-                          "  aA = run assembler (s)\n" +
-                          "  bB = break contig at the origin\n" +
-                          "  sS = scaffold the contigs\n" +
-                          "  fF = run polishing finisher on the assembly\n"+
-                          "  vV = call variants\n"
-                          "  gG = gene-call with prokka\n" +
+                          "  q = QC reads\n" +
+                          "  t = trim reads\n" +
+                          "  d = downsample reads\n" +
+                          "  a = run assembler (s)\n" +
+                          "  b = break contig at the origin\n" +
+                          "  s = scaffold the contigs\n" +
+                          "  f = run polishing finisher on the assembly\n"+
+                          "  v = call variants\n"
+                          "  g = gene-call with prokka\n" +
                           "default: %(default)s",
                           type=str, default="qtdabsfvg")
     optional.add_argument("-v", "--verbosity", dest='verbosity',
@@ -719,13 +753,14 @@ def set_up_logging(verbosity, outfile, name):
         str("%(asctime)s \u001b[3%(levelname)s\033[1;0m  %(message)s"), "%H:%M:%S")
     console_err.setFormatter(console_err_format)
     # set some pretty colors, shorten names of loggers to keep lines aligned
+    #  the "4m " etc is a bit annoying, but I'd rather have a colored console
+    #  than a spotless log file
     logging.addLevelName(logging.DEBUG,    "4m ..")
     logging.addLevelName(logging.INFO,     "2m --")
     logging.addLevelName(logging.WARNING,  "3m !!")
     logging.addLevelName(logging.ERROR,    "1m xx")
     logging.addLevelName(logging.CRITICAL, "1m XX")
     logger.addHandler(console_err)
-    # create debug file handler and set level to debug
     logger.debug("Initializing logger")
     logger.debug("logging at level {0}".format(verbosity))
     return logger
@@ -812,17 +847,15 @@ def check_files_present(args):
         ValueError: file not found
         ValueError: reference missing in draft mode
     """
-    for f in [args.fastq1, args.fastq2, args.reference]:
+    file_list = args.references[:]  # beware this needs to be a deep copy
+    file_list.extend([args.fastq1, args.fastq2])
+    for f in file_list:
         if f is not None and not os.path.exists(f):
             raise ValueError("file %s does not exist!" % f)
     if args.fastq2 is not None and args.fastq1 == args.fastq2:
         raise ValueError("fastq1 and fastq2 are the same!")
-    if args.mode == "draft" and args.reference is None:
+    if args.mode == "draft" and len(args.references) == 0:
         raise ValueError("Draft mode requiresa reference!")
-    # if args.reference is not None:
-    #      if not os.path.exists(args.reference):
-    #          raise ValueError(
-    #              "reference sequence %s does not exist!" % args.reference )
 
 
 def fastq_needs_newname(args):
@@ -895,14 +928,17 @@ def setup_tmp_dir(args, output_root, logger):
     # so, rewrite the reference fasta file to ensure these just contain the id.
     # accepted formats are for ENA and Genbank format fasta headers, as well as plain IDs
     #  Or in this case, let BioPython complain
-    if args.reference:
-        new_reference = os.path.join(args.tmp_dir, os.path.basename(args.reference))
-        with open(args.reference, "r") as inf:
-            for rec in SeqIO.parse(inf, "fasta"):
-                with open(new_reference, "a") as outf:
-                    rec.desc = None
-                    SeqIO.write(rec, outf, 'fasta')
-        args.reference = new_reference
+    if len(args.references) != 0:
+        new_refs = []
+        for reference in args.references:
+            new_reference = os.path.join(args.tmp_dir, os.path.basename(reference))
+            with open(reference, "r") as inf:
+                for rec in SeqIO.parse(inf, "fasta"):
+                    with open(new_reference, "a") as outf:
+                        rec.desc = None
+                        SeqIO.write(rec, outf, 'fasta')
+            new_refs.append(new_reference)
+        args.references = new_refs
 
 
 def return_open_fun(f):
@@ -1023,11 +1059,14 @@ def assess_reads(args, config, platform, logger=None):
     long_stddev = 0
     tot_length = 0
     long_tot_length = 0
+    short_libs = 0 # to be used to calc coverage
     # get the lengths of all the short reads
     type_list = ["short", "short", "long"]
     for i, read in enumerate([args.fastq1, args.fastq2, args.long_fastq]):
         if  read is None or not os.path.exists(read):
             continue
+        if i < 2:  # ie, not the long_fastq
+            short_libs = short_libs + 1
         lengths = get_read_lens_from_fastq(read, logger=logger)
         if type_list[i] == "long":
             tot_long_length = tot_long_length + sum(lengths)
@@ -1076,19 +1115,27 @@ def assess_reads(args, config, platform, logger=None):
     long_coverage = 0
 
     if args.genome_size == 0:
-        logger.debug("Infering genome size from reference")
-        if args.reference is not None and os.path.exists(args.reference):
-            with open(args.reference, "r") as inf:
-                for rec in SeqIO.parse(inf, "fasta"):
-                    args.genome_size = args.genome_size + len(rec.seq)
+        if len(args.references) != 0:
+            logger.debug("Infering genome size from reference(s)")
+            size_list = []  # [ref, size]
+            for ref in args.references:
+                this_size = 0
+                with open(ref, "r") as inf:
+                    for rec in SeqIO.parse(inf, "fasta"):
+                        this_size = this_size + len(rec.seq)
+                size_list.append([ref, this_size])
+            logger.debug("Refence Genome sizes:")
+            logger.debug(size_list)
+            args.genome_size = int(statistics.mean([x[1] for x in size_list]))
     logger.info("Genome Size: %d", args.genome_size)
-    logger.info("Genome Length: %d", tot_length)
+    logger.debug("Length of all reads: %d", tot_length)
     coverage, long_coverage = None, None
     try:
-        coverage = round(float(tot_length / args.genome_size), 3)
+        # (total length of libraries/genome_size) / number of libraries
+        coverage = round(float((tot_length / args.genome_size) / short_libs), 3)
         long_coverage = round(float(long_tot_length / args.genome_size), 3)
     except:
-        logger.warning("Cannot calculate coverage without a reference!")
+        logger.error("Cannot calculate coverage without a reference!")
     encoding = id_fastq_encoding(args, logger)
     return Namespace(lib_type=lib_type, encoding=encoding,
                      read_length_mean=mean,
@@ -1107,7 +1154,7 @@ def check_ref_needed(args, lib_type):
     """ ensure either a reference or genome size is provided for long read assembly
     """
     if lib_type == "long" :
-        if (args.genome_size is 0 and args.reference is None):
+        if args.genome_size == 0 and len(args.references) != 0:
             raise ValueError("Please supply a genome size or reference " +
                              "sequence when running a long-read assembly")
 
@@ -1174,7 +1221,7 @@ def check_and_get_assemblers(args, config, reads_ns, logger):
             if conf_assembler['max_length'] and reads_ns.read_length_mean > conf_assembler['max_length']:
                 raise ValueError("%s does not support reads greather than %d" % \
                                  (assembler, conf_assembler['max_length']))
-            if conf_assembler['insert_size_required'] and not reads_ns.insert_mean and not args.reference:
+            if conf_assembler['insert_size_required'] and not reads_ns.insert_mean and len(args.references) == 0:
                 raise ValueError(str("%s requires the library insert size and " +
                                  "stddev to be provided. Please add the " +
                                  "--insert-size and --insert-stddev " +
@@ -1200,7 +1247,7 @@ def get_scaffolder_and_linkage(args, config, paired, logger):
         raise ValueError(str(
             "%s requires paired reads, but you only specified " +
             "one fastq file.") % args.scaffolder)
-    elif "align" in conf_scaffolder['linkage_evidence'] and args.reference is None:
+    elif "align" in conf_scaffolder['linkage_evidence'] and len(args.references) == 0:
         raise ValueError(str("%s requires a reference for alignment, " +
                              "but none is specified.") % args.scaffolder)
     else:
@@ -1227,7 +1274,7 @@ def get_finisher(args, config, paired):
         raise ValueError("%s not an available finisher!" %args.finisher)
     for conf_finisher in config.finishers:
         if conf_finisher['name'] == args.finisher:
-            if args.reference is None and conf_finisher['ref_required']:
+            if len(args.references) == 0 and conf_finisher['ref_required']:
                 raise ValueError("%s requires a reference." % \
                                      args.finisher)
             elif not paired and conf_finisher['paired_reads']:
@@ -1243,7 +1290,7 @@ def get_varcaller(args, config, paired):
         raise ValueError("%s not an available varcaller!" %args.varcaller)
     for conf_varcallers in config.varcallers:
         if conf_varcallers['name'] == args.varcaller:
-            if args.reference is None and conf_varcallers['ref_required']:
+            if len(args.references) == 0 and conf_varcallers['ref_required']:
                 raise ValueError("%s requires reference"  % args.varcaller)
             return conf_varcallers
 
@@ -1630,7 +1677,7 @@ def replace_placeholders(string, config=None, reads_ns=None, args=None, results=
         "__ORIG_FASTQ2__": [args, "untrimmed_fastq2"],
         "__DE_FERE_CONTIGS__": [args, "de_fere_contigs"],
         "__LONGFASTQ__": [args, "long_fastq"],
-        "__REFERENCE__": [args, "reference"],
+        "__REFERENCE__": [results, "current_reference"],
         "__CATEGORY__": [reads_ns, "lib_type"],
         "__ENCODING__": [reads_ns, "encoding"],
         "__GENOME_SIZE__": [args, "genome_size"],
@@ -2099,7 +2146,7 @@ def check_args(args, config):
             continue
         for tool in getattr(config, thing + "s"):
             if tool['name'].lower() == getattr(args, thing):
-                if len(args.reference) is None and tool['ref_required']:
+                if len(args.references) == 0 and tool['ref_required']:
                     raise ValueError("%s %s requires a reference." % \
                                      (thing, getattr(args, thing)))
     # ensure exes are there for fastqc, seqtk
@@ -2130,9 +2177,10 @@ def make_empty_results_object():
         reference_percent_sim=None, # to be set by check_id
         current_contigs=None, current_scaffolds=None,
         current_reference=None,
-        reference_percent_sim=None,
         current_contigs_source=None, current_scaffolds_source=None,
         current_embl=None, # run_prokka fills this in
+        current_embl_source=None, # run_prokka fills this in
+        old_embl=[[None, None]],  # [path, source]
         old_contigs=[[None, None]],  # [path, source]
         old_scaffolds=[[None, None]],  # [path, source]
         old_references=[[None, None]],  # [path, source]
@@ -2225,7 +2273,7 @@ def run_ref_scaffolder(args, tools, config, reads_ns, results, run_id, logger=No
     merge_these_scaffolds = []
     # this helps keep trak of resulting files
     ref_list = [] # [ref_id, ref_path]
-    with open(args.reference, "r") as ref:
+    with open(results.current_reference, "r") as ref:
         for idx, rec in enumerate(SeqIO.parse(ref, "fasta")):
             ref_list.append([rec.id, os.path.join(run_dir, "reference_" + rec.id)])
             with open(ref_list[idx][1], "w") as outf:
@@ -2246,18 +2294,18 @@ def run_ref_scaffolder(args, tools, config, reads_ns, results, run_id, logger=No
     if True:
         reference_copy = os.path.join(run_dir, "reference_for_scaffolding.fasta")
         contigs_copy = os.path.join(run_dir, "contigs_to_be_scaffolded.fasta")
-        shutil.copyfile(args.reference, reference_copy)
+        shutil.copyfile(results.current_reference, reference_copy)
         shutil.copyfile(results.current_contigs, contigs_copy)
-        blast_cmd = str("{0} -query {1} -subject {2}  -task blastn -out " +
-                        "{3}clusters.blast 2>&1 > {3}blastn.log").format(
-                            config.blastn, contigs_copy, args.reference, run_dir)
-        blast_cmd2 = str("{0} -query {1} -subject {2} -outfmt 6 -out " +
+        # blast_cmd = str("{0} -query {1} -subject {2}  -task blastn -out " +
+        #                 "{3}clusters.blast 2>&1 > {3}blastn.log").format(
+        #                     config.blastn, contigs_copy, reference_copy, run_dir)
+        blast_cmd = str("{0} -query {1} -subject {2} -outfmt 6 -out " +
                   "{3}clusters.tab 2>&1 > {3}blastn.log").format(
-                      config.blastn, contigs_copy, args.reference, run_dir)
-        blast_cmd3 = str("{0} -query {1} -subject {2} -outfmt 5 -evalue 0.01 -out " +
-                  "{3}clusters.xml 2>&1 > {3}blastn.log").format(
-                      config.blastn, contigs_copy, args.reference, run_dir)
-        for cmd in [blast_cmd, blast_cmd2, blast_cmd3]:
+                      config.blastn, contigs_copy, results.current_reference, run_dir)
+        # blast_cmd3 = str("{0} -query {1} -subject {2} -outfmt 5 -evalue 0.01 -out " +
+        #           "{3}clusters.xml 2>&1 > {3}blastn.log").format(
+        #               config.blastn, contigs_copy, args.references, run_dir)
+        for cmd in [blast_cmd]:
             subprocess.run(cmd,
                            shell=sys.platform != "win32",
                            stdout=subprocess.PIPE,
@@ -2419,7 +2467,7 @@ def run_pe_scaffolder(args, config, reads_ns, results, run_id, logger=None):
     # this helps keep trak of resulting files
     ref_ids = []
     ref_paths = []
-    with open(args.reference, "r") as ref:
+    with open(results.current_reference, "r") as ref:
         for idx, rec in enumerate(SeqIO.parse(ref, "fasta")):
             ref_ids.append(rec.id)
             ref_paths.append(os.path.join(run_dir, "reference_" + rec.id))
@@ -2529,13 +2577,13 @@ def find_origin(config, args, results, ori_dir, flex, logger):
     returns a dict {seqID: "contig_name:ori",...}
     """
     logger.info("Attempting to identify origin...");
-    cmds, ori_coords =  make_nucmer_delta_show_cmds(config=config, ref=args.reference,
+    cmds, ori_coords =  make_nucmer_delta_show_cmds(config=config, ref=results.current_reference,
                                        query=results.current_scaffolds,
                                        out_dir=ori_dir, prefix="ori", header=False)
     run_nucmer_cmds(cmds, logger)
     pattern = re.compile("\s+")
     origin_dict = {}
-    with open(args.reference, "r") as inf:
+    with open(results.current_reference, "r") as inf:
         for rec in SeqIO.parse(inf, "fasta"):
             FOUND = False
             with open(ori_coords, "r") as coords:
@@ -2606,6 +2654,10 @@ def find_and_split_origin(args, config, results, tools, reads_ns, logger):
                 else:
                     rec.id = "Scaffold_%05d" % counter
                     SeqIO.write(rec, splitscaff, "fasta")
+        report = get_contig_stats2(splitIO, old_contigs=results.current_scaffolds);
+        logger.info ("\n\nScaffolded assembly stats post - breaking origin" +
+                     "\n=========================\n" +
+                     tabulate.tabulate(report) + "\n")
 
     #                 #  now, rerun scaffolder on our split origins
     #                 results.old_scaffolds.append([results.current_scaffolds,
@@ -2817,6 +2869,8 @@ def run_finisher(args, config, reads_ns, tools, results, logger):
                  " statistics:\n"
                  "=========================\n" +
                  tabulate.tabulate(report) + "\n")
+    update_results(results=results, thing="scaffolds", path=finished_scaffolds,
+                   source=tools.finisher['name'] )
 
 
 def build_agp(args, results, reads_ns, evidence, logger):
@@ -2856,26 +2910,26 @@ def build_agp(args, results, reads_ns, evidence, logger):
     with open(results.current_scaffolds, "r") as scaffold_inIO:
         for scaffold in SeqIO.parse(scaffold_inIO, "fasta"):
             scaffold_count = scaffold_count + 1
-            contig_start = 0
             scaffold_loc = 1
             scaffold_id  = scaffold.id;
             scaff_count  = scaffold_count
-            scaffold_id = "scaffold_%06s"  %scaff_count
+            scaffold_id = "scaffold_%06s" % scaff_count
             scaffold_end = len(scaffold.seq);
-            contig_end, gap_start, gap_end = 0, 0, 0
+            contig_start, contig_end, gap_start, gap_end = 0, None, None, None
 
             bases = list(scaffold.seq)
             # location tracking for included contigs/gaps
             contigs_dict, gaps = {}, []
             # this is kind of crude, but seems to work...
             for idx, base in enumerate(bases):
-                if base != "N" and not gap_start:
+                print("{}, {}, gs: {}; ge: {}".format(idx, base, gap_start, gap_end ))
+                if base != "N" and gap_start is None:
                     contig_end = idx
-                elif base == "N" and not gap_start:
+                elif base == "N" and gap_start is None:
                     gap_start = idx
                 # elif base != "N" and  gap_start:
                 else:
-                    assert base != "N" and  gap_start, "something wrong with AGP"
+                    assert base != "N" and gap_start is not None, "something wrong with AGP"
                     gap_end = idx
                     gap_length = gap_end - gap_start
 
@@ -3003,67 +3057,45 @@ def run_prokka(config, args, results, logger):
     """
     logger.info("Starting PROKKA...")
     #use scaffolds if we have them, otherwise contigs....
-    if results.curent_scaffolds is not None:
+    if results.current_scaffolds is not None:
         seqs = results.current_scaffolds
     else:
+        update_results(results, thing="scaffolds",
+                       path=results.current_contigs,
+                       source="current_contigs, pre prokka" )
         seqs = results.current_contigs
 
     prokka_dir = os.path.join(args.tmp_dir, "prokka", "")
     # os.makedirs(prokka_dir)
 
-    cmd = "{0} --addgenes --outdir {1} --prefix prokka --genus {2} --species {3} --strain {4} --locustag {5} --centre {6} {7}> {1}prokka.log 2>&1".format(
+    cmd = str("{0} --addgenes --outdir {1} --prefix prokka --genus {2} " +
+              "--species {3} --strain {4} --locustag {5} --centre {6} " +
+              "--cpus {7} {9} > {8}prokka.log 2>&1").format(
         config.prokka, #0
-        prokka_dir, #1
-        args.genus,#2
-        args.species,#3
-        args.strain,#4
-        args.locustag,#5
-        args.centre,#6
+        prokka_dir,    #1
+        args.genus,    #2
+        args.species,  #3
+        args.strain,   #4
+        args.locustag, #5
+        args.centre,   #6
+        args.threads,  #7
+        args.tmp_dir,  #8
         seqs)
-    logger.debug("running the following command:\n %s". cmd)
+    logger.debug("running the following command:\n %s", cmd)
     subprocess.run(cmd,
                    shell=sys.platform != "win32",
                    stdout=subprocess.PIPE,
                    stderr=subprocess.PIPE,
                    check=True)
-
-#     # my $inIO        = Bio::SeqIO->new( -file => "$tmpdir/prokka/prokka.gbf",     -format => 'genbank' );
-#     my $inIO        = Bio::SeqIO->new( -file => "$tmpdir/prokka/prokka.gbk",     -format => 'genbank' );
-#     my $embl_outIO  = Bio::SeqIO->new( -file => ">$tmpdir/prokka/prokka.embl",   -format => 'embl' );
-#     my $fasta_outIO = Bio::SeqIO->new( -file => ">$tmpdir/prokka/${type}.fasta", -format => 'fasta' );
-
-#     # something is losing the scaffold/contig naming so needs to be regenerated...
-#     # at least ordering should be conserved
-#     my $count = 0;
-#     while ( my $seq = $inIO->next_seq() ) {
-#         my $label;
-#         ( $type eq 'scaffolds' ) ? ( $label = 'scaffold' ) : ( $label = 'contig' );
-#         my $id = sprintf( "${label}_%06s", ++$count );
-#         $seq->display_id($id);
-#         $seq->accession($id);
-#         $embl_outIO->write_seq($seq);
-#         $fasta_outIO->write_seq($seq);
-#     }
-
-#     chdir $tmpdir or die "Error chdiring to $tmpdir: $!";
-#     unlink "scaffolds.fasta" or die "Error removing scaffolds.fasta: $!" if ( $type eq 'scaffolds' );
-    results.current_embl = os.path.join(prokka_dir, "prokka.embl")
-    print("PReIPDATE")
-    # update_results(results, "embl", path=os.path.join(prokka_dir, , source )
-    update_results(results, thing="contigs",
-                   path=os.path.join(prokkadir, "scaffolds.fasta"), source="prokka" )
-    print("POST")
-#     symlink( "prokka/prokka.embl", "$type.embl" )
-#       or die "Error creating $type.embl symlink: $!";
-#     symlink( "prokka/scaffolds.fasta", "scaffolds.fasta" )
-#       or die "Error creating scaffolds.fasta symlink: $!"
-#       if ( $type eq 'scaffolds' );
-
-#     return (0);
-# }
+    update_results(results, thing="embl",
+                   path=os.path.join(prokka_dir, "prokka.embl"), source="prokka" )
+    update_results(results, thing="scaffolds",
+                   path=os.path.join(prokka_dir, "prokka.fasta"), source="prokka" )
 
 
 def update_results(results, thing, path, source ):
+    """ this bumps a current thing to a list of old things, updating the attribute with a new thing
+    """
     assert thing in ["embl", "contigs", "scaffolds"], "cant update %s" % thing
     getattr(results, "old_" + thing).append(
         [getattr(results, "current_" + thing),
@@ -3217,11 +3249,6 @@ def main(args=None, logger=None):
     check_args(args, config)
 
     setup_tmp_dir(args, output_root=args.outdir, logger=logger)
-    # if args.reference is None:
-    #     reference = None
-    # else:
-    #     reference = os.path.basename(args.reference)
-    #  need to know a bit about the provided reads so we can act appropriately
 
     # copy paths to raw reads in case we need them for mascura
     args.untrimmed_fastq1 = args.fastq1
@@ -3267,10 +3294,10 @@ def main(args=None, logger=None):
                 config=config, new_cov=args.downsample, logger=logger)
 
     #-------------------------- Report status, pre assembly
-    if args.fastq2 and len(args.reference) != 0:
+    if args.fastq2 and len(args.references) != 0:
         logger.info("Aligning reads to first reference " +
-                    "%s for determinging insert size" % args.reference[0])
-        sorted_bam = align_reads(ref=args.reference[0], dirname="align", reads_ns=reads_ns,
+                    "%s for determinging insert size" % args.references[0])
+        sorted_bam = align_reads(ref=args.references[0], dirname="align", reads_ns=reads_ns,
                                  config=config, downsample=True, args=args, logger=logger)
         reads_ns.insert_mean, reads_ns.insert_stddev = get_insert_stats(
             bam=sorted_bam, config=config, args=args, reads_ns=reads_ns, logger=logger)
@@ -3331,16 +3358,17 @@ def main(args=None, logger=None):
     logger.debug("ARGS:")
     logger.debug(args.__dict__)
     #-------------------------  Check our reference(s)
-    if len(args.reference) > 0:
-        if len(args.reference) == 1:
-            results.current_reference = args.reference[0]
-            results.ID_OK, results.reference_percent_sim = check_id(args.reference, args, contigs=results.current_contigs,
-                                     results=results, config=config, logger=logger)
-        if len(args.reference) > 1:
+    if len(args.references) > 0:
+        if len(args.references) == 1:
+            results.current_reference = args.references[0]
+            results.ID_OK, results.reference_percent_sim = check_id(
+                results.current_reference, args, contigs=results.current_contigs,
+                results=results, config=config, logger=logger)
+        if len(args.references) > 1:
             # if multiple references provided, select the primary, most similar one
             percent_list = []  # [ref, 5]
-            for reference in args.references:
-                ID_OK, percent = check_id(args, contigs=results.current_contigs,
+            for reference in args.referencess:
+                ID_OK, percent = check_id(reference, args, contigs=results.current_contigs,
                                      results=results, config=config, logger=logger)
                 if ID_OK:  # ignore any dodgey ones from the list
                     percent_list.append([percent, reference])
@@ -3348,7 +3376,7 @@ def main(args=None, logger=None):
                     logger.warning(
                         "ignoring reference %s, which only bears ~ %d similarity" %
                         (reference, percent))
-                    args.reference = [x for x in args.reference if x != reference]
+                    args.references = [x for x in args.references if x != reference]
             best_hit = sorted(percent_list)[-1]
             results.current_reference = best_hit[1]
             results.reference_percent_sim = best_hit[0]
@@ -3357,7 +3385,8 @@ def main(args=None, logger=None):
     if reads_ns.BREAK:
     #TODO why do we check scaffolder here?
     #  ensure that our reference is close enough before continuing
-        if args.scaffolder and results.current_reference:
+        if args.scaffolder and results.current_reference is None:
+            logger.error("Cannot break contigs at an origin without a reference")
         # if we have a reference, lets break the origin here, before scaffolding
         if results.ID_OK:
             find_and_split_origin(args=args, config=config, results=results,
@@ -3442,9 +3471,9 @@ def main(args=None, logger=None):
             evidence = tools.scaffolder['linkage_evidence']
         except:
             evidence = "paired-ends"
-        gaps = build_agp(args, results, reads_ns,
-                         evidence=evidence,
-                         logger=logger)
+        # gaps = build_agp(args, results, reads_ns,
+        #                  evidence=evidence,
+        #                  logger=logger)
         run_prokka(config, args, results, logger)
 
     amosvalidate_results = None
