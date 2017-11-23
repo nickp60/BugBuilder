@@ -1154,7 +1154,7 @@ def check_ref_needed(args, lib_type):
     """ ensure either a reference or genome size is provided for long read assembly
     """
     if lib_type == "long" :
-        if args.genome_size == 0 and len(args.references) != 0:
+        if args.genome_size == 0 and len(args.references) == 0:
             raise ValueError("Please supply a genome size or reference " +
                              "sequence when running a long-read assembly")
 
@@ -2049,7 +2049,7 @@ def check_id(ref, args, contigs, config, results, logger):
         for line in inf:
             fake_aves.append(float(line.strip().split("\t")[2]))
     try:
-        percent_id = statistics.mean(fake_aves)
+        percent_id = round(statistics.mean(fake_aves), 3)
     except statistics.StatisticsError: # usually a "mean requires at least one data point"
         percent_id = 0.0
     logger.debug("percent id between reference and contigs: %d", percent_id)

@@ -32,7 +32,12 @@ class test_BugBuilder(unittest.TestCase):
         self.aa_dir = os.path.join(os.path.dirname(__file__), "already_assembled_dir")
         self.empty_config = os.path.join(self.ref_dir, "empty_config.yaml")
         self.broken_config = os.path.join(self.ref_dir, "broken_config.yaml")
-        self.filled_config = os.path.join(self.ref_dir, "semicomplete_config.yaml")
+        # the active config actually gets used to run sys commands so feel free
+        # to run `mv tests/tmp_tests/to_be_filled.yaml ./tests/references/semicomplete_config.yaml`
+        # if you have a error from a wrong executable
+        self.active_config = os.path.join(self.ref_dir, "semicomplete_config.yaml")
+        # static config should not be changed, it is just used to test parsing
+        self.static_config = os.path.join(self.ref_dir, "static_config.yaml")
         self.ref_fasta = os.path.join(self.ref_dir, "AP017923.1.fasta")
         self.ref_split = os.path.join(self.ref_dir, "2chrom.fasta")
         self.ref_split_1 = os.path.join(self.ref_dir, "2chrom1.fq")
@@ -109,31 +114,31 @@ class test_BugBuilder(unittest.TestCase):
 
     def test_check_files_present(self):
         test_args = Namespace(fastq1=self.fastq1, fastq2=self.fastq2,
-                              reference=self.ref_fasta, mode="draft")
+                              references=[self.ref_fasta], mode="draft")
         bb.check_files_present(test_args)
 
     def test_check_files_present_not_exist(self):
         test_args = Namespace(fastq1=self.fastq1, fastq2=self.fastq2,
-                              reference="notarealfile", mode="draft")
+                              references=["notarealfile"], mode="draft")
         with self.assertRaises(ValueError):
             bb.check_files_present(test_args)
 
     def test_check_files_present_same_files(self):
         test_args = Namespace(fastq1=self.fastq1, fastq2=self.fastq1,
-                              reference=self.ref_fasta, mode="draft")
+                              references=[self.ref_fasta], mode="draft")
         with self.assertRaises(ValueError):
             bb.check_files_present(test_args)
 
     def test_check_files_present_bad_mode(self):
         test_args = Namespace(fastq1=self.fastq1, fastq2=self.fastq1,
-                              reference=None, mode="draft")
+                              references=[], mode="draft")
         with self.assertRaises(ValueError):
             bb.check_files_present(test_args)
 
     def test_setup_tmp_dir(self):
         tmp_dir = os.path.join(self.test_dir, "tmp_setup")
         test_args = Namespace(fastq1=self.fastq1, fastq2=self.fastq2,
-                              reference=self.ref_fasta, mode="draft",
+                              references=[self.ref_fasta], mode="draft",
                               tmp_dir=tmp_dir, long_fastq=None,
                               de_fere_contigs=None)
         bb.setup_tmp_dir(args=test_args, output_root=tmp_dir, logger=logger)
@@ -152,7 +157,7 @@ class test_BugBuilder(unittest.TestCase):
     def test_setup_tmp_dir_existingdir(self):
         with self.assertRaises(SystemExit):
             bad_test_args = Namespace(fastq1=self.fastq1, fastq2=self.fastq2,
-                                      reference=self.ref_fasta, mode="draft",
+                                      references=[self.ref_fasta], mode="draft",
                                       tmp_dir=self.test_dir, long_fastq=None,
                                       de_fere_contigs=None)
             bb.setup_tmp_dir(args=bad_test_args,
@@ -161,7 +166,7 @@ class test_BugBuilder(unittest.TestCase):
 
     def test_fastq_needs_newname(self):
         test_args = Namespace(fastq1=self.renaming_fq, fastq2=self.fastq2,
-                              reference=None, mode="draft")
+                              references=[], mode="draft")
         self.assertTrue(bb.fastq_needs_newname(test_args))
 
     def test_rename_fastq_seqids(self):
@@ -196,28 +201,28 @@ class test_BugBuilder(unittest.TestCase):
     def test_assess_reads(self):
         test_args = Namespace(
             fastq1=self.fastq1, fastq2=self.fastq2, long_fastq=None,
-            de_fere_contigs=None, reference=self.ref_fasta, genome_size=0)
-        config = bb.parse_config(self.filled_config)
+            de_fere_contigs=None, references=[self.ref_fasta], genome_size=0)
+        config = bb.parse_config(self.active_config)
         reads_ns = bb.assess_reads(args=test_args, config=config,
                                 platform="illumina", logger=logger)
-        self.assertEqual(9.996, reads_ns.coverage)
+        self.assertEqual(4.998, reads_ns.coverage)
         self.assertEqual("sanger", reads_ns.encoding)
         self.assertEqual("long_illumina", reads_ns.lib_type)
 
-    def test_assess_reads_nanopore(self):
-        test_args = Namespace(
-            fastq1=self.fastq1, fastq2=self.fastq2, long_fastq=None,
-            de_fere_contigs=None, reference=self.ref_fasta, genome_size=0)
-        config = bb.parse_config(self.filled_config)
-        reads_ns = bb.assess_reads(args=test_args, config=config,
-                                platform="illumina", logger=logger)
-        self.assertEqual(9.996, reads_ns.coverage)
-        self.assertEqual("sanger", reads_ns.encoding)
-        self.assertEqual("long_illumina", reads_ns.lib_type)
+    # def test_assess_reads_nanopore(self):
+    #     test_args = Namespace(
+    #         fastq1=self.fastq1, fastq2=self.fastq2, long_fastq=None,
+    #         de_fere_contigs=None, references=[self.ref_fasta], genome_size=0)
+    #     config = bb.parse_config(self.active_config)
+    #     reads_ns = bb.assess_reads(args=test_args, config=config,
+    #                             platform="illumina", logger=logger)
+    #     self.assertEqual(9.996, reads_ns.coverage)
+    #     self.assertEqual("sanger", reads_ns.encoding)
+    #     self.assertEqual("long_illumina", reads_ns.lib_type)
 
 
     def test_check_ref_needed(self):
-        test_args = Namespace(genome_size=0, reference=None)
+        test_args = Namespace(genome_size=0, references=[])
         with self.assertRaises(ValueError):
             bb.check_ref_needed(args=test_args, lib_type="long")
 
@@ -227,8 +232,8 @@ class test_BugBuilder(unittest.TestCase):
     def test_check_assemblers_bad_assembler(self):
         test_args = Namespace(
             fastq1=self.fastq1, fastq2=self.fastq2, long_fastq=None,
-            de_fere_contigs=None, reference=self.ref_fasta, genome_size=0)
-        config = bb.parse_config(self.filled_config)
+            de_fere_contigs=None, references=[self.ref_fasta], genome_size=0)
+        config = bb.parse_config(self.active_config)
         reads_ns = bb.assess_reads(args=test_args, config=config,
                                 platform="illumina", logger=logger)
         test_args.assemblers = ["notAnAssembler"]
@@ -239,8 +244,8 @@ class test_BugBuilder(unittest.TestCase):
     def test_check_assemblers_none_provided(self):
         test_args = Namespace(
             fastq1=self.fastq1, fastq2=self.fastq2, long_fastq=None,
-            de_fere_contigs=None, reference=self.ref_fasta, genome_size=0)
-        config = bb.parse_config(self.filled_config)
+            de_fere_contigs=None, references=[self.ref_fasta], genome_size=0)
+        config = bb.parse_config(self.active_config)
         reads_ns = bb.assess_reads(args=test_args, config=config,
                                    platform="illumina", logger=logger)
         test_args.assemblers = []
@@ -252,8 +257,8 @@ class test_BugBuilder(unittest.TestCase):
     def test_check_assemblers_too_long_reads(self):
         test_args = Namespace(
             fastq1=self.fastq1, fastq2=self.fastq2, long_fastq=None,
-            de_fere_contigs=None, reference=self.ref_fasta, genome_size=0)
-        config = bb.parse_config(self.filled_config)
+            de_fere_contigs=None, references=[self.ref_fasta], genome_size=0)
+        config = bb.parse_config(self.active_config)
         reads_ns = bb.assess_reads(args=test_args, config=config,
                                    platform="illumina", logger=logger)
         test_args.assemblers = ["spades"]
@@ -265,8 +270,8 @@ class test_BugBuilder(unittest.TestCase):
     def test_check_assemblers_need_insertsize(self):
         test_args = Namespace(assemblers=['mascura'],
             fastq1=self.fastq1, fastq2=self.fastq2, long_fastq=None,
-            de_fere_contigs=None, reference=None, genome_size=0)
-        config = bb.parse_config(self.filled_config)
+            de_fere_contigs=None, references=[], genome_size=0)
+        config = bb.parse_config(self.active_config)
         reads_ns = bb.assess_reads(args=test_args, config=config,
                                    platform="illumina", logger=logger)
         test_args.assemblers = ["spades"]
@@ -278,8 +283,8 @@ class test_BugBuilder(unittest.TestCase):
     def test_check_assemblers_too_short(self):
         test_args = Namespace(assemblers=['PBcR'],
             fastq1=self.fastq1, fastq2=self.fastq2, long_fastq=None,
-            de_fere_contigs=None, reference=None, genome_size=0)
-        config = bb.parse_config(self.filled_config)
+            de_fere_contigs=None, references=[], genome_size=0)
+        config = bb.parse_config(self.active_config)
         reads_ns = bb.assess_reads(args=test_args, config=config,
                                    platform="illumina", logger=logger)
         test_args.assemblers = ["spades"]
@@ -290,15 +295,15 @@ class test_BugBuilder(unittest.TestCase):
 
     def test_get_scaffolder_and_linkage(self):
         test_args = Namespace(
-            scaffolder="sis", reference=self.ref_fasta)
-        config = bb.parse_config(self.filled_config)
+            scaffolder="sis", references=[self.ref_fasta])
+        config = bb.parse_config(self.active_config)
         bb.get_scaffolder_and_linkage(args=test_args, config=config,
                                       paired=True, logger=logger)
 
     def test_check_already_assembled_bad_path(self):
         test_args = Namespace(
             already_assembled_dirs=["notAnActualDir"], assemblers=["spades"])
-        config = bb.parse_config(self.filled_config)
+        config = bb.parse_config(self.active_config)
         with self.assertRaises(FileNotFoundError):
             bb.check_already_assembled_dirs(
                 args=test_args, config=config, logger=logger)
@@ -306,7 +311,7 @@ class test_BugBuilder(unittest.TestCase):
     def test_check_already_assembled_missing_file(self):
         test_args = Namespace(
             already_assembled_dirs=[self.ref_dir], assemblers=["spades"])
-        config = bb.parse_config(self.filled_config)
+        config = bb.parse_config(self.active_config)
         with self.assertRaises(FileNotFoundError):
             bb.check_already_assembled_dirs(
                 args=test_args, config=config, logger=logger)
@@ -315,7 +320,7 @@ class test_BugBuilder(unittest.TestCase):
         test_args = Namespace(
             already_assembled_dirs=[self.ref_dir],
             assemblers=["spades", "masurca"])
-        config = bb.parse_config(self.filled_config)
+        config = bb.parse_config(self.active_config)
         with self.assertRaises(ValueError):
             bb.check_already_assembled_dirs(
                 args=test_args, config=config, logger=logger)
@@ -328,7 +333,7 @@ class test_BugBuilder(unittest.TestCase):
             already_assembled_dirs=[
                 already_dir],
             assemblers=["spades" ])
-        config = bb.parse_config(self.filled_config)
+        config = bb.parse_config(self.active_config)
         self.assertEqual(
             bb.check_already_assembled_dirs(
                 args=test_args, config=config, logger=logger),
@@ -337,7 +342,7 @@ class test_BugBuilder(unittest.TestCase):
               "scaffolds": already_scf}])
 
     def test_check_args(self):
-        config = bb.parse_config(self.filled_config)
+        config = bb.parse_config(self.active_config)
         test_args = Namespace(
             merger=None, assemblers=["spades", "shovels"])
         with self.assertRaises(ValueError):
@@ -356,7 +361,9 @@ class test_BugBuilder(unittest.TestCase):
             "current_embl",
             "current_embl_source",
             "ID_OK",
+            "reference_percent_sim",
             "old_contigs",
+            "old_embl",
             "old_scaffolds",
             "old_references"]
         results = bb.make_empty_results_object()
@@ -395,86 +402,86 @@ class test_BugBuilder(unittest.TestCase):
     def test_parse_available_assemblers(self, shumock):
         shumock.which = "exectuable"
         self.assertEqual(
-            ["abyss", "spades"],
-            bb.parse_available("assemblers", self.filled_config)
+            ["abyss", "spades", "ribo"],
+            bb.parse_available("assemblers", self.static_config)
         )
 
     def test_get_scaffolder_and_linkage(self):
-        config = bb.parse_config(self.filled_config)
+        config = bb.parse_config(self.active_config)
         test_args = Namespace(scaffolder="sis",
-                              reference=self.ref_fasta)
+                              references=[self.ref_fasta])
         scaffolder, linkage = bb.get_scaffolder_and_linkage(
             args=test_args, config=config, paired=True, logger=logger)
         self.assertEqual(linkage, "align_genus")
         self.assertEqual(scaffolder['name'], "SIS")
 
     def test_get_scaffolder_and_linkage_none(self):
-        config = bb.parse_config(self.filled_config)
+        config = bb.parse_config(self.active_config)
         test_args = Namespace(scaffolder=None,
-                              reference=self.ref_fasta)
+                              references=[self.ref_fasta])
         scaffolder, linkage = bb.get_scaffolder_and_linkage(
             args=test_args, config=config, paired=True, logger=logger)
         self.assertEqual(linkage, None)
         self.assertEqual(scaffolder, None)
 
     def test_get_merger_tool(self):
-        config = bb.parse_config(self.filled_config)
+        config = bb.parse_config(self.active_config)
         test_args = Namespace(merger='gfinisher',
                               scaffolder=None,
-                              reference=self.ref_fasta)
+                              references=[self.ref_fasta])
         merger = bb.get_merger_tool(args=test_args, config=config, paired=False)
         self.assertEqual(merger['name'], 'gfinisher')
 
     def test_get_finisher(self):
-        config = bb.parse_config(self.filled_config)
+        config = bb.parse_config(self.active_config)
         test_args = Namespace(finisher='gapfiller',
                               scaffolder=None,
-                              reference=self.ref_fasta)
+                              references=[self.ref_fasta])
         finisher = bb.get_finisher(args=test_args, config=config, paired=True)
         self.assertEqual(finisher['name'], 'gapfiller')
 
     def test_get_finisher_fail_needs_pair(self):
-        config = bb.parse_config(self.filled_config)
+        config = bb.parse_config(self.active_config)
         test_args = Namespace(finisher='gapfiller',
                               scaffolder=None,
-                              reference=self.ref_fasta)
+                              references=[self.ref_fasta])
         with self.assertRaises(ValueError):
             bb.get_finisher(args=test_args, config=config, paired=False)
 
     def test_get_finisher_fail_needs_refernce(self):
-        config = bb.parse_config(self.filled_config)
+        config = bb.parse_config(self.active_config)
         test_args = Namespace(finisher='pilon',
                               scaffolder=None,
-                              reference=None)
+                              references=[])
         with self.assertRaises(ValueError):
             bb.get_finisher(args=test_args, config=config, paired=False)
 
     def test_get_varcaller_fail_needs_reference(self):
-        config = bb.parse_config(self.filled_config)
+        config = bb.parse_config(self.active_config)
         test_args = Namespace(varcaller="pilon",
                               scaffolder=None,
-                              reference=None)
+                              references=[])
         with self.assertRaises(ValueError):
             bb.get_varcaller(args=test_args, config=config, paired=False)
 
     def test_get_varcaller(self):
-        config = bb.parse_config(self.filled_config)
+        config = bb.parse_config(self.active_config)
         test_args = Namespace(varcaller="pilon",
                               scaffolder=None,
-                              reference=self.ref_fasta)
+                              references=[self.ref_fasta])
         vc = bb.get_varcaller(args=test_args, config=config, paired=False)
         self.assertEqual("pilon", vc['name'])
 
     @unittest.skipIf("TRAVIS" in os.environ and os.environ["TRAVIS"] == "true",
                      "Skipping this test on Travis CI. Too hard to debug")
     def test_select_tools(self):
-        config = bb.parse_config(self.filled_config)
+        config = bb.parse_config(self.active_config)
         test_args = Namespace(scaffolder="sis",
                               assemblers=["spades"],
                               merger=None,
                               finisher="pilon",
                               varcaller="pilon",
-                              reference=self.ref_fasta)
+                              references=[self.ref_fasta])
         tools = bb.select_tools(args=test_args, config=config,
                              reads_ns=Namespace(read_length_mean=45,
                                                 paired=True),
@@ -482,7 +489,7 @@ class test_BugBuilder(unittest.TestCase):
         self.assertEqual("SIS", tools.scaffolder['name'])
 
     def test_assembler_needs_downsampling(self):
-        assemblers = [x for x in bb.parse_config(self.filled_config).assemblers if \
+        assemblers = [x for x in bb.parse_config(self.active_config).assemblers if \
                      x['name' ]== "spades"]
         tools = Namespace(assemblers=assemblers)
         self.assertEqual(True, bb.assembler_needs_downsampling(tools))
@@ -495,7 +502,7 @@ class test_BugBuilder(unittest.TestCase):
             fastq1=self.fastq1,
             trim_length=50,
             trim_qv=10,
-            reference=self.ref_fasta)
+            references=[self.ref_fasta])
         test_cmd = "sickle se -f {0} -t sanger -q 10 -l 50 -o sickle/read1.fastq > sickle/sickle.log".format(
             self.fastq1)
         self.assertEqual(
@@ -524,7 +531,7 @@ class test_BugBuilder(unittest.TestCase):
         pass
 
     def test_make_bwa_cmds_aln_se(self):
-        config = bb.parse_config(self.filled_config)
+        config = bb.parse_config(self.active_config)
         config.bwa = "bWA"
         cmds, mapping_sam = bb.make_bwa_cmds(
             ref="ref.fasta",
@@ -573,12 +580,14 @@ class test_BugBuilder(unittest.TestCase):
                      "Cannot test check_id without blastn")
     def test_check_id_close(self):
         test_args = Namespace(tmp_dir=self.test_dir,
-                              reference=self.ref_fasta,
+                              references=[self.ref_fasta],
                               )
         config = Namespace(blastn=shutil.which("blastn"))
         self.assertEqual(
-            True,
-            bb.check_id(args=test_args, contigs=self.contigs,
+            (True,  98.088),
+            bb.check_id(ref=self.ref_fasta,
+                        results=Namespace(current_scaffolds=self.contigs),
+                        args=test_args, contigs=self.contigs,
                         config=config, logger=logger))
         self.to_be_removed.append(
             os.path.join(self.test_dir, "id_check", ""))
@@ -587,12 +596,13 @@ class test_BugBuilder(unittest.TestCase):
                      "Cannot test check_id without blastn")
     def test_check_id_distant(self):
         test_args = Namespace(tmp_dir=self.test_dir,
-                              reference=self.ref_fasta,
+                              references=[self.ref_fasta],
                               )
         config = Namespace(blastn=shutil.which("blastn"))
         self.assertEqual(
-            False,
-            bb.check_id(args=test_args, contigs=self.distant_contigs,
+            (False, 0.0),
+            bb.check_id(ref=self.ref_fasta, args=test_args, contigs=self.distant_contigs,
+                        results=Namespace(current_scaffolds=self.contigs),
                         config=config, logger=logger))
         self.to_be_removed.append(
             os.path.join(self.test_dir, "id_check", ""))
@@ -601,10 +611,11 @@ class test_BugBuilder(unittest.TestCase):
                      "Skipping this test on Travis CI. Too hard to debug")
     def test_find_origin(self):
         test_args = Namespace(tmp_dir=self.test_dir,
-                              reference=self.ref_split,
+                              references=[self.ref_split],
                               )
-        results = Namespace(current_scaffolds=self.contigs)
-        config = bb.parse_config(self.filled_config)
+        results = Namespace(current_scaffolds=self.contigs,
+                            current_reference=self.ref_split)
+        config = bb.parse_config(self.active_config)
         ref_dict = {'AP017923.1': 'NODE_4_length_5704_cov_4.88129:1',
                     'AP017923.2': 'NODE_2_length_10885_cov_4.76832:869'}
         ori = bb.find_origin(args=test_args, config=config, results=results,
@@ -617,10 +628,11 @@ class test_BugBuilder(unittest.TestCase):
                      "Skipping this test on Travis CI. Too hard to debug")
     def test_find_and_split_origin(self):
         test_args = Namespace(tmp_dir=self.test_dir,
-                              reference=self.ref_split,
+                              references=[self.ref_split],
                               )
-        results = Namespace(current_scaffolds=self.contigs)
-        config = bb.parse_config(self.filled_config)
+        results = Namespace(current_scaffolds=self.contigs,
+                            current_reference=self.ref_split)
+        config = bb.parse_config(self.active_config)
         ref_dict = {'AP017923.1': 'NODE_4_length_5704_cov_4.88129:1',
                     'AP017923.2': 'NODE_2_length_10885_cov_4.76832:869'}
         bb.find_and_split_origin(args=test_args, config=config, results=results,
@@ -654,17 +666,18 @@ class test_BugBuilder(unittest.TestCase):
         test_args = Namespace(
             fastq1=self.fastq1, fastq2=self.fastq2, long_fastq=None,
             # de_fere_contigs=None,
-            reference=self.ref_split,
+            references=[self.ref_split],
             genome_size=0,
             tmp_dir=self.test_dir,
             scaffolder="sis",
             scaffolder_args=None,
             # memory=8, untrimmed_fastq1=None, untrimmed_fastq2=None, platform="illumina", threads=1
         )
-        config = bb.parse_config(self.filled_config)
+        config = bb.parse_config(self.active_config)
         tools = Namespace(
             scaffolder=[x for x in config.scaffolders if x['name'].lower() == "sis"][0])
         results = bb.make_empty_results_object()
+        results.current_reference = self.ref_split
         results.current_contigs = self.contigs_to_scaf
         results.current_scaffolds = "scaffs"
         reads_ns = bb.assess_reads(args=test_args, config=config,
