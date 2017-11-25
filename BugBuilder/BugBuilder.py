@@ -248,100 +248,6 @@ varcallers:
 """
 
 
-"""
-=item B<scaffolder>: Scaffolder to run
-
-=item B<scaffolder-args>: Any additional arguments to pass to the scaffolder. Overides the setting
-of the 'default_args' setting in the scaffolder configuration
-
-=item B<merge-method>: Assembly merging tool to use
-
-=item B<finisher>: Method for assembly finishing/gap closure
-
-=item B<varcall>: Method for variant calling
-
-=item B<insert-size>: Size of insert in paired-read library. This will be determined empircally if a reference
-genome sequence is provided, so only needs specifying when assembling paired-read sequences for
-which no reference genome is available.
-
-=item B<insert-stddev>: standard deviation of insert in paired-read library. This will be
-determined empircally if a reference genome sequence is provided, so only needs specifying when
-assembling paired-read sequences for which no reference genome is available.
-
-=item B<genome-size>: Approximate genome size. Required for PacBio/MinION assemblies using PBcR
-
-=item B<genus>: Genus of organism sequenced (i.e. Streptococcus). Included in resutling EMBL file,
-and passed to Prokka during annotation stage.
-
-=item B<species>: Specific name of species if known (i.e. pyogenes). Included in resutling EMBL
-file, and passed to Prokka during annotation stage.
-
-=item B<strain>: Name of strain used for inclusion in annotation results.
-
-=item B<mode>: Mode to run in - valid modes are 'submission' (default) or 'draft'
-
-=item B<locustag>: Locustag argument to pass to Prokka. Used to customise
-locus_tag in generated EMBL records.
-
-=item B<centre>: Sequence centre argument to pass to Prokka. Used to customise
-locus_tag in generated EMBL records.
-
-=item B<[no]-fastqc>: Determine whether to run fastqc: Default: on
-
-=item B<[no]-trim>: Determine wheter to quality trim reads. Default: on
-
-=item B<trim-qv>: Quality threshold for trimming reads. Default: 20
-
-=item B<trim-length>: Min. length of read to retain following trimming. Default: 50 (25 for reads <50bp)
-
-=item B<[no-]split-origin>: Determine wether to attempt to split assembly around
-the origin or not. Should the assembly not be scaffolded using a reference
-sequence, or where the reference sequence is in a significant number of
-contigs, then starting the sequence at the origin makes little sense. Default: on
-
-=item B<[no-]gap-fill>: Determe wether to run GapFiller to close scaffold gaps.
-Assemblies with a large number of scaffold gaps can result in the gap filling
-stage taking a significant amount of time. Default: on
-
-=item B<keepall>: Return full working directory with intermediate files, rather the just returning
-the results (default off)
-
-=item B<[no-]gap-seal>: Determine whether to run Abyss sealer to close scaffold gaps. Default: on
-
-=item B<help>: display short help text
-
-=item B<man>: display full help text
-
-=item B<threads>: Number of threads to use for multi-threaded applications. Default: 1
-
-=item B<out-dir>: Path for the output directory. If not provided, will be generated under the current
-working directory.
-
-=item B<tmp-dir>: Path for the temporary working directory.
-If not provided, unique temporary directory will be created under the temp_dir path set in
-a config file.
-
-=back
-
-=head1 REPORTING BUGS
-
-Please report any bugs/issues via github:
-https://github.com/jamesabbott/BugBuilder/issues/new.
-
-All bug reports should include the output of the 'check_config.pl' script,
-which reports on the installed software packages and versions
-
-=head1 AUTHOR - James Abbott
-
-Email j.abbott@imperial.ac.uk
-
-=cut
-
-use warnings;
-use strict;
-
-"""
-
 import argparse
 import os
 import string
@@ -403,6 +309,16 @@ def parse_available(thing, path=None):
     #     configure(config_path)
     #     return(parse_available(thing=thing, path=get_config_path()))
 
+# def get_program_version(prog, ver_cmd):
+#     fastqc_res = subprocess.run("{} {}".format(prog, ver_cmd),
+#                                 shell=sys.platform != "win32",
+#                                 stdout=subprocess.PIPE,
+#                                 stderr=subprocess.PIPE,
+#                                 check=False)
+#     if fastqc_res.returncode != 0:
+#         logger.warning("Error running fastqc with command %s", fastqc_cmd)
+#         sys.exit(1)
+
 
 def configure(config_path, hardfail=True):
     with open(config_path, 'w') as outfile:  # write header and config params
@@ -428,9 +344,12 @@ def configure(config_path, hardfail=True):
             ['sickle', 'sickle-trim'],
             ['mauve','mauve'],
             ['ribo', 'riboSeed'],
-            ["minimus", "minimus"], ['sam2afg','sam2afg'],
-            ['aragorn', 'aragorn'], ['prodigal','prodigal'],
-            ['hmmer3', 'hmmer3'], ['infernal','infernal'],
+            ["minimus", "minimus"],
+            ['sam2afg','sam2afg'],
+            ['aragorn', 'aragorn'],
+            ['prodigal','prodigal'],
+            ['hmmer3', 'hmmer3'],
+            ['infernal','infernal'],
             ['bank-transact','bank-transact'],
             ['rnammer','rnammer'], ['tbl2asn','tbl2asn'], ['abyss','abyss'],
             ['celera','celera'], ["abyss","abyss"], ["abyss-sealer","abyss-sealer"],
@@ -447,17 +366,17 @@ def configure(config_path, hardfail=True):
         if len(programs) == 0: # pyyaml will write out curly brackets otherwise
             continue
         for prog, name in programs:
-            # append .py if we need to (like for spades, sis, etc)
-            # cant modify prog cause we need to be able to access name without exention
+            # trim off extension, replace dashes with underscores
+            clean_name = os.path.splitext(prog)[0].lower().replace("-", "_")
             if shutil.which(prog):
-                # trim off extension, replace dashes with underscores in config names but not in prog
-                output_dict[os.path.splitext(prog)[0].lower().replace("-", "_")] = shutil.which(prog)
+                output_dict[clean_name] = shutil.which(prog)
             else:
-                output_dict[os.path.splitext(prog)[0].lower().replace("-", "_")] = None
+                output_dict[clean_name] = None
                 if "mandatory" in category:
                     if hardfail:
-                        raise OSError("%s is a mandatory program; please install" % name)
-    with open(config_path, 'a') as outfile:  # write paths to exes
+                        raise OSError(
+                            "%s is a mandatory program; please install" % name)
+    with open(config_path, 'a') as outfile:  # write paths to exes in config
         yaml.dump(output_dict, outfile, default_flow_style=False)
 
 
@@ -509,7 +428,13 @@ def get_args():  # pragma: no cover
         description="Bugbuilder %s: " % __version__ +
         "Automated pipeline for assembly of draft quality " +
         "bacterial genomes with reference guided scaffolding and annotation." +
-        "Please see accompanying userguide for full documentation",
+        "Please see accompanying userguide for full documentation" +
+        "" +
+        "Please report any bugs/issues via github:" +
+        "https://github.com/jamesabbott/BugBuilder/issues/new." +
+        "All bug reports should include the contents of your config file" +
+        " (find when running `BugBuilder --configure`)" +
+        "which reports on the installed software packages and versions",
         formatter_class=SmartFormatter,
         add_help=False)  # to allow for custom help
     requiredNamed = parser.add_argument_group('required named arguments')
@@ -532,191 +457,205 @@ def get_args():  # pragma: no cover
                                nargs="*", default=[],
                                type=str, required=True)
 
-    optional = parser.add_argument_group('optional arguments')
-    optional.add_argument("--fastq1", dest='fastq1', action="store",
-                          help="Path to first read of paired library, or fragment library",
-                          type=str, required="--long-fastq" not in sys.argv)
-    optional.add_argument("--fastq2", dest='fastq2', action="store",
-                          help="Path to second read of paired library",
-                          type=str)
-    optional.add_argument("--untrimmed_fastq1", dest='untrimmed_fastq1', action="store",
-                          # help="used to hold path of raw F reads for use " +
-                          # "with mascura; dont set from command line",
-                          type=str, help=argparse.SUPPRESS)
-    optional.add_argument("--untrimmed_fastq2", dest='untrimmed_fastq2', action="store",
-                          # help="used to hold path of raw R reads for use " +
-                          # "with mascura; dont use from command line",
-                          type=str, help=argparse.SUPPRESS)
-    optional.add_argument("--de_fere_contigs", dest='de_fere_contigs',
-                          action="store",
-                          help="contigs to be used in de fere novo assembly!",
-                          type=str)
-    optional.add_argument("--long_fastq", dest='long_fastq', action="store",
-                          help="Path to fastq file from long-read sequencer",
-                          type=str, required="--fastq1" not in sys.argv)
-    optional.add_argument("--references", dest='references',
-                          action="store",
-                          nargs="*", type=str,
-                          default=[],
-                          help="Path(s) to fasta formatted reference sequence(s)")
-    optional.add_argument("--prefix", dest='prefix',
-                          action="store",
-                          help="Prefix to use for output file naming",
-                          type=str)
-    optional.add_argument("--assembler-args", dest='assembler_args',
-                          action="store",
-                          help="Any additional arguments to pass to the " +
-                          "assembler. Default values are set in the " +
-                          "'default_args' attribute of the configuration " +
-                          "file. If running multiple assemblers, " +
-                          "assembler_args should be specified twice, once " +
-                          "for each assemler, in the same order than the " +
-                          "assemblers are specified.",
-                          nargs="*", default=[],
-                          type=str)
-    optional.add_argument("--scaffolder", dest='scaffolder', action="store",
-                          help="scaffolder to use",
-                          choices=parse_available("scaffolders"),
-                          type=str)
-    optional.add_argument("--scaffolder-args", dest='scaffolder_args',
-                          action="store",
-                          help="args to pass to the scaffolder, in single quotes",
-                          type=str)
-    optional.add_argument("--merger", dest='merger', action="store",
-                          help="merge method to use",
-                          choices=parse_available("merge_tools"),
-                          type=str)
-    optional.add_argument("--finisher", dest='finisher', action="store",
-                          help="finisher to use",
-                          choices=parse_available("finishers"),
-                          type=str)
-    optional.add_argument("--varcaller", dest='varcaller', action="store",
-                          help="varcaller to use",
-                          choices=parse_available("varcallers"),
-                          nargs="*",
-                          type=str)
-    optional.add_argument("--insert-size", dest='insert_size', action="store",
-                          help="insert size (bp)",
-                          type=int)
-    optional.add_argument("--insert-stddev", dest='insert_stddev', action="store",
-                          help="insert size standard deviation ",
-                          type=int)
-    optional.add_argument("--genome-size", dest='genome_size', action="store",
-                          help="size of the genome ",
-                          type=int, default=0) # 0 is better than None for addition :)
-    optional.add_argument("--downsample", dest='downsample', action="store",
-                          help="Downsample depth; set to 0 to skip " +
-                          "downsampling. default is 100x ",
-                          type=int, default=100)
-    optional.add_argument("--species", dest='species', action="store",
-                          help="species of your bug", default="unknown_species",
-                          type=str)
-    optional.add_argument("--genus", dest='genus', action="store",
-                          help="genus of your bug", default="unknown_genus",
-                          type=str)
-    optional.add_argument("--strain", dest='strain', action="store",
-                          help="strain of your bug", default="unknown_strain",
-                          type=str)
-    optional.add_argument("--locustag", dest='locustag', action="store",
-                          help="locus tag prefix for prokka",
-                          type=str)
-    optional.add_argument("--centre", dest='centre', action="store",
-                          help="Sequence centre argument to pass to Prokka. " +
-                          "Used to customise locus_tag in generated EMBL records.",
-                          type=str)
-    optional.add_argument("--mode", dest='mode', action="store",
-                          help="Mode to run in",
-                          choices=["submission", "draft"], default="submission",
-                          type=str)
-    # optional.add_argument("--skip-fastqc", dest='skip_fastqc', action="store_true",
-    #                       help="size of the genome ", default=False)
-    # optional.add_argument("--skip-trim", dest='skip_trim', action="store_true",
-    #                       help="Quality threshold for trimming reads ", default=False)
-    optional.add_argument("--trim-qv", dest='trim_qv', action="store",
-                          help="quality threshold to trim  ", default=20,
-                          type=int)
-    optional.add_argument("--trim-length", dest='trim_length', action="store",
-                          help="min read length to retain;" +
-                          "50 (25 for reads <50bp)", default=50,
-                          type=int)
-    # optional.add_argument("--skip-split-origin", dest='skip_split_origin',
-    #                       action="store_true",
-    #                       help="split at origin ", default=False)
-    optional.add_argument("--keepall", dest='keepall',
-                          action="store_true",
-                          help="keep all intermediate files ", default=False)
-    optional.add_argument("--threads", dest='threads', action="store",
-                          help="threads  ",
-                          type=int, default=4)
-    optional.add_argument("--out-dir", dest='out_dir', action="store",
-                          help="dir for results",
-                          type=str)
-    optional.add_argument("--tmp-dir", dest='tmp_dir', action="store",
-                          help="dir for results",
-                          type=str)
-    optional.add_argument("--already_assembled_dirs", dest='already_assembled_dirs',
-                          action="store",
-                          help="dir(s) with existing assembler results; must" +
-                          " specify assembler(s), and lists much match " +
-                          "length", default=[],
-                          nargs="*", type=str)
-     # These can be used instead of the --already-assembled_dirs arg
-    optional.add_argument("--contigs",
-                          dest='already_assembled_contigs',
-                          action="store",
-                          help="path to contig file(s) if assembler(s) " +
-                          "have already been run; this helps save time when " +
-                          "rerunning analyses. If running multiple assemble" +
-                          "rs, assemblies should be specified twice, once " +
-                          "for each assemler, in the same order than the " +
-                          "assemblers are specified.",
-                          nargs="*",  default=[],
-                          type=str)
-    optional.add_argument("--scaffolds",
-                          dest='already_assembled_scaffolds',
-                          action="store",
-                          help="path to scafoold file(s) if  assembler(s) " +
-                          "have already been run; this helps save time when " +
-                          "rerunning analyses. If running multiple assemble" +
-                          "rs, assemblies should be specified twice, once " +
-                          "for each assemler, in the same order than the " +
-                          "assemblers are specified.",
-                          nargs="*",  default=[],
-                          type=str)
-    # optional.add_argument("--scratchdir", dest='scratchdir', action="store",
-    #                       help="dir for results",
-    #                       type=str)
-    optional.add_argument("--configure", action=JustConfigure, type=None,
-                          help="Reconfigure and exit ", nargs=0)
-    optional.add_argument("--memory", dest='memory', action="store",
-                          help="how much memory to use",
-                          type=int, default=4)
-    optional.add_argument("--stages", dest='stages', action="store",
-                          help="R| which stages of BugBuilder will run:\n" +
-                          "  q = QC reads\n" +
-                          "  t = trim reads\n" +
-                          "  d = downsample reads\n" +
-                          "  a = run assembler (s)\n" +
-                          "  b = break contig at the origin\n" +
-                          "  s = scaffold the contigs\n" +
-                          "  f = run polishing finisher on the assembly\n"+
-                          "  v = call variants\n"
-                          "  g = gene-call with prokka\n" +
-                          "default: %(default)s",
-                          type=str, default="qtdabsfvg")
-    optional.add_argument("-v", "--verbosity", dest='verbosity',
-                          action="store",
-                          default=2, type=int, choices=[1, 2, 3, 4, 5],
-                          help="R|Logger writes debug to file in output dir;\n" +
-                          "this sets verbosity level sent to stderr. \n" +
-                          "  1 = debug()\n  2 = info()\n  3 = warning()\n" +
-                          "  4 = error() \n  5 = critical(); " +
-                          "default: %(default)s")
-    optional.add_argument("-h", "--help",
-                          action="help", default=argparse.SUPPRESS,
-                          help="Displays this help message")
-    optional.add_argument('--version', action='version',
-                          version='BugBuilder {}'.format(__version__))
+    opt = parser.add_argument_group('optional arguments')
+    opt.add_argument("--fastq1", dest='fastq1', action="store",
+                     help="Path to first read of paired library, or fragment library",
+                     type=str, required="--long-fastq" not in sys.argv)
+    opt.add_argument("--fastq2", dest='fastq2', action="store",
+                     help="Path to second read of paired library",
+                     type=str)
+    opt.add_argument("--untrimmed_fastq1", dest='untrimmed_fastq1', action="store",
+                     # help="used to hold path of raw F reads for use " +
+                     # "with mascura; dont set from command line",
+                     type=str, help=argparse.SUPPRESS)
+    opt.add_argument("--untrimmed_fastq2", dest='untrimmed_fastq2', action="store",
+                     # help="used to hold path of raw R reads for use " +
+                     # "with mascura; dont use from command line",
+                     type=str, help=argparse.SUPPRESS)
+    opt.add_argument("--de_fere_contigs", dest='de_fere_contigs',
+                     action="store",
+                     help="contigs to be used in de fere novo assembly!",
+                     type=str)
+    opt.add_argument("--long_fastq", dest='long_fastq', action="store",
+                     help="Path to fastq file from long-read sequencer",
+                     type=str, required="--fastq1" not in sys.argv)
+    opt.add_argument("--references", dest='references',
+                     action="store",
+                     nargs="*", type=str,
+                     default=[],
+                     help="Path(s) to fasta formatted reference sequence(s)")
+    opt.add_argument("--prefix", dest='prefix',
+                     action="store",
+                     help="Prefix to use for output file naming",
+                     type=str)
+    opt.add_argument("--assembler-args", dest='assembler_args',
+                     action="store",
+                     help="Any additional arguments to pass to the " +
+                     "assembler. Default values are set in the " +
+                     "'default_args' attribute of the configuration " +
+                     "file. If running multiple assemblers, " +
+                     "assembler_args should be specified twice, once " +
+                     "for each assemler, in the same order than the " +
+                     "assemblers are specified.",
+                     nargs="*", default=[],
+                     type=str)
+    opt.add_argument("--scaffolder", dest='scaffolder', action="store",
+                     help="scaffolder to use",
+                     choices=parse_available("scaffolders"),
+                     type=str)
+    opt.add_argument("--scaffolder-args", dest='scaffolder_args',
+                     action="store",
+                     help="Any additional arguments to pass to the " +
+                     "scaffolder. Overides the setting of  'default_args' " +
+                     "setting in the scaffolder configuration.  " +
+                     "Use single quotes",
+                     type=str)
+    opt.add_argument("--merger", dest='merger', action="store",
+                     help="Assembly merging tool to use",
+                     choices=parse_available("merge_tools"),
+                     type=str)
+    opt.add_argument("--finisher", dest='finisher', action="store",
+                     help="Method for assembly finishing/gap closure",
+                     choices=parse_available("finishers"),
+                     type=str)
+    opt.add_argument("--varcaller", dest='varcaller', action="store",
+                     help="Method for variant calling",
+                     choices=parse_available("varcallers"),
+                     nargs="*",
+                     type=str)
+    opt.add_argument("--insert-size", dest='insert_size', action="store",
+                     help="Size (bp) of insert in paired-read library.  " +
+                     "This will be determined empircally if a reference  " +
+                     "genome sequence is provided, so only needs specifying  " +
+                     "when assembling paired-read sequences for which no  " +
+                     "reference genome is available.",
+                     type=int)
+    opt.add_argument("--insert-stddev", dest='insert_stddev', action="store",
+                     help="standard deviation of insert in paired-read  " +
+                     "library. This will be determined empircally if a  " +
+                     "reference genome sequence is provided, so only needs  " +
+                     "specifying when assembling paired-read sequences for  " +
+                     "which no reference genome is available ",
+                     type=int)
+    opt.add_argument("--genome-size", dest='genome_size', action="store",
+                     help="Approximate genome size. Required for  " +
+                     "PacBio/MinION assemblies when not using a reference ",
+                     type=int, default=0) # 0 is better than None for addition :)
+    opt.add_argument("--downsample", dest='downsample', action="store",
+                     help="Downsample depth; set to 0 to skip " +
+                     "downsampling. default is 100x ",
+                     type=int, default=100)
+    opt.add_argument("--species", dest='species', action="store",
+                     help="Specific name of species if known (ie pyogenes)." +
+                     " Included in resutling EMBL file, and passed to  " +
+                     "Prokka during annotation stage.",
+                     default="unknown_species",
+                     type=str)
+    opt.add_argument("--genus", dest='genus', action="store",
+                     help="Genus of organism sequenced (ie. Streptococcus). " +
+                     " Included in resutling EMBL file, and passed to  " +
+                     "Prokka during annotation stage.",
+                     default="unknown_genus",
+                     type=str)
+    opt.add_argument("--strain", dest='strain', action="store",
+                     help="Name of strain used for inclusion in annotation " +
+                     " results", default="unknown_strain",
+                     type=str)
+    opt.add_argument("--locustag", dest='locustag', action="store",
+                     help="Locustag argument to pass to Prokka. Use to  " +
+                     "customise locus_tag in generated EMBL records.",
+                     type=str)
+    opt.add_argument("--centre", dest='centre', action="store",
+                     help="Sequence centre argument to pass to Prokka. " +
+                     "Used to customise locus_tag in generated EMBL records.",
+                     type=str)
+    opt.add_argument("--mode", dest='mode', action="store",
+                     help="Mode to run in",
+                     choices=["submission", "draft"], default="submission",
+                     type=str)
+    opt.add_argument("--trim-qv", dest='trim_qv', action="store",
+                     help="Quality threshold for trimming reads.;  " +
+                     "default: %(default)  ", default=20,
+                     type=int)
+    opt.add_argument("--trim-length", dest='trim_length', action="store",
+                     help="Min. length of read to retain following  " +
+                     "trimming. Default: 50 (25 for reads <50bp)", default=50,
+                     type=int)
+    opt.add_argument("--keepall", dest='keepall',
+                     action="store_true",
+                     help="keep all intermediate files ", default=False)
+    opt.add_argument("--threads", dest='threads', action="store",
+                     help="Number of threads to use for multi-threaded  " +
+                     "applications",
+                     type=int, default=4)
+    opt.add_argument("--out-dir", dest='out_dir', action="store",
+                     help="dir for results",
+                     type=str)
+    opt.add_argument("--tmp-dir", dest='tmp_dir', action="store",
+                     help="Path for the temporary working directory." +
+                     "If not provided, it will be created under  " +
+                     "the out-dir path.",
+                     type=str)
+    opt.add_argument("--already_assembled_dirs", dest='already_assembled_dirs',
+                     action="store",
+                     help="dir(s) with existing assembler results; must" +
+                     " specify assembler(s), and lists much match " +
+                     "length", default=[],
+                     nargs="*", type=str)
+    # These can be used instead of the --already-assembled_dirs arg
+    opt.add_argument("--contigs",
+                     dest='already_assembled_contigs',
+                     action="store",
+                     help="path to contig file(s) if assembler(s) " +
+                     "have already been run; this helps save time when " +
+                     "rerunning analyses. If running multiple assemble" +
+                     "rs, assemblies should be specified twice, once " +
+                     "for each assemler, in the same order than the " +
+                     "assemblers are specified.",
+                     nargs="*",  default=[],
+                     type=str)
+    opt.add_argument("--scaffolds",
+                     dest='already_assembled_scaffolds',
+                     action="store",
+                     help="path to scafoold file(s) if  assembler(s) " +
+                     "have already been run; this helps save time when " +
+                     "rerunning analyses. If running multiple assemble" +
+                     "rs, assemblies should be specified twice, once " +
+                     "for each assemler, in the same order than the " +
+                     "assemblers are specified.",
+                     nargs="*",  default=[],
+                     type=str)
+    opt.add_argument("--configure", action=JustConfigure, type=None,
+                     help="Reconfigure and exit ", nargs=0)
+    opt.add_argument("--memory", dest='memory', action="store",
+                     help="how much memory to use",
+                     type=int, default=4)
+    opt.add_argument("--stages", dest='stages', action="store",
+                     help="R| which stages of BugBuilder will run:\n" +
+                     "  q = QC reads\n" +
+                     "  t = trim reads\n" +
+                     "  d = downsample reads\n" +
+                     "  a = run assembler (s)\n" +
+                     "  b = break contig at the origin\n" +
+                     "  s = scaffold the contigs\n" +
+                     "  f = run polishing finisher on the assembly\n"+
+                     "  v = call variants\n"
+                     "  g = gene-call with prokka\n" +
+                     "default: %(default)s",
+                     type=str, default="qtdabsfvg")
+    opt.add_argument("-v", "--verbosity", dest='verbosity',
+                     action="store",
+                     default=2, type=int, choices=[1, 2, 3, 4, 5],
+                     help="R|Logger writes debug to file in output dir;\n" +
+                     "this sets verbosity level sent to stderr. \n" +
+                     "  1 = debug()\n  2 = info()\n  3 = warning()\n" +
+                     "  4 = error() \n  5 = critical(); " +
+                     "default: %(default)s")
+    opt.add_argument("-h", "--help",
+                     action="help", default=argparse.SUPPRESS,
+                     help="Displays this help message")
+    opt.add_argument('--version', action='version',
+                     version='BugBuilder {}'.format(__version__))
     # args = parser.parse_args(sys.argv[2:])
     args = parser.parse_args()
     return args

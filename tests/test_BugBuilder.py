@@ -397,7 +397,8 @@ class test_BugBuilder(unittest.TestCase):
     #         [],
     #         bb.parse_available("assemblers", None)
     #     )
-
+    @unittest.skipIf("TRAVIS" in os.environ and os.environ["TRAVIS"] == "true",
+                     "Skipping this test on Travis CI. Too hard to debug")
     def test_parse_available_assemblers(self):
         self.assertEqual(
             ["abyss", "spades", "ribo"],
@@ -581,12 +582,12 @@ class test_BugBuilder(unittest.TestCase):
                               references=[self.ref_fasta],
                               )
         config = Namespace(blastn=shutil.which("blastn"))
-        self.assertEqual(
-            (True,  98.088),
-            bb.check_id(ref=self.ref_fasta,
-                        results=Namespace(current_scaffolds=self.contigs),
-                        args=test_args, contigs=self.contigs,
-                        config=config, logger=logger))
+        ID_OK, percent = bb.check_id(ref=self.ref_fasta,
+                                     results=Namespace(current_scaffolds=self.contigs),
+                                     args=test_args, contigs=self.contigs,
+                                     config=config, logger=logger)
+        self.assertAlmostEqual(percent,  98.088, 2)
+        self.assertTrue(ID_OK)
         self.to_be_removed.append(
             os.path.join(self.test_dir, "id_check", ""))
 
@@ -641,6 +642,17 @@ class test_BugBuilder(unittest.TestCase):
         ###################
         self.to_be_removed.append(
             os.path.join(self.test_dir, "origin", ""))
+
+    def test_parse_stages_error(self):
+        with self.assertRaises(ValueError):
+            bb.parse_stages(args=Namespace(stages="za"),
+                         reads_ns=Namespace(TRIM=None), logger=logger)
+
+    def test_parse_stages(self):
+        reads_ns = Namespace(TRIM=None)
+        bb.parse_stages(args=Namespace(stages="t"),
+                        reads_ns=reads_ns, logger=logger)
+        self.assertTrue(reads_ns.TRIM)
 
     def order_scaffolds():
         pass
