@@ -169,6 +169,11 @@ class test_BugBuilder(unittest.TestCase):
                               references=[], mode="draft")
         self.assertTrue(bb.fastq_needs_newname(test_args))
 
+    def test_fastq_dont_needs_newname(self):
+        test_args = Namespace(fastq1=self.fastq1, fastq2=self.fastq2,
+                              references=[], mode="draft")
+        self.assertFalse(bb.fastq_needs_newname(test_args))
+
     def test_rename_fastq_seqids(self):
         test_args = Namespace(fastq1=self.renaming_fq, fastq2=None)
         bb.rename_fastq_seqids(args=test_args)
