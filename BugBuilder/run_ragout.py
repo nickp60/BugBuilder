@@ -73,6 +73,13 @@ def run(config, args, results, ref, contigs, scaff_dir, logger):
     may have partitioned them (using blast to see which contigs go with
     which contigs)
     """
+    if config.python2 is None:
+        raise ValueError(
+            "ragout requires having python2 available! "+
+            " we recommend creaing a conda environement just for " +
+            " ragout (`conda create --name ragout ragout`) which " +
+            " ensures that ragout and its dependencies will be installed" +
+            " and available in the path with python2")
     recipe_file = os.path.join(scaff_dir, "ragout_recipe.txt")
     recipe_lines = make_ragout_recipe(references=args.references, target=contigs)
     with open(recipe_file, "w") as outf:

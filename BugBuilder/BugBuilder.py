@@ -349,6 +349,7 @@ def configure(config_path, hardfail=True):
             ['aragorn', 'aragorn'],
             ['prodigal','prodigal'],
             ['hmmer3', 'hmmer3'],
+            ["python2", "python2"], # needed for ragout
             ['infernal','infernal'],
             ['bank-transact','bank-transact'],
             ['rnammer','rnammer'], ['tbl2asn','tbl2asn'], ['abyss','abyss'],
@@ -383,16 +384,21 @@ def configure(config_path, hardfail=True):
 def return_config(config_path, force=False, hardfail=True, logger=None):
     """returns config namespace object, configuring if needed
     """
+    this_print = logger.debug if logger else print
+
     try: # if the config file exists, parse it
         config = parse_config(config_path)
-    except yaml.YAMLError:
+    except Exception as e:
+        if e == yaml.YAMLError:
+            this_print("Error parsing YAML file!")
+        elif e == FileNotFoundError:
+            this_print("Config file not found at %s! creating one..." % config_path)
+        else:
+            this_print(e)
         force = True
     # if config file is missing or broken, recreate the config file
     if force or config.STATUS != "COMPLETE":
-        if logger is not None:
-            logger.info("(Re-)Configuring BugBuilder config file: %s", config_path)
-        else:
-            print("(Re-)Configuring BugBuilder config file: %s" % config_path)
+        this_print("(Re-)Configuring BugBuilder config file: %s" % config_path)
         configure(config_path, hardfail=hardfail)
         config = parse_config(config_path)
     return config
@@ -1565,7 +1571,41 @@ def make_picard_stats_command(bam, config, picard_outdir):
     return(cmd, picard_outdir + "insert_stats.txt")
 
 
-def get_insert_stats(bam, reads_ns, args, config, logger):
+def run_picard_insert_stats(bam, config, picard_outdir, logger):  # pragma: no cover
+    """ run picard cmd to get insert stats, and return path to the results
+    """
+    pic_cmd, statfile = make_picard_stats_command(bam, config=config,
+                                                  picard_outdir=picard_outdir)
+    logger.debug(pic_cmd)
+    subprocess.run(pic_cmd,
+                   shell=sys.platform != "win32",
+                   stdout=subprocess.PIPE,
+                   stderr=subprocess.PIPE,
+                   check=True)
+    return statfile
+
+
+def parse_picard_insert_stats(statfile):
+    """ look through a picard stats results, return mean and stddev of insert
+
+    """
+    get_next = False
+    with open(statfile, "r") as inf:
+        for line in inf:
+            if get_next:
+                min_insert = line.split("\t")[2]
+                max_insert = line.split("\t")[3]
+                mean_insert = line.split("\t")[4]
+                stddev_insert = line.split("\t")[5]
+                break
+            if "MEDIAN" in line:
+                #  the next line will contain the results
+                get_next=True
+    return (mean_insert, stddev_insert)
+
+
+
+def get_insert_stats(bam, args, config, logger):  # pragma: no cover
     """
     converts contigs.sam -> bam, sorts, indexes and generates
     insert stats with Picard
@@ -1579,24 +1619,9 @@ def get_insert_stats(bam, reads_ns, args, config, logger):
     logger.debug("Collecting insert size statistics ")
     stat_dir = os.path.join(args.tmp_dir, "insert_stats", "")
     os.makedirs(stat_dir)
-    pic_cmd, statfile = make_picard_stats_command(bam, config=config, picard_outdir=stat_dir)
-    logger.debug(pic_cmd)
-    subprocess.run(pic_cmd,
-                   shell=sys.platform != "win32",
-                   stdout=subprocess.PIPE,
-                   stderr=subprocess.PIPE,
-                   check=True)
-    get_next = False
-    with open(statfile, "r") as inf:
-        for line in inf:
-            if get_next:
-                min_insert = line.split("\t")[2]
-                max_insert = line.split("\t")[3]
-                mean_insert = line.split("\t")[4]
-                stddev_insert = line.split("\t")[5]
-                break
-            if "MEDIAN" in line:
-                get_next=True
+    statfile = run_picard_insert_stats(bam=bam, config=config, picard_outdir=stat_dir,
+                                       logger=logger)
+    mean_insert, stddev_insert = parse_picard_insert_stats(statfile)
     return (mean_insert, stddev_insert)
 
 def replace_placeholders(string, config=None, reads_ns=None, args=None, results=None):
@@ -1702,44 +1727,6 @@ def get_L50_N50(lengths):
             return (L50, N50)
 
 
-def get_contig_stats(contigs, ctype):
-    """
-    Reports contig statistics on assembly. Reports on scaffolds or
-    contigs depending upon 2nd argument passed - contigs gives values
-    for all contigs and those >200bp
-
-    required params: $ (path to contigs)
-                 $ ('scaffolds'|'contigs')
-
-    returns          $ (0)
-    """
-    assert ctype in ['scaffolds', 'contigs'], "invalid contig type"
-    count, count_200 = 0, 0
-    all_lengths, all_lengths_200 = [], []
-    if os.path.getsize(contigs) == 0:
-        raise ValueError("contigs file is empty!")
-    with open(contigs, "r") as inf:
-        for rec in SeqIO.parse(contigs, "fasta"):
-            length = len(rec.seq)
-            count = count + 1
-            all_lengths.append(length)
-            if length > 200:
-                all_lengths_200.append(length)
-                count_200 = count_200 + 1
-    all_lengths.sort()
-    all_lengths_200.sort()
-    L50, N50 = get_L50_N50(all_lengths)
-    L50_200, N50_200 = get_L50_N50(all_lengths_200)
-    return [
-        ["", "All %s" % ctype, "%s >200bp" %ctype],
-        [ctype + " count", count, count_200],
-        ["Max Length", max(all_lengths), max(all_lengths_200)],
-        ["Assembly size", sum(all_lengths), sum(all_lengths_200)],
-        ["L50", L50, L50_200],
-        ["N50", N50, N50_200 ]
-    ]
-
-
 def get_contig_info(contigs, x):
     Ns, Ns_x = 0, 0
     count, count_x = 0, 0
@@ -1771,7 +1758,7 @@ def get_contig_info(contigs, x):
             "path": "/".join(contigs.split( "/")[-2:])}
 
 
-def get_contig_stats2(contigs, old_contigs=None):
+def get_contig_stats(contigs, old_contigs=None):
     """
     Reports contig statistics on assembly. Reports on scaffolds or
     contigs depending upon 2nd argument passed - contigs gives values
@@ -1887,11 +1874,11 @@ def run_assembler(assembler, assembler_args, args, reads_ns, config, logger):
 
 
     logger.info("%s assembly statistics", assembler);
-    report = get_contig_stats( contigs_path, 'contigs' )
+    report = get_contig_stats(contigs_path)
     logger.info("CONTIG STATS:\n" + tabulate.tabulate(report))
     # Only generate scaffold stats for paired read alignments...
     if os.path.exists(scaffolds_path) and args.fastq2 is not None:
-        report = get_contig_stats( scaffolds_path, 'scaffolds' )
+        report = get_contig_stats( scaffolds_path)
         logger.info("SCAFFOLD STATS:\n" + tabulate.tabulate(report))
     else:
         logger.info("SCAFFOLD STATS: None")
@@ -1954,7 +1941,7 @@ def merge_assemblies(args, config, reads_ns, logger):
     # symlink( "$method/$contig_output", "contigs.fasta" )
     #   or die " Error creating symlink : $! ";
 
-    report = get_contig_stats(contig_output, 'contigs' )
+    report = get_contig_stats(contig_output )
     logger.info("\n\nMERGED ASSEMBLY STATISTICS:" +
                 "\n=========================\n\n" + tabulate.tabulate(report))
     return contig_output
@@ -2321,7 +2308,7 @@ def run_ref_scaffolder(args, tools, config, reads_ns, results, run_id, logger=No
 #         }
 #     }
 
-    report = get_contig_stats2(resulting_scaffold, old_contigs=results.current_contigs);
+    report = get_contig_stats(resulting_scaffold, old_contigs=results.current_contigs);
     logger.info ("\n\nScaffolded assembly stats" +
                  "\n=========================\n" +
                  tabulate.tabulate(report) + "\n")
@@ -2510,23 +2497,16 @@ def run_pe_scaffolder(args, config, reads_ns, results, run_id, logger=None):
     # return linkage_evidence
 
 # }
-
-def find_origin(config, args, results, ori_dir, flex, logger):
-    """ attempts to find the origin for each record in the reference
-    returns a dict {seqID: "contig_name:ori",...}
+def parse_origin_from_coords(coords, flex, reference, logger):
+    """    returns a dict {seqID: "contig_name:ori",...}
     """
-    logger.info("Attempting to identify origin...");
-    cmds, ori_coords =  make_nucmer_delta_show_cmds(config=config, ref=results.current_reference,
-                                       query=results.current_scaffolds,
-                                       out_dir=ori_dir, prefix="ori", header=False)
-    run_nucmer_cmds(cmds, logger)
     pattern = re.compile("\s+")
     origin_dict = {}
-    with open(results.current_reference, "r") as inf:
+    with open(reference, "r") as inf:
         for rec in SeqIO.parse(inf, "fasta"):
             FOUND = False
-            with open(ori_coords, "r") as coords:
-                for line in coords:
+            with open(coords, "r") as in_coords:
+                for line in in_coords:
                     line = line.strip()
                     line = line.replace("|", "")
                     fields = pattern.split(line)
@@ -2538,6 +2518,20 @@ def find_origin(config, args, results, ori_dir, flex, logger):
                             FOUND = True
                             logger.info("Potential origin found at %s",
                                         origin_dict[rec.id] )
+    return origin_dict
+
+def find_origin(config, args, results, ori_dir, flex, logger):  # pragma: no cover
+    """ attempts to find the origin for each record in the reference
+    returns a dict {seqID: "contig_name:ori",...}
+    """
+    logger.info("Attempting to identify origin...");
+    cmds, ori_coords =  make_nucmer_delta_show_cmds(config=config, ref=results.current_reference,
+                                       query=results.current_scaffolds,
+                                       out_dir=ori_dir, prefix="ori", header=False)
+    run_nucmer_cmds(cmds, logger)
+    origin_dict = parse_origin_from_coords(coords=ori_coords, flex=flex,
+                                           reference=results.current_reference,
+                                           logger=logger)
     return origin_dict
 
 
@@ -2593,7 +2587,7 @@ def find_and_split_origin(args, config, results, tools, reads_ns, logger):
                 else:
                     rec.id = "Scaffold_%05d" % counter
                     SeqIO.write(rec, splitscaff, "fasta")
-        report = get_contig_stats2(splitIO, old_contigs=results.current_scaffolds);
+        report = get_contig_stats(splitIO, old_contigs=results.current_scaffolds);
         logger.info ("\n\nScaffolded assembly stats post - breaking origin" +
                      "\n=========================\n" +
                      tabulate.tabulate(report) + "\n")
@@ -2803,7 +2797,7 @@ def run_finisher(args, config, reads_ns, tools, results, logger):
     #                stdout=subprocess.PIPE,
     #                stderr=subprocess.PIPE,
     #                check=True)
-    report = get_contig_stats2(finished_scaffolds, results.current_scaffolds )
+    report = get_contig_stats(finished_scaffolds, results.current_scaffolds )
     logger.info ("\n\nGenome finishing with " + tools.finisher['name'] +
                  " statistics:\n"
                  "=========================\n" +

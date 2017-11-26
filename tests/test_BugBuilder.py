@@ -39,10 +39,13 @@ class test_BugBuilder(unittest.TestCase):
         # static config should not be changed, it is just used to test parsing
         self.static_config = os.path.join(self.ref_dir, "static_config.yaml")
         self.ref_fasta = os.path.join(self.ref_dir, "AP017923.1.fasta")
+        self.coords = os.path.join(self.ref_dir, "origin", "ori.coords")
+        self.picard_stats = os.path.join(self.ref_dir, "picard_insert.txt")
         self.ref_split = os.path.join(self.ref_dir, "2chrom.fasta")
         self.ref_split_1 = os.path.join(self.ref_dir, "2chrom1.fq")
         self.ref_split_2 = os.path.join(self.ref_dir, "2chrom2.fq")
         self.contigs = os.path.join(self.ref_dir, "contigs.fasta")
+        self.mapped_bam = os.path.join(self.ref_dir, "mapped.bam")
         self.contigs_to_scaf = os.path.join(self.ref_dir, "contigs_to_scaffold.fasta")
         self.distant_contigs = os.path.join(self.ref_dir, "distant_contigs.fasta")
         self.renaming_fq = os.path.join(self.ref_dir, "needs_renaming.fq")
@@ -346,12 +349,33 @@ class test_BugBuilder(unittest.TestCase):
              "contigs": already_ctg,
               "scaffolds": already_scf}])
 
-    def test_check_args(self):
+    # def test_check_already_assembled_dirs(self):
+    #     check_already_assembled_dirs(args, config, logger)
+
+    def test_check_args_fail_assembler(self):
         config = bb.parse_config(self.active_config)
         test_args = Namespace(
             merger=None, assemblers=["spades", "shovels"])
         with self.assertRaises(ValueError):
             bb.check_args(test_args, config)
+
+    def test_check_args_fail_finisher(self):
+        config = bb.parse_config(self.active_config)
+        test_args = Namespace(
+            stages="f",
+            scaffolder=None,
+            downsample=0,
+            merger=None,
+            finisher=None,assemblers=[])
+        with self.assertRaises(ValueError):
+            bb.check_args(test_args, config)
+
+    def test_parse_origin_from_coords(self):
+        ref_dict = {'AP017923.1': 'NODE_4_length_5704_cov_4.881287:5704',
+                    'AP017923.2': 'NODE_2_length_10885_cov_4.771743:869'}
+        origin_dict = bb.parse_origin_from_coords(
+            coords=self.coords, flex=5, reference=self.ref_split, logger=logger)
+        self.assertEqual(origin_dict, ref_dict)
 
     def test_make_empty_results_object(self):
         key_list = [
@@ -563,8 +587,25 @@ class test_BugBuilder(unittest.TestCase):
         pass
     def make_picard_stats_command(bam, config, picard_outdir):
         pass
-    def get_insert_stats(bam, reads_ns, args, config, logger):
-        pass
+
+    @unittest.skipIf("TRAVIS" in os.environ and os.environ["TRAVIS"] == "true",
+                     "Skipping this test on Travis CI. Too hard to debug")
+    def test_get_insert_stats(self):
+        test_args = Namespace(
+            tmp_dir=self.test_dir)
+        integration_config = bb.return_config(
+            os.path.join(self.test_dir, "integration_config.yaml"), force=True,
+            hardfail=False, logger=None)
+        self.assertEqual(
+            ('199.816601', '9.857524'),
+            bb.get_insert_stats(bam=self.mapped_bam, config=integration_config,
+                                args=test_args, logger=logger)
+        )
+
+    def test_parse_picard_insert_stats(self):
+        self.assertEqual(('207.5',  '3.535534'),
+                         bb.parse_picard_insert_stats(self.picard_stats))
+
     def replace_placeholders(string, config=None, reads_ns=None, args=None, results=None):
         pass
     def get_assembler_cmds(assembler, assembler_args, args, config, reads_ns):
@@ -573,8 +614,29 @@ class test_BugBuilder(unittest.TestCase):
         pass
     def get_L50_N50(lengths):
         pass
-    def get_contig_stats(contigs, ctype):
-        pass
+
+    def test_get_contig_info(self):
+        info_dict = bb.get_contig_info(self.contigs, x=200)
+        for metric in [["count", 4],
+                       ["all_lengths", [5704, 7626, 10885, 13713]]]:
+            self.assertEqual(info_dict[metric[0]], metric[1])
+
+    def test_get_contig_stats(self):
+        sample_results = [
+            ['Name', 'Old seqs', 'Old seqs > 200', 'New seqs', 'New seqs > 200'],
+            ['count', 7, 7, 4, 4],
+            ['Max Length', 13713, 13713, 13713, 13713],
+            ['Assembly size', 38720, 38720, 37928, 37928],
+            ['L50', 7626, 7626, 10885, 10885],
+            ['N50', 6, 6, 3, 3],
+            ["N's", 0, 0, 0, 0],
+            ['path', 'references/contigs_to_scaffold.fasta', '', 'references/contigs.fasta', '']]
+        results = bb.get_contig_stats(
+            contigs=self.contigs, old_contigs=self.contigs_to_scaf)
+        for i, line in enumerate(sample_results):
+            self.assertEqual(results[i], line)
+
+
     def run_assembler(assembler, assembler_args, args, reads_ns, config, logger):
         pass
     def merge_assemblies(args, config, reads_ns, logger):
