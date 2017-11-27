@@ -237,6 +237,18 @@ class test_BugBuilder(unittest.TestCase):
     def test_get_config_path(self):
         pass
 
+    def test_check_assemblers_too_many(self):
+        test_args = Namespace(
+            fastq1=self.fastq1, fastq2=self.fastq2, long_fastq=None,
+            de_fere_contigs=None, references=[self.ref_fasta], genome_size=0)
+        config = bb.parse_config(self.active_config)
+        reads_ns = bb.assess_reads(args=test_args, config=config,
+                                platform="illumina", logger=logger)
+        test_args.assemblers = ["abyss", "spades", "too_many"]
+        with self.assertRaises(ValueError):
+            bb.check_and_get_assemblers(args=test_args, config=config,
+                                reads_ns=reads_ns, logger=logger)
+
     def test_check_assemblers_bad_assembler(self):
         test_args = Namespace(
             fastq1=self.fastq1, fastq2=self.fastq2, long_fastq=None,
@@ -750,7 +762,9 @@ class test_BugBuilder(unittest.TestCase):
             scaffolder_args=None,
             # memory=8, untrimmed_fastq1=None, untrimmed_fastq2=None, platform="illumina", threads=1
         )
-        config = bb.parse_config(self.active_config)
+        config = bb.return_config(
+            os.path.join(self.test_dir, "integration_config.yaml"), force=True,
+            hardfail=False, logger=None)
         tools = Namespace(
             scaffolder=[x for x in config.scaffolders if x['name'].lower() == "sis"][0])
         results = bb.make_empty_results_object()

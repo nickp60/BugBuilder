@@ -666,7 +666,7 @@ def get_args():  # pragma: no cover
     args = parser.parse_args()
     return args
 
-def set_up_logging(verbosity, outfile, name):
+def set_up_logging(verbosity, outfile, name): # pragma: no cover
     """
     Set up logging a la pyani, with
     a little help from:
@@ -1133,11 +1133,12 @@ def check_and_get_assemblers(args, config, reads_ns, logger):
     logger.debug("Requested assemblers: %s", " ".join(args.assemblers))
     if len(args.assemblers) > 2:
         raise ValueError("A maximum of 2 assemblers can be requested")
-    # sanity check assemblers where these have been manually requested...
-    for assembler in args.assemblers:
-        if shutil.which(assembler) is None and \
-           shutil.which(assembler + ".py") is None:
-            raise ValueError("%s is nt in PATH! exiting" % assembler)
+    # this should have been checked on config, checking here makes testing hard
+    # # sanity check assemblers where these have been manually requested...
+    # for assembler in args.assemblers:
+    #     if shutil.which(assembler) is None and \
+    #        shutil.which(assembler + ".py") is None:
+    #         raise ValueError("%s is nt in PATH! exiting" % assembler)
     # If no assembler is requested, we need to select one based on the
     # 'assembly_type' from the configuration file....
     if len(args.assemblers) == 0:
@@ -1297,6 +1298,18 @@ def make_fastqc_cmd(args, outdir):
             args.threads)
     return cmd
 
+
+def run_fastq_cmd(cmd, logger=None):
+    logger.debug(cmd)
+    fastqc_res = subprocess.run(cmd,
+                                shell=sys.platform != "win32",
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                check=False)
+    if fastqc_res.returncode != 0:
+        logger.warning("Error running fastqc with command %s", fastqc_cmd)
+        sys.exit(1)
+
 def run_fastqc(reads_ns, args, logger=None):
     """
     Carries out QC analysis using fastqc...
@@ -1310,15 +1323,7 @@ def run_fastqc(reads_ns, args, logger=None):
     fastqc_dir = os.path.join(args.tmp_dir, "fastqc", "")
     os.makedirs(fastqc_dir)
     fastqc_cmd = make_fastqc_cmd(args, outdir=fastqc_dir)
-    logger.debug(fastqc_cmd)
-    fastqc_res = subprocess.run(fastqc_cmd,
-                                shell=sys.platform != "win32",
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE,
-                                check=False)
-    if fastqc_res.returncode != 0:
-        logger.warning("Error running fastqc with command %s", fastqc_cmd)
-        sys.exit(1)
+    run_fastq_cmd(fastqc_cmd)
     report = []
     report.append(["Status", "Metric", "File"])
     fails = 0
