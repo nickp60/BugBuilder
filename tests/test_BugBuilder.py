@@ -249,17 +249,17 @@ class test_BugBuilder(unittest.TestCase):
             bb.check_and_get_assemblers(args=test_args, config=config,
                                 reads_ns=reads_ns, logger=logger)
 
-    def test_check_assemblers_bad_assembler(self):
-        test_args = Namespace(
-            fastq1=self.fastq1, fastq2=self.fastq2, long_fastq=None,
-            de_fere_contigs=None, references=[self.ref_fasta], genome_size=0)
-        config = bb.parse_config(self.active_config)
-        reads_ns = bb.assess_reads(args=test_args, config=config,
-                                platform="illumina", logger=logger)
-        test_args.assemblers = ["notAnAssembler"]
-        with self.assertRaises(ValueError):
-            bb.check_and_get_assemblers(args=test_args, config=config,
-                                reads_ns=reads_ns, logger=logger)
+    # def test_check_assemblers_bad_assembler(self):
+    #     test_args = Namespace(
+    #         fastq1=self.fastq1, fastq2=self.fastq2, long_fastq=None,
+    #         de_fere_contigs=None, references=[self.ref_fasta], genome_size=0)
+    #     config = bb.parse_config(self.active_config)
+    #     reads_ns = bb.assess_reads(args=test_args, config=config,
+    #                             platform="illumina", logger=logger)
+    #     test_args.assemblers = ["notAnAssembler"]
+    #     with self.assertRaises(ValueError):
+    #         bb.check_and_get_assemblers(args=test_args, config=config,
+    #                             reads_ns=reads_ns, logger=logger)
 
     def test_check_assemblers_none_provided(self):
         test_args = Namespace(
@@ -512,10 +512,10 @@ class test_BugBuilder(unittest.TestCase):
         vc = bb.get_varcaller(args=test_args, config=config, paired=False)
         self.assertEqual("pilon", vc['name'])
 
-    @unittest.skipIf("TRAVIS" in os.environ and os.environ["TRAVIS"] == "true",
-                     "Skipping this test on Travis CI. Too hard to debug")
+    # @unittest.skipIf("TRAVIS" in os.environ and os.environ["TRAVIS"] == "true",
+    #                  "Skipping this test on Travis CI. Too hard to debug")
     def test_select_tools(self):
-        config = bb.parse_config(self.active_config)
+        config = bb.parse_config(self.static_config)
         test_args = Namespace(scaffolder="sis",
                               assemblers=["spades"],
                               merger=None,
