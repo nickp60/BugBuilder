@@ -45,6 +45,7 @@ class test_BugBuilder(unittest.TestCase):
         self.ref_split_1 = os.path.join(self.ref_dir, "2chrom1.fq")
         self.ref_split_2 = os.path.join(self.ref_dir, "2chrom2.fq")
         self.contigs = os.path.join(self.ref_dir, "contigs.fasta")
+        self.contigs_split_ori = os.path.join(self.ref_dir, "contigs_split_ori.fasta")
         self.mapped_bam = os.path.join(self.ref_dir, "mapped.bam")
         self.contigs_to_scaf = os.path.join(self.ref_dir, "contigs_to_scaffold.fasta")
         self.distant_contigs = os.path.join(self.ref_dir, "distant_contigs.fasta")
@@ -597,8 +598,18 @@ class test_BugBuilder(unittest.TestCase):
 
     def align_reads(dirname, reads_ns,  downsample, args, config, logger):
         pass
-    def make_picard_stats_command(bam, config, picard_outdir):
-        pass
+
+    def test_make_picard_stats_command(self):
+        self.assertEqual(
+            (str("picard CollectInsertSizeMetrics " +
+              "INPUT=file.bam HISTOGRAM_FILE=./test/insert_histogram.pdf " +
+              "OUTPUT=./test/insert_stats.txt QUIET=true VERBOSITY=ERROR " +
+              "ASSUME_SORTED=true VALIDATION_STRINGENCY=LENIENT > " +
+              "./test/CollectInsertMetrics.log 2>&1 "), "./test/insert_stats.txt"),
+            bb.make_picard_stats_command(bam="file.bam",
+                                      config=Namespace(picard="picard"),
+                                      picard_outdir="./test/")
+            )
 
     @unittest.skipIf("TRAVIS" in os.environ and os.environ["TRAVIS"] == "true",
                      "Skipping this test on Travis CI. Too hard to debug")
@@ -626,6 +637,29 @@ class test_BugBuilder(unittest.TestCase):
         pass
     def get_L50_N50(lengths):
         pass
+
+    def test_update_results(self):
+        results = bb.make_empty_results_object()
+        self.assertTrue(results.current_scaffolds is None)
+        path1 = "path/to/me/scaffs.fa"
+        path2 = "path/to/me/other/scaffs.fa"
+        source1 = "arbitrary point number 1"
+        source2 = "look, more abitrary string!"
+        bb.update_results(results=results,
+                       thing="scaffolds",
+                       path=path1,
+                       source=source1)
+        self.assertEqual(results.current_scaffolds, path1)
+        self.assertEqual(results.current_scaffolds_source, source1)
+        self.assertEqual(results.old_scaffolds, [(None, "init")])
+        bb.update_results(results=results,
+                       thing="scaffolds",
+                       path=path2,
+                       source=source2)
+        self.assertEqual(results.current_scaffolds, path2)
+        self.assertEqual(results.current_scaffolds_source, source2)
+        self.assertEqual(results.old_scaffolds, [(None, "init"),
+                                                 (path1, source1)])
 
     def test_get_contig_info(self):
         info_dict = bb.get_contig_info(self.contigs, x=200)
@@ -702,6 +736,22 @@ class test_BugBuilder(unittest.TestCase):
         for k, v in sorted(ori.items()):
             self.assertEqual(ref_dict[k], v)
 
+
+    def test_split_origin(self):
+        ref_dict = {'AP017923.1': 'NODE_4_length_5704_cov_4.88129:1',
+                    'AP017923.2': 'NODE_2_length_10885_cov_4.76832:869'}
+        ori_dir=os.path.join(self.test_dir, "origin", "")
+        os.makedirs(ori_dir, exist_ok=True)
+        results_path = bb.split_origin(origin_dict=ref_dict,
+                                       ori_dir=ori_dir, min_len=5,
+                                       scaffolds=self.contigs, logger=logger)
+        self.assertEqual(
+            os.path.join(ori_dir, "scaffolds_ori_split.fasta"),
+            results_path)
+        self.assertEqual(
+            bb.md5(self.contigs_split_ori),
+            bb.md5(results_path))
+
     @unittest.skipIf("TRAVIS" in os.environ and os.environ["TRAVIS"] == "true",
                      "Skipping this test on Travis CI. Too hard to debug")
     def test_find_and_split_origin(self):
@@ -721,6 +771,14 @@ class test_BugBuilder(unittest.TestCase):
         ###################
         self.to_be_removed.append(
             os.path.join(self.test_dir, "origin", ""))
+
+    def test_use_already_assembled(self):
+        self.assertTrue(bb.use_already_assembled(
+            args=Namespace(already_assembled_dirs=["notempty"])))
+        self.assertFalse(bb.use_already_assembled(
+            args=Namespace(already_assembled_dirs=[],
+                           already_assembled_scaffolds=[],
+                           already_assembled_contigs=[])))
 
     def test_parse_stages_error(self):
         with self.assertRaises(ValueError):

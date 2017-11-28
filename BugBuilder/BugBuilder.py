@@ -1323,7 +1323,7 @@ def run_fastqc(reads_ns, args, logger=None):
     fastqc_dir = os.path.join(args.tmp_dir, "fastqc", "")
     os.makedirs(fastqc_dir)
     fastqc_cmd = make_fastqc_cmd(args, outdir=fastqc_dir)
-    run_fastq_cmd(fastqc_cmd)
+    run_fastq_cmd(fastqc_cmd, logger=logger)
     report = []
     report.append(["Status", "Metric", "File"])
     fails = 0
@@ -2111,10 +2111,10 @@ def make_empty_results_object():
         current_contigs_source=None, current_scaffolds_source=None,
         current_embl=None, # run_prokka fills this in
         current_embl_source=None, # run_prokka fills this in
-        old_embl=[[None, None]],  # [path, source]
-        old_contigs=[[None, None]],  # [path, source]
-        old_scaffolds=[[None, None]],  # [path, source]
-        old_references=[[None, None]],  # [path, source]
+        old_embl=[(None, "init")],  # [path, source]
+        old_contigs=[(None, "init")],  # [path, source]
+        old_scaffolds=[(None, "init")],  # [path, source]
+        old_references=[(None, "init")],  # [path, source]
     )
     return results
 
@@ -2413,7 +2413,7 @@ def run_pe_scaffolder(args, config, reads_ns, results, run_id, logger=None):
                                  config=config, downsample=True, args=args,
                                  logger=logger)
         reads_ns.insert_mean, reads_ns.insert_stddev = get_insert_stats(
-            bam=sorted_bam, config=config, args=args, reads_ns=reads_ns, logger=logger)
+            bam=sorted_bam, config=config, args=args, logger=logger)
 
     run_scaffold_output = os.path.join(args.tmp_dir,
                                        args.scaffolder + "_no_reference",
@@ -2540,6 +2540,55 @@ def find_origin(config, args, results, ori_dir, flex, logger):  # pragma: no cov
     return origin_dict
 
 
+def split_origin(origin_dict, ori_dir, scaffolds, min_len, logger):
+    """ given a origin dict {seq_id, contig:pos}, split seqence there and write
+    """
+    splitIO = os.path.join(ori_dir, "scaffolds_ori_split.fasta")  # SplitIO
+    counter = 0
+    if len(origin_dict) == 0:
+        raise ValueError("no origin found!")
+    # for ref_id, origin in sorted(origin_dict.items())
+    contigs_containing_scaffolds = \
+        [x.split(":")[0] for x in origin_dict.values()]
+    with open(scaffolds, "r") as inscaff, open(splitIO, "w") as splitscaff:
+        for rec in SeqIO.parse(inscaff, "fasta"):
+            counter = counter + 1
+            if rec.id in contigs_containing_scaffolds:
+                # get the proper entry from the dictionary, its a bit clunky
+                origin = [x for x in origin_dict.values() if
+                          x.split(":")[0] == rec.id][0]
+                ori_scaffold, pos = origin.split(":")
+                logger.debug("Splitting %s at origin %s", ori_scaffold, pos)
+                # write out both parts after splitting
+                part_a = rec.seq[0: int(pos)]
+                # dont do +1 because slicing in not inclusive
+                # part_b = rec.seq[int(pos) + 1: ]
+                part_b = rec.seq[int(pos): ]
+                ori_a = SeqRecord(id="Scaffold_%05d" % counter,
+                                  description="{} part A split at {}".format(
+                                      rec.id , int(pos)),
+                                  seq=part_a)
+                counter = counter + 1
+                ori_b = SeqRecord(id="Scaffold_%05d" % counter,
+                                  description="{} part B split at {}".format(
+                                      rec.id , int(pos)),
+                                  seq=part_b)
+                for ori in [ori_a, ori_b]:
+                    if not len(ori.seq) < min_len:
+                        SeqIO.write(ori, splitscaff, "fasta")
+                    else:
+                        logger.warning("the following sequence was ignored as it was too short after spliting at origin:")
+                        logger.warning(ori)
+            else:
+                rec.id = "Scaffold_%05d" % counter
+                SeqIO.write(rec, splitscaff, "fasta")
+    report = get_contig_stats(splitIO, old_contigs=scaffolds);
+    logger.info ("\n\nScaffolded assembly stats post - breaking origin" +
+                 "\n=========================\n" +
+                 tabulate.tabulate(report) + "\n")
+    return splitIO
+
+
 def find_and_split_origin(args, config, results, tools, reads_ns, logger):
     """
     Attempts to identify location of origin based upon contig overlapping
@@ -2562,40 +2611,8 @@ def find_and_split_origin(args, config, results, tools, reads_ns, logger):
 
     origin_dict = find_origin(config, args, results, ori_dir, flex=10, logger=logger)
     outIO = os.path.join(ori_dir, "split_ori_scaff.fasta")  # OutIO
-    splitIO = os.path.join(ori_dir, "scaffolds_ori_split.fasta")  # SplitIO
-    counter = 0
-    if len(origin_dict) == 0:
-        raise ValueError("no origin found!")
-    else:
-    # for ref_id, origin in sorted(origin_dict.items())
-        contigs_containing_scaffolds = \
-            [x.split(":")[0] for x in origin_dict.values()]
-        with open(results.current_scaffolds, "r") as inscaff, open(splitIO, "w") as splitscaff:
-            for rec in SeqIO.parse(inscaff, "fasta"):
-                counter = counter + 1
-                if rec.id in contigs_containing_scaffolds:
-                    # get the proper entry from the dictionary, its a bit clunky
-                    origin = [x for x in origin_dict.values() if
-                              x.split(":")[0] == rec.id][0]
-                    ori_scaffold, pos = origin.split(":")
-                    logger.debug("Splitting %s at origin %s", ori_scaffold, pos)
-                    # write out both parts after splitting
-                    part_a = rec.seq[0: int(pos)]
-                    part_b = rec.seq[int(pos) + 1: ]
-                    ori_a = SeqRecord(id="Scaffold_%05d" % counter,
-                                      seq=part_a)
-                    counter = counter + 1
-                    ori_b = SeqRecord(id="Scaffold_%05d" % counter,
-                                      seq=part_b)
-                    SeqIO.write(ori_a, splitscaff, "fasta")
-                    SeqIO.write(ori_b, splitscaff, "fasta")
-                else:
-                    rec.id = "Scaffold_%05d" % counter
-                    SeqIO.write(rec, splitscaff, "fasta")
-        report = get_contig_stats(splitIO, old_contigs=results.current_scaffolds);
-        logger.info ("\n\nScaffolded assembly stats post - breaking origin" +
-                     "\n=========================\n" +
-                     tabulate.tabulate(report) + "\n")
+    splitIO = split_origin(origin_dict, ori_dir, min_len=10,
+                           scaffolds=results.current_scaffolds, logger=logger)
 
     #                 #  now, rerun scaffolder on our split origins
     #                 results.old_scaffolds.append([results.current_scaffolds,
@@ -3032,14 +3049,20 @@ def run_prokka(config, args, results, logger):
 
 
 def update_results(results, thing, path, source ):
-    """ this bumps a current thing to a list of old things, updating the attribute with a new thing
+    """ this bumps a current thing to a list of old things,
+    updating the attribute with a new thing
+
     """
-    assert thing in ["embl", "contigs", "scaffolds"], "cant update %s" % thing
-    getattr(results, "old_" + thing).append(
-        [getattr(results, "current_" + thing),
-         getattr(results,"current_" + thing + "_source")])
-    results.current_scaffolds = path
-    results.current_scaffolds_source = source
+    assert thing in ["embl", "contigs", "scaffolds", "reference"], \
+        "cant update %s" % thing
+    # if the current thing's path is  None, this is the first entry, so
+    # don't need to bump the old value to the appropriate list
+    if getattr(results, "current_" + thing) is not None:
+        getattr(results, "old_" + thing).append(
+            (getattr(results, "current_" + thing),
+             getattr(results,"current_" + thing + "_source")))
+    setattr(results, "current_" + thing, path)
+    setattr(results, "current_" + thing + "_source", source)
 
 
 def amosvalidate(args, seq_file, config, reads_ns):
@@ -3238,7 +3261,7 @@ def main(args=None, logger=None):
         sorted_bam = align_reads(ref=args.references[0], dirname="align", reads_ns=reads_ns,
                                  config=config, downsample=True, args=args, logger=logger)
         reads_ns.insert_mean, reads_ns.insert_stddev = get_insert_stats(
-            bam=sorted_bam, config=config, args=args, reads_ns=reads_ns, logger=logger)
+            bam=sorted_bam, config=config, args=args, logger=logger)
 
     # print out the run data we have so far
     log_read_and_run_data(reads_ns, args, results, logger)
