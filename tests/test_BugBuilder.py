@@ -800,6 +800,19 @@ class test_BugBuilder(unittest.TestCase):
     def finish_assembly(args, config, reads_ns, results, logger):
         pass
 
+
+    def test_get_prokka_cmd(self):
+        args = Namespace(genus="A", species="b", strain="c", locustag="LOC",
+                         centre="NCBI", threads=7, tmp_dir="./")
+        self.assertEqual(
+            "prokk --addgenes --outdir pro --prefix prokka --genus A " +
+            "--species b --strain c --locustag LOC --centre NCBI " +
+              "--cpus 7 seqs.fasta > ./prokka.log 2>&1",
+            get_prokka_cmd(exe="prokk", outdir="pro",
+                           args=args, seqs="seqs.fasta")
+        )
+
+
     def test_check_spades_kmers(self):
         cmd = "spades.py -k 22,33,55,77 -o someassembly"
         self.assertEqual(

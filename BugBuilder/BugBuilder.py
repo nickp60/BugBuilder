@@ -3008,6 +3008,23 @@ def build_agp(args, results, reads_ns, evidence, logger):
     return gaps
 
 
+def get_prokka_cmd(exe, outdir, args, seqs):
+    return str(
+        "{0} --addgenes --outdir {1} --prefix prokka --genus {2} " +
+        "--species {3} --strain {4} --locustag {5} --centre {6} " +
+        "--cpus {7} {9} > {8}prokka.log 2>&1").format(
+            exe,           #0
+            outdir,        #1
+            args.genus,    #2
+            args.species,  #3
+            args.strain,   #4
+            args.locustag, #5
+            args.centre,   #6
+            args.threads,  #7
+            args.tmp_dir,  #8
+            seqs)
+
+
 def run_prokka(config, args, results, logger):
     """
     generates annotation on the assembly using prokka
@@ -3033,20 +3050,7 @@ def run_prokka(config, args, results, logger):
 
     prokka_dir = os.path.join(args.tmp_dir, "prokka", "")
     # os.makedirs(prokka_dir)
-
-    cmd = str("{0} --addgenes --outdir {1} --prefix prokka --genus {2} " +
-              "--species {3} --strain {4} --locustag {5} --centre {6} " +
-              "--cpus {7} {9} > {8}prokka.log 2>&1").format(
-        config.prokka, #0
-        prokka_dir,    #1
-        args.genus,    #2
-        args.species,  #3
-        args.strain,   #4
-        args.locustag, #5
-        args.centre,   #6
-        args.threads,  #7
-        args.tmp_dir,  #8
-        seqs)
+    cmd = get_prokka_cmd(exe, outdir, args, seqs)
     logger.debug("running the following command:\n %s", cmd)
     subprocess.run(cmd,
                    shell=sys.platform != "win32",

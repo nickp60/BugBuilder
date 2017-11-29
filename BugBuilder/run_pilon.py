@@ -14,30 +14,29 @@ import os
 import sys
 
 def make_pilon_bwa_cmds(bwa_exe, samtools_exe, args, scaffolds, finisher_dir, threads):
-    index_cmd = "{0} index {1} > {2}bwa_index.log 2>&1".format(
-        bwa_exe, scaffolds, finisher_dir)
-    mem_cmd = "{exe} mem -t {threads} {scaffs} {read1} {read2} 2> {outdir}bwa_mem.log | {sam_exe} view -bS - > {outdir}scaffolds.bam 2>{outdir}samtools_view.log".format(
-        exe=bwa_exe, threads=args.threads,scaffs=scaffolds,
-        read1=args.fastq1, read2=args.fastq2, outdir=finisher_dir,
-        sam_exe=samtools_exe)
-    sort_cmd = "{sam_exe} sort {outdir}scaffolds.bam -o {outdir}scaffolds.sorted.bam > {outdir}samtools_sort.log 2>&1".format(
-        sam_exe=samtools_exe,  outdir=finisher_dir)
-    idx_bam = "{sam_exe} index {outdir}scaffolds.sorted.bam >{outdir}samtools_index.log 2>&1".format(
-        sam_exe=samtools_exe,  outdir=finisher_dir)
+    index_cmd = str("{bwa_exe} index {scaffolds} > " +
+                    "{finisher_dir}bwa_index.log 2>&1").format(**locals())
+    mem_cmd = str("{bwa_exe} mem -t {threads} {scaffolds} {args.fastq1} " +
+                  "{args.fastq2} 2> {finisher_dir}bwa_mem.log | " +
+                  "{samtools_exe} view -bS - > {finisher_dir}scaffolds.bam " +
+                  "2>{finisher_dir}samtools_view.log").format(**locals())
+    sort_cmd = str("{samtools_exe} sort {finisher_dir}scaffolds.bam -o " +
+                   "{finisher_dir}scaffolds.sorted.bam > " +
+                   "{finisher_dir}samtools_sort.log 2>&1)").format(**locals())
+    idx_bam = str("{samtools_exe} index {finisher_dir}scaffolds.sorted.bam > " +
+                  "{finisher_dir}samtools_index.log 2>&1").format(**locals())
     cmd_list = [index_cmd, mem_cmd, sort_cmd, idx_bam]
-    return (cmd_list, "{outdir}scaffolds.sorted.bam".format(outdir=finisher_dir))
+    return (cmd_list, "{finisher_dir}scaffolds.sorted.bam".format(**locals()))
 
 
 def make_pilon_cmd(pilon_exe, finisher_dir, scaffolds, threads):
     """ with conda, there is a lovely runner script so we dont have
     to tango with java
     """
-    return str("{pilon} --genome {scaffolds} " +
-               "--bam {outdir}scaffolds.sorted.bam --changes --vcf " +
-               "--tracks --threads {t} --outdir {outdir} > " +
-               "{outdir}pilon.log 2>&1").format(
-                   pilon=pilon_exe, outdir=finisher_dir,
-                   scaffolds=scaffolds, t=threads)
+    return str("{pilon_exe} --genome {scaffolds} " +
+               "--bam {finisher_dir}scaffolds.sorted.bam --changes --vcf " +
+               "--tracks --threads {threads} --outdir {finisher_dir} > " +
+               "{finisher_dir}pilon.log 2>&1").format(**locals())
 
 
 def run(config, args, results, reads_ns, scaffolds, finisher_dir, logger):
