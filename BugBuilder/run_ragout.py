@@ -60,12 +60,8 @@ def make_ragout_recipe(references, target):
     return lines
 
 
-def make_ragout_cmd(config, scaff_dir, threads, ragout_recipe):
-    return "{0} --outdir {1} --synteny sibelia --threads {2} {4} --debug".format(
-        config.ragout,
-        scaff_dir,
-        threads,
-        ragout_recipe)
+def make_ragout_cmd(exe, scaff_dir, threads, ragout_recipe):
+    return "{exe} --outdir {scaff_dir} --synteny sibelia --threads {threads} {ragout_recipe} --debug".format(**locals())
 
 
 def run(config, args, results, ref, contigs, scaff_dir, logger):
@@ -83,13 +79,13 @@ def run(config, args, results, ref, contigs, scaff_dir, logger):
     recipe_file = os.path.join(scaff_dir, "ragout_recipe.txt")
     recipe_lines = make_ragout_recipe(references=args.references, target=contigs)
     with open(recipe_file, "w") as outf:
-        for line in lines:
+        for line in recipe_lines:
             outf.write(line)
-
 
     logger.debug("Using ragout to scaffold %s against %s", contigs,
                  ", ".join(args.references))
-    cmd = ragout_cmd(config, scaff_dir, threads, ragout_recipe)
+    cmd = ragout_cmd(exe=config.ragout, scaff_dir=scaff_dir,
+                     threads=args.threads, ragout_recipe=recipe_file)
     logger.debug(cmd)
     subprocess.run(cmd,
                    shell=sys.platform != "win32",

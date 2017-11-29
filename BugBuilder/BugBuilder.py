@@ -171,7 +171,17 @@ assemblers:
 
 scaffolders:
    - name: SIS
-     ref_required: 1
+     ref_needed: single
+     linkage_evidence: align_genus
+     command: run_sis --reference __REFERENCE__ --contigs __CONTIGS__ --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__
+     scaffold_output: scaffolds.fasta
+     unscaffolded_output: unplaced_contigs.fasta
+     default_args: null
+     create_dir: 1
+     priority: 2
+     multiple_refs: 0
+   - name: ragout
+     ref_needed: multiple
      linkage_evidence: align_genus
      command: run_sis --reference __REFERENCE__ --contigs __CONTIGS__ --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__
      scaffold_output: scaffolds.fasta
@@ -180,7 +190,7 @@ scaffolders:
      create_dir: 1
      priority: 2
    - name: mauve
-     ref_required: 1
+     ref_needed: single
      linkage_evidence: align_genus
      command: run_mauve --reference __REFERENCE__ --run __RUN__ --contigs __CONTIGS__ --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__
      default_args: null
@@ -188,7 +198,7 @@ scaffolders:
      priority: 1
      scaffold_output: scaffolds.fasta
    - name: sspace
-     ref_required: 0
+     ref_needed: null
      linkage_evidence: paired-ends
      command: run_sspace --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__ --contigs __CONTIGS__ --insert_size __INSSIZE__ --insert_sd __INSSD__
      scaffold_output: BugBuilder.scaffolds.fasta
@@ -350,6 +360,7 @@ def configure(config_path, hardfail=True):
             ['prodigal','prodigal'],
             ['hmmer3', 'hmmer3'],
             ["python2", "python2"], # needed for ragout
+            ['ragout.py', 'ragout'],
             ['infernal','infernal'],
             ['bank-transact','bank-transact'],
             ['rnammer','rnammer'], ['tbl2asn','tbl2asn'], ['abyss','abyss'],

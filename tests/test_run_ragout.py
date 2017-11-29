@@ -56,6 +56,14 @@ class test_run_ragout(unittest.TestCase):
         for i, line in enumerate(lines):
             self.assertEqual(line, ref[i])
 
+    def test_make_ragout_cmd(self):
+        self.assertEqual(
+            rr.make_ragout_cmd(
+                exe="raggyraggy", scaff_dir="./test/",
+                threads=7, ragout_recipe="./path/to/recipe.txt"),
+            "raggyraggy --outdir ./test/ --synteny sibelia --threads 7 " +
+            "./path/to/recipe.txt --debug"
+        )
 
     def tearDown(self):
         """ delete temp files if no errors, and report elapsed time
