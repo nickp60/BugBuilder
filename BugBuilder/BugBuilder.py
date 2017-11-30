@@ -1386,6 +1386,34 @@ def make_sickle_cmd(args, reads_ns, paired, out_dir):
                       out_dir)
     return cmd
 
+
+def report_trim_quality(trim_log, logger):
+    """ look through the sickle log and warn if we have lost over 10% of reads
+    """
+    kept = 0
+    disc = 0
+    report = []
+    with open(trim_log, "r") as inf:
+        for line in inf:
+            if line.strip() == "":
+                continue
+            splits = re.split(":\s", line.strip())
+            report.append([splits[0], " ".join(splits[1:])])
+            if "kept" in line:
+                kept = kept + int(line.split(": ")[1].split("(")[0].strip())
+            elif "discarded" in line:
+                disc = disc + int(line.split(": ")[1].split("(")[0].strip())
+            else:
+                pass
+    logger.info("Quality Trimming result:\n" + tabulate.tabulate(report))
+    lost_percent = float(disc / kept) * 100
+    if  lost_percent > 10:
+        logger.warning(">10%% of reads (%d%%) discarded during read trimming. "+
+                       "Please examine the FastQC outputs...", lost_percent)
+    else:
+        logger.debug("Discarded %d%% of the reads during trimming",
+                     lost_percent)
+
 def quality_trim_reads(args, config, reads_ns, logger):
     """
     Quality trims reads using sickle
@@ -1409,32 +1437,14 @@ def quality_trim_reads(args, config, reads_ns, logger):
     if trim_res.returncode != 0:
         logger.warning("Error running trimmer with command %s", trim_cmd)
         sys.exit(1)
+    # reasign the reads with the trimmed treads
+    if reads_ns.paired:
+        args.fastq1 = os.path.join(trim_dir, "read1.fastq")
+        args.fastq2 = os.path.join(trim_dir, "read2.fastq")
     else:
-        # reasign the reads with the trimmed treads
-        if reads_ns.paired:
-            args.fastq1 = os.path.join(trim_dir, "read1.fastq")
-            args.fastq2 = os.path.join(trim_dir, "read2.fastq")
-        else:
-            args.fastq1 = os.path.join(trim_dir, "read1.fastq")
-    kept = 0
-    disc = 0
-    report = []
-    with open(os.path.join(trim_dir, "sickle.log"), "r") as inf:
-        for line in inf:
-            if line.strip() == "":
-                continue
-            splits = re.split(":\s", line.strip())
-            report.append([splits[0], " ".join(splits[1:])])
-            if "kept" in line:
-                kept = kept + int(line.split(": ")[1].split("(")[0].strip())
-            elif "discarded" in line:
-                disc = disc + int(line.split(": ")[1].split("(")[0].strip())
-            else:
-                pass
-    logger.info("Quality Trimming result:\n" + tabulate.tabulate(report))
-    if float(disc / kept) * 100 > 10:
-        logger.warning(">10\% of reads discarded during read trimming. "+
-                       "Please examine the FastQC outputs...")
+        args.fastq1 = os.path.join(trim_dir, "read1.fastq")
+
+    report_trim_quality(trim_log=os.path.join(trim_dir, "sickle.log"), logger=logger)
 
 
 def make_seqtk_ds_cmd(args, reads_ns, new_coverage, outdir, config, logger):
@@ -1504,29 +1514,29 @@ def make_bwa_cmds(args, config, outdir, ref, reads_ns, fastq1, fastq2):
                                 config.bwa, ref, outdir, fastq1, fastq2)
         else:
             sampe_cmd = str("{0} samse {1} {2}read1.sai {3} " +
-                            "2> {2}sampe.log > {2}mapping.sam").format(
+                            "2> {2}samse.log > {2}mapping.sam").format(
                                 config.bwa, ref, outdir, fastq1)
         cmd_list.append(sampe_cmd)
 
     else: # if long reads
         if fastq2 is None:
-            mem_cmd = "{0} mem -t {1} -M {2} {3} >{4}mapping.sam 2>{4}bwa_mem.log".format(
+            mem_cmd = "{0} mem -t {1} -M {2} {3} > {4}mapping.sam 2> {4}bwa_mem.log".format(
                 config.bwa, args.threads, ref, fastq1, outdir)
         else:
-            mem_cmd = "{0} mem -t {1} -M {2} {3} {5} >{4}mapping.sam 2>{4}bwa_mem.log".format(
+            mem_cmd = "{0} mem -t {1} -M {2} {3} {5} > {4}mapping.sam 2> {4}bwa_mem.log".format(
                 config.bwa, args.threads, ref, fastq1, outdir, fastq2)
         cmd_list.append(mem_cmd)
 
     return (cmd_list, os.path.join(outdir, "mapping.sam"))
 
 
-def make_samtools_cmds(config, sam, outdir, sorted_bam):
+def make_samtools_cmds(exe, sam, outdir, sorted_bam):
     # removed the -q 10
     convert = str("{0} view  -Shb {1} | {0} sort - >" +
-                  "{3}").format(
-                      config.samtools, sam, outdir, sorted_bam)
-    index = str("{0} index {1} 2>{2}samtools_index.log").format(
-                      config.samtools, sorted_bam, outdir)
+                  " {2}{3}").format(
+                      exe, sam, outdir, sorted_bam)
+    index = str("{0} index {2}{1} 2> {2}samtools_index.log").format(
+                      exe, sorted_bam, outdir)
     return [convert, index]
 
 
@@ -1569,7 +1579,8 @@ def align_reads(ref, dirname, reads_ns,  downsample, args, config, logger):
                                       reads_ns=reads_ns, fastq1=fastq1,
                                       fastq2=fastq2)
     sorted_bam = os.path.splitext(mapping_sam)[0] + ".bam"
-    samtools_cmds =  make_samtools_cmds(config, sam=mapping_sam,
+    samtools_cmds =  make_samtools_cmds(exe=config.samtools,
+                                        sam=mapping_sam,
                                         outdir=samtools_dir, sorted_bam=sorted_bam)
     for cmd in bwa_cmds + samtools_cmds:
         logger.debug(cmd)

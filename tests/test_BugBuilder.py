@@ -44,6 +44,8 @@ class test_BugBuilder(unittest.TestCase):
         self.ref_split = os.path.join(self.ref_dir, "2chrom.fasta")
         self.ref_split_1 = os.path.join(self.ref_dir, "2chrom1.fq")
         self.ref_split_2 = os.path.join(self.ref_dir, "2chrom2.fq")
+        self.sickle_log = os.path.join(self.ref_dir, "sickle.log")
+        self.sickle_bad_log = os.path.join(self.ref_dir, "sickle_bad.log")
         self.contigs = os.path.join(self.ref_dir, "contigs.fasta")
         self.contigs_split_ori = os.path.join(self.ref_dir, "contigs_split_ori.fasta")
         self.mapped_bam = os.path.join(self.ref_dir, "mapped.bam")
@@ -420,6 +422,23 @@ class test_BugBuilder(unittest.TestCase):
                               reads_ns=Namespace(read_length_mean=45),
                               logger=logger))
 
+    def test_report_trim_quality_good(self):
+        with self.assertLogs('', level='DEBUG') as cm:
+            bb.report_trim_quality(trim_log=self.sickle_log, logger=logger)
+            self.assertEqual(
+                cm.output[-1],
+                "DEBUG:root:Discarded 0% of the reads during trimming")
+
+    def test_report_trim_quality_bad(self):
+        with self.assertLogs('', level='DEBUG') as cm:
+            bb.report_trim_quality(trim_log=self.sickle_bad_log, logger=logger)
+            self.assertEqual(
+                cm.output[-1],
+                "WARNING:root:>10% of reads (26%) discarded during read " +
+                "trimming. Please examine the FastQC outputs...")
+
+
+
     def test_replace_placeholders(self):
         test_args = Namespace(memory=1)
         string = "executable __MEMORY__"
@@ -439,8 +458,8 @@ class test_BugBuilder(unittest.TestCase):
     #         [],
     #         bb.parse_available("assemblers", None)
     #     )
-    @unittest.skipIf("TRAVIS" in os.environ and os.environ["TRAVIS"] == "true",
-                     "Skipping this test on Travis CI. Too hard to debug")
+    # @unittest.skipIf("TRAVIS" in os.environ and os.environ["TRAVIS"] == "true",
+    #                  "Skipping this test on Travis CI. Too hard to debug")
     def test_parse_available_assemblers(self):
         self.assertEqual(
             ["abyss", "spades", "ribo"],
@@ -579,22 +598,84 @@ class test_BugBuilder(unittest.TestCase):
             fastq1="reads_1.fq",
             fastq2=None,
             reads_ns=Namespace(read_length_mean=75),
-            args=Namespace(# fastq2="reads_2.fq",
-                           threads=13),
+            args=Namespace(threads=13),
             outdir="./bwa/",
             config=config)
         ref_cmds = [
             "bWA index ref.fasta  > ./bwa/bwa_index.log 2>&1",
             "bWA aln -t 13 ref.fasta reads_1.fq > ./bwa/read1.sai",
             "bWA samse ref.fasta ./bwa/read1.sai reads_1.fq " +
-            "2> ./bwa/sampe.log > ./bwa/mapping.sam"]
+            "2> ./bwa/samse.log > ./bwa/mapping.sam"]
         for i, cmd in enumerate(cmds):
             self.assertEqual(cmd, ref_cmds[i])
         self.assertEqual(mapping_sam, "./bwa/mapping.sam")
 
+    def test_make_bwa_cmds_aln_pe(self):
+        config = bb.parse_config(self.active_config)
+        config.bwa = "bWA"
+        cmds, mapping_sam = bb.make_bwa_cmds(
+            ref="ref.fasta",
+            fastq1="reads_1.fq",
+            fastq2="reads_2.fq",
+            reads_ns=Namespace(read_length_mean=75),
+            args=Namespace(threads=13),
+            outdir="./bwa/",
+            config=config)
+        ref_cmds = [
+            "bWA index ref.fasta  > ./bwa/bwa_index.log 2>&1",
+            "bWA aln -t 13 ref.fasta reads_1.fq > ./bwa/read1.sai",
+            "bWA aln -t 13 ref.fasta reads_2.fq > ./bwa/read2.sai",
+            "bWA sampe ref.fasta ./bwa/read1.sai ./bwa/read2.sai reads_1.fq " +
+            "reads_2.fq 2> ./bwa/sampe.log > ./bwa/mapping.sam"]
+        for i, cmd in enumerate(cmds):
+            self.assertEqual(cmd, ref_cmds[i])
+        self.assertEqual(mapping_sam, "./bwa/mapping.sam")
 
-    def make_samtools_cmds(config, sam, outdir, sorted_bam):
-        pass
+    def test_make_bwa_cmds_mem_pe(self):
+        config = bb.parse_config(self.active_config)
+        config.bwa = "bWA"
+        cmds, mapping_sam = bb.make_bwa_cmds(
+            ref="ref.fasta",
+            fastq1="reads_1.fq",
+            fastq2="reads_2.fq",
+            reads_ns=Namespace(read_length_mean=101),
+            args=Namespace(threads=13),
+            outdir="./bwa/",
+            config=config)
+        ref_cmds = [
+            "bWA index ref.fasta  > ./bwa/bwa_index.log 2>&1",
+            "bWA mem -t 13 -M ref.fasta reads_1.fq reads_2.fq > " +
+            "./bwa/mapping.sam 2> ./bwa/bwa_mem.log"]
+        for i, cmd in enumerate(cmds):
+            self.assertEqual(cmd, ref_cmds[i])
+        self.assertEqual(mapping_sam, "./bwa/mapping.sam")
+
+    def test_make_bwa_cmds_mem_se(self):
+        config = bb.parse_config(self.active_config)
+        config.bwa = "bWA"
+        cmds, mapping_sam = bb.make_bwa_cmds(
+            ref="ref.fasta",
+            fastq1="reads_1.fq",
+            fastq2=None,
+            reads_ns=Namespace(read_length_mean=101),
+            args=Namespace(threads=13),
+            outdir="./bwa/",
+            config=config)
+        ref_cmds = [
+            "bWA index ref.fasta  > ./bwa/bwa_index.log 2>&1",
+            "bWA mem -t 13 -M ref.fasta reads_1.fq > " +
+            "./bwa/mapping.sam 2> ./bwa/bwa_mem.log"]
+        for i, cmd in enumerate(cmds):
+            self.assertEqual(cmd, ref_cmds[i])
+        self.assertEqual(mapping_sam, "./bwa/mapping.sam")
+
+    def test_make_samtools_cmds(self):
+        self.assertEqual(
+            ["sam view  -Shb in.sam | sam sort - > ./out/out.bam",
+             "sam index ./out/out.bam 2> ./out/samtools_index.log"],
+            bb.make_samtools_cmds(exe="sam", sam="in.sam", outdir="./out/",
+                                  sorted_bam="out.bam")
+        )
 
     def align_reads(dirname, reads_ns,  downsample, args, config, logger):
         pass

@@ -26,7 +26,11 @@ class test_shared_methods(unittest.TestCase):
     """
     def setUp(self):
         self.ref_dir = os.path.join(os.path.dirname(__file__), "references")
+        self.test_dir = os.path.join(os.path.dirname(__file__), "tmp_tests")
         self.startTime = time.time() # for timing
+        self.ref_fasta = os.path.join(self.ref_dir, "AP017923.1.fasta")
+        self.coords = os.path.join(self.ref_dir, "origin", "ori.coords")
+        self.contigs = os.path.join(self.ref_dir, "contigs.fasta")
         self.to_be_removed = []
 
     def test_make_nucmer_delta_show_cmds(self):
@@ -46,6 +50,22 @@ class test_shared_methods(unittest.TestCase):
             self.assertEqual(ref_cmds[idx], cmd)
         self.assertEqual(coords_file, os.path.join("res", "sis.coords"))
 
+    def test_run_nucmer_cmds(self):
+        """
+        """
+        if shutil.which("nucmer") is None:
+            cmds = ["echo 'I wish nucmer was here'",
+                    "echo 'nucmer always loved a good unit test'"]
+        else:
+            config = Namespace(nucmer = shutil.which("nucmer"),
+                               delta_filter=shutil.which("delta-filter"),
+                               show_coords=shutil.which("show-coords"))
+            cmds, coords = sm.make_nucmer_delta_show_cmds(
+                config, ref=self.ref_fasta, query=self.contigs,
+                out_dir=self.test_dir, prefix="test_nuc", header=False)
+            self.assertEqual(coords,
+                             os.path.join(self.test_dir, "test_nuc.coords"))
+        sm.run_nucmer_cmds(cmds=cmds, logger=logger)
 
     def tearDown(self):
         """ delete temp files if no errors, and report elapsed time
