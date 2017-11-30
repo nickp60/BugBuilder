@@ -297,8 +297,8 @@ sub_mains = {
 
 
 def parse_available(thing, path=None):
-    config_path = get_config_path()
     if path is None: # path var is to allow easier testing
+        config_path = get_config_path()
         try:
             config = return_config(config_path, force=False, hardfail=False, logger=None)
         except Exception as e:
