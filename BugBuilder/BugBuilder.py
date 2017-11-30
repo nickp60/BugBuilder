@@ -183,7 +183,7 @@ scaffolders:
    - name: ragout
      ref_needed: multiple
      linkage_evidence: align_genus
-     command: run_sis --reference __REFERENCE__ --contigs __CONTIGS__ --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__
+     command: run_ragout --reference __REFERENCE__ --contigs __CONTIGS__ --tmpdir __TMPDIR__ --scaff_dir __SCAFFDIR__
      scaffold_output: scaffolds.fasta
      unscaffolded_output: unplaced_contigs.fasta
      default_args: null
@@ -285,12 +285,14 @@ from .run_sis import run as run_sis
 from .run_spades import run as run_spades
 from .run_abyss import run as run_abyss
 from .run_pilon import run as run_pilon
+from .run_ragout import run as run_ragout
 
 sub_mains = {
     # "canu": run_canu,
     "abyss": run_abyss,
     "spades": run_spades,
     "pilon": run_pilon,
+    "ragout": run_ragout,
     "sis": run_sis}
 
 
@@ -592,7 +594,7 @@ def get_args():  # pragma: no cover
                      type=str)
     opt.add_argument("--trim-qv", dest='trim_qv', action="store",
                      help="Quality threshold for trimming reads.;  " +
-                     "default: %(default)  ", default=20,
+                     "default: %(default)s  ", default=20,
                      type=int)
     opt.add_argument("--trim-length", dest='trim_length', action="store",
                      help="Min. length of read to retain following  " +
@@ -1174,7 +1176,7 @@ def check_and_get_assemblers(args, config, reads_ns, logger):
                     raise ValueError("No valid assemblers chosen!")
             if conf_assembler['min_length'] and reads_ns.read_length_mean < conf_assembler['min_length']:
                 raise ValueError("%s does not support reads less than %d" % \
-                                 (assembler, conf_assembler.min_length))
+                                 (assembler, conf_assembler['min_length']))
             if conf_assembler['max_length'] and reads_ns.read_length_mean > conf_assembler['max_length']:
                 raise ValueError("%s does not support reads greather than %d" % \
                                  (assembler, conf_assembler['max_length']))
@@ -1191,7 +1193,6 @@ def check_and_get_assemblers(args, config, reads_ns, logger):
 
 
 def get_scaffolder_and_linkage(args, config, paired, logger):
-    logger.debug(config.scaffolders)
     if args.scaffolder is None:
         return None, None
     if args.scaffolder not in [k['name'].lower() for k in config.scaffolders]:
@@ -1220,7 +1221,10 @@ def get_merger_tool(args, config, paired):
     linkage_evidence = None
     for merger_method in config.merge_tools:
         if merger_method['name'] == args.merger:
-            if merger_method['allow_scaffolding']:
+            if not merger_method['allow_scaffolding']:
+                raise ValueError(
+                    "%s prohibits scaffolding! Please remove the 's' from " +
+                    "--stages, change scaffolder, or change merge tool!")
                 args.scaffolder = None
             return merger_method
 
@@ -1974,7 +1978,8 @@ def check_id(ref, args, contigs, config, results, logger):
     """
     logger.info("Checking identity of assembly with reference...")
     ID_OK = False
-    check_dir = os.path.join(args.tmp_dir, "id_check", "")
+    check_dir = os.path.join(args.tmp_dir, "id_check_" +
+                             os.path.splitext(os.path.basename(ref))[0], "")
     os.makedirs(check_dir)
     cmd = str("{0} -query {1} -subject {2} -outfmt 6 -evalue 0.01 -out " +
               "{3}blastout.tab 2>&1 > {3}blastn.log").format(
@@ -3220,7 +3225,13 @@ def main(args=None, logger=None):
                      "reconfigure, and try again")
         sys.exit()
     logger.info("Using configuration from %s", config_path)
-    logger.debug(config)
+    logger.debug(
+        "-----------------------  BEGIN CONFIG ------------------------------")
+    for k, v in sorted(vars(config).items()):
+        logger.debug("    %s: %s", k, str(v))
+    logger.debug(
+        "-----------------------  END CONFIG ------------------------------")
+   # logger.debug(" \nconfig)
     # lets not be hasty
     check_args(args, config)
 
@@ -3342,17 +3353,22 @@ def main(args=None, logger=None):
                 results=results, config=config, logger=logger)
         if len(args.references) > 1:
             # if multiple references provided, select the primary, most similar one
-            percent_list = []  # [ref, 5]
-            for reference in args.referencess:
+            percent_list = []  # [%id, ref]
+            for reference in args.references:
                 ID_OK, percent = check_id(reference, args, contigs=results.current_contigs,
                                      results=results, config=config, logger=logger)
                 if ID_OK:  # ignore any dodgey ones from the list
                     percent_list.append([percent, reference])
+                    # doesnt matter which one it is -- already passed
+                    results.ID_OK = True
                 else:
                     logger.warning(
                         "ignoring reference %s, which only bears ~ %d similarity" %
                         (reference, percent))
                     args.references = [x for x in args.references if x != reference]
+            if len(args.references) == 0:  # if we filtered out all the refs
+                results.ID_OK = False    #  than we should warn the user
+                logger.warning("No appropriate reference given!")
             best_hit = sorted(percent_list)[-1]
             results.current_reference = best_hit[1]
             results.reference_percent_sim = best_hit[0]
@@ -3372,10 +3388,15 @@ def main(args=None, logger=None):
     # right.  Now our results should contain contigs and/or scaffolds.
     # Lets do some scaffolding
     if reads_ns.SCAFFOLD:
+        if args.scaffolder is None:
+            raise ValueError("No scaffolder provided! Please either " +
+                             "select one using the --scaffolder arg, or " +
+                             "remove 's' from the stages argument!")
         # if we didnt break scaffolds, we wont have already checked our reference
         if results.ID_OK is None:
-            results.ID_OK, ref_id = check_id(args, contigs=results.current_contigs,
-                                     results=results, config=config, logger=logger)
+            results.ID_OK, ref_percent = check_id(
+                results.current_reference, args, contigs=results.current_contigs,
+                results=results, config=config, logger=logger)
 
         if \
            (results.ID_OK and tools.scaffolder['linkage_evidence'] == "align-genus") or \
@@ -3399,8 +3420,9 @@ def main(args=None, logger=None):
     if reads_ns.FINISH:
         REFERENCE_BASED_FINISHER = True
         if results.ID_OK is None:
-            results.ID_OK, ref_per = check_id(args, contigs=results.current_contigs,
-                                     results=results, config=config, logger=logger)
+            results.ID_OK, ref_per = check_id(
+                results.current_reference, args, contigs=results.current_contigs,
+                results=results, config=config, logger=logger)
         if args.finisher and results.ID_OK:
             run_finisher(args, config, reads_ns, tools, results, logger=logger)
 

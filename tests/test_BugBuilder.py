@@ -702,7 +702,7 @@ class test_BugBuilder(unittest.TestCase):
         self.assertAlmostEqual(percent,  98.088, 2)
         self.assertTrue(ID_OK)
         self.to_be_removed.append(
-            os.path.join(self.test_dir, "id_check", ""))
+            os.path.join(self.test_dir, "id_check_AP017923.1", ""))
 
     @unittest.skipIf(shutil.which("blastn") is None,
                      "Cannot test check_id without blastn")
@@ -717,7 +717,7 @@ class test_BugBuilder(unittest.TestCase):
                         results=Namespace(current_scaffolds=self.contigs),
                         config=config, logger=logger))
         self.to_be_removed.append(
-            os.path.join(self.test_dir, "id_check", ""))
+            os.path.join(self.test_dir, "id_check_AP017923.1", ""))
 
     @unittest.skipIf("TRAVIS" in os.environ and os.environ["TRAVIS"] == "true",
                      "Skipping this test on Travis CI. Too hard to debug")
@@ -808,7 +808,7 @@ class test_BugBuilder(unittest.TestCase):
             "prokk --addgenes --outdir pro --prefix prokka --genus A " +
             "--species b --strain c --locustag LOC --centre NCBI " +
               "--cpus 7 seqs.fasta > ./prokka.log 2>&1",
-            get_prokka_cmd(exe="prokk", outdir="pro",
+            bb.get_prokka_cmd(exe="prokk", outdir="pro",
                            args=args, seqs="seqs.fasta")
         )
 
