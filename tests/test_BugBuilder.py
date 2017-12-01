@@ -674,7 +674,7 @@ class test_BugBuilder(unittest.TestCase):
             ["sam view  -Shb in.sam | sam sort - > ./out/out.bam",
              "sam index ./out/out.bam 2> ./out/samtools_index.log"],
             bb.make_samtools_cmds(exe="sam", sam="in.sam", outdir="./out/",
-                                  sorted_bam="out.bam")
+                                out_bam="./out/out.bam")
         )
 
     def align_reads(dirname, reads_ns,  downsample, args, config, logger):

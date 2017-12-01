@@ -247,6 +247,14 @@ finishers:
      ref_required: 0
      paired_reads: 1
      priority: 1
+   - name: FGAP
+     command: run_pilon --tmpdir __TMPDIR__ --threads __THREADS__
+     output_scaffolds: pilon.fasta
+     create_dir: 1
+     needs: fixed_gaps
+     ref_required: 0
+     paired_reads: 1
+     priority: 1
 
 varcallers:
    - name: pilon
@@ -285,7 +293,8 @@ from .run_sis import run as run_sis
 from .run_spades import run as run_spades
 from .run_abyss import run as run_abyss
 from .run_pilon import run as run_pilon
-from .run_ragout import run as run_ragout
+from .run_fgap import run as run_fgap
+from .run_sealer import run as run_sealer
 
 sub_mains = {
     # "canu": run_canu,
@@ -293,6 +302,8 @@ sub_mains = {
     "spades": run_spades,
     "pilon": run_pilon,
     "ragout": run_ragout,
+    "fgap": run_fgap,
+    "sealer": run_sealer,
     "sis": run_sis}
 
 
@@ -356,6 +367,7 @@ def configure(config_path, hardfail=True):
             ['sickle', 'sickle-trim'],
             ['mauve','mauve'],
             ['ribo', 'riboSeed'],
+            ["FGAP", "fgap"],
             ["minimus", "minimus"],
             ['sam2afg','sam2afg'],
             ['aragorn', 'aragorn'],
@@ -1530,13 +1542,13 @@ def make_bwa_cmds(args, config, outdir, ref, reads_ns, fastq1, fastq2):
     return (cmd_list, os.path.join(outdir, "mapping.sam"))
 
 
-def make_samtools_cmds(exe, sam, outdir, sorted_bam):
+def make_samtools_cmds(exe, sam, outdir, out_bam):
     # removed the -q 10
     convert = str("{0} view  -Shb {1} | {0} sort - >" +
-                  " {2}{3}").format(
-                      exe, sam, outdir, sorted_bam)
-    index = str("{0} index {2}{1} 2> {2}samtools_index.log").format(
-                      exe, sorted_bam, outdir)
+                  " {3}").format(
+                      exe, sam, outdir, out_bam)
+    index = str("{0} index {1} 2> {2}samtools_index.log").format(
+                      exe, out_bam, outdir)
     return [convert, index]
 
 
@@ -1581,7 +1593,7 @@ def align_reads(ref, dirname, reads_ns,  downsample, args, config, logger):
     sorted_bam = os.path.splitext(mapping_sam)[0] + ".bam"
     samtools_cmds =  make_samtools_cmds(exe=config.samtools,
                                         sam=mapping_sam,
-                                        outdir=samtools_dir, sorted_bam=sorted_bam)
+                                        outdir=samtools_dir, out_bam=sorted_bam)
     for cmd in bwa_cmds + samtools_cmds:
         logger.debug(cmd)
         subprocess.run(cmd,
