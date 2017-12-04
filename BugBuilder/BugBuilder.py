@@ -289,22 +289,27 @@ from Bio import SeqIO # , SearchIO
 from Bio.SeqRecord import SeqRecord
 from argparse import Namespace
 from .shared_methods import make_nucmer_delta_show_cmds, run_nucmer_cmds
-from .run_sis import run as run_sis
+# Assemblers
 from .run_spades import run as run_spades
 from .run_abyss import run as run_abyss
+# Scaffolders
+from .run_sis import run as run_sis
+from .run_ragout import run as run_ragout
+# finishers
 from .run_pilon import run as run_pilon
 from .run_fgap import run as run_fgap
 from .run_sealer import run as run_sealer
 
 sub_mains = {
     # "canu": run_canu,
-    "abyss": run_abyss,
     "spades": run_spades,
-    "pilon": run_pilon,
+    "abyss": run_abyss,
+    "sis": run_sis,
     "ragout": run_ragout,
+    "pilon": run_pilon,
     "fgap": run_fgap,
     "sealer": run_sealer,
-    "sis": run_sis}
+}
 
 
 def parse_available(thing, path=None):
