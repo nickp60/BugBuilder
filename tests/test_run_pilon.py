@@ -52,7 +52,7 @@ class test_run_pilon(unittest.TestCase):
                   "samtools view -bS - > ./out/scaffolds.bam " +
                   "2>./out/samtools_view.log",
             "samtools sort ./out/scaffolds.bam -o ./out/scaffolds.sorted.bam" +
-            " > ./out/samtools_sort.log 2>&1)",
+            " > ./out/samtools_sort.log 2>&1",
             "samtools index ./out/scaffolds.sorted.bam > " +
             "./out/samtools_index.log 2>&1"
         ]

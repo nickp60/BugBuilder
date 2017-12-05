@@ -247,7 +247,7 @@ finishers:
      ref_required: 0
      paired_reads: 1
      priority: 1
-   - name: FGAP
+   - name: fgap
      command: run_pilon --tmpdir __TMPDIR__ --threads __THREADS__
      output_scaffolds: pilon.fasta
      create_dir: 1
@@ -326,16 +326,14 @@ def parse_available(thing, path=None):
     thing_list = [x['name'].lower() for x in getattr(config, thing)]
     # return all the names that have an executable available
     # sometimes, if configuring fails, this can result in an attribute arrow
-    # try:
-    return [x for x in thing_list if getattr(config, x.replace("-", "_")) is not None]
-    # except AttributeError:
-    #     print(AttributeError.msg)
-    #     print("It looks like there is a damaged config file; Fixing!")
-    #     sys.exit()
-    #     with open(get_config_path(), "w") as conf:
-    #         conf.write("STATUS: INCOMPLETE")
-    #     configure(config_path)
-    #     return(parse_available(thing=thing, path=get_config_path()))
+    try:
+        return [x for x in thing_list if getattr(config, x.replace("-", "_")) is not None]
+    except AttributeError:
+        print("It looks like there is a damaged config file; Fixing!")
+        with open(get_config_path(), "w") as conf:
+            conf.write("STATUS: INCOMPLETE")
+        configure(config_path)
+        return(parse_available(thing=thing, path=get_config_path()))
 
 # def get_program_version(prog, ver_cmd):
 #     fastqc_res = subprocess.run("{} {}".format(prog, ver_cmd),
@@ -718,6 +716,7 @@ def set_up_logging(verbosity, outfile, name): # pragma: no cover
         logfile_handler.setFormatter(logfile_handler_formatter)
         logger.addHandler(logfile_handler)
     except:
+        logger.error(e, exc_info=True)
         logger.error("Could not open {0} for logging".format(outfile))
         sys.exit(1)
     logger.setLevel(logging.DEBUG)
@@ -1248,7 +1247,8 @@ def get_merger_tool(args, config, paired):
 def get_finisher(args, config, paired):
     if args.finisher is None:
         return None
-    if args.finisher not in [x['name'] for x in config.finishers]:
+    print(config.finishers)
+    if args.finisher.lower() not in [x['name'].lower() for x in config.finishers]:
         raise ValueError("%s not an available finisher!" %args.finisher)
     for conf_finisher in config.finishers:
         if conf_finisher['name'] == args.finisher:
@@ -1473,6 +1473,7 @@ def make_seqtk_ds_cmd(args, reads_ns, new_coverage, outdir, config, logger):
     logger.info("downsampleing to %f X  to %f X (%f)",
                 reads_ns.coverage, new_coverage , frac )
     for reads in [args.fastq1, args.fastq2]:
+        print(reads)
         if reads is not None and os.path.exists(reads):
             cmd_list.append("{0} sample -s 100 {1} {2} > {3}".format(
                 config.seqtk,  reads, frac,
@@ -1502,8 +1503,10 @@ def downsample_reads(args, reads_ns, config, new_cov=100, logger=None):
                        stdout=subprocess.PIPE,
                        stderr=subprocess.PIPE,
                        check=True)
-    args.fastq1 = os.path.join(ds_dir, os.path.basename(args.fastq1)) if args.fastq1 is not None else None
-    args.fastq2 = os.path.join(ds_dir, os.path.basename(args.fastq2)) if args.fastq1 is not None else None
+    if args.fastq1 is not None:
+        args.fastq1 = os.path.join(ds_dir, os.path.basename(args.fastq1))
+    if args.fastq2 is not None:
+        args.fastq2 = os.path.join(ds_dir, os.path.basename(args.fastq2))
     return new_cov
 
 
@@ -1868,6 +1871,7 @@ def check_spades_kmers(assembler, cmd, readlen, min_diff=2, logger=None):
     try:
         klist = [int(x) for x in k.split(",")]
     except Exception as e:
+        logger.error(e, exc_info=True)
         logger.error("error splitting kmers in %s by comma!", k)
         logger.error(e)
         raise ValueError
@@ -3083,7 +3087,7 @@ def run_prokka(config, args, results, logger):
 
     prokka_dir = os.path.join(args.tmp_dir, "prokka", "")
     # os.makedirs(prokka_dir)
-    cmd = get_prokka_cmd(exe, outdir, args, seqs)
+    cmd = get_prokka_cmd(exe=config.prokka, outdir=prokka_dir, args=args, seqs=seqs)
     logger.debug("running the following command:\n %s", cmd)
     subprocess.run(cmd,
                    shell=sys.platform != "win32",

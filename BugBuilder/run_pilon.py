@@ -22,7 +22,7 @@ def make_pilon_bwa_cmds(bwa_exe, samtools_exe, args, scaffolds, finisher_dir, th
                   "2>{finisher_dir}samtools_view.log").format(**locals())
     sort_cmd = str("{samtools_exe} sort {finisher_dir}scaffolds.bam -o " +
                    "{finisher_dir}scaffolds.sorted.bam > " +
-                   "{finisher_dir}samtools_sort.log 2>&1)").format(**locals())
+                   "{finisher_dir}samtools_sort.log 2>&1").format(**locals())
     idx_bam = str("{samtools_exe} index {finisher_dir}scaffolds.sorted.bam > " +
                   "{finisher_dir}samtools_index.log 2>&1").format(**locals())
     cmd_list = [index_cmd, mem_cmd, sort_cmd, idx_bam]
