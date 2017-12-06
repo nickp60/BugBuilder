@@ -91,7 +91,7 @@ class test_BugBuilder(unittest.TestCase):
                               long_fastq=None, threads=7)
         ref_cmd = "fastqc -t 7 --extract -o ./outdir/ reads1.fastq reads2.fastq > " + \
                   "./outdir/fastqc.log 2>&1"
-        cmd = bb.make_fastqc_cmd(args=test_args, outdir="./outdir/")
+        cmd = bb.make_fastqc_cmd(exe="fastqc", args=test_args, outdir="./outdir/")
         self.assertEqual(ref_cmd, cmd)
 
     # def test_n50(self):

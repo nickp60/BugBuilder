@@ -530,7 +530,8 @@ def get_args():  # pragma: no cover
                      "file. If running multiple assemblers, " +
                      "assembler_args should be specified twice, once " +
                      "for each assemler, in the same order than the " +
-                     "assemblers are specified.",
+                     "assemblers are specified. enclose with quotes and " +
+                     "start each with a space, like ' -sample'",
                      nargs="*", default=[],
                      type=str)
     opt.add_argument("--scaffolder", dest='scaffolder', action="store",
@@ -1320,9 +1321,10 @@ def assembler_needs_downsampling(tools):
     return False
 
 
-def make_fastqc_cmd(args, outdir):
+def make_fastqc_cmd(exe, args, outdir):
     cmd = \
-        "fastqc -t {4} --extract -o {0}{1}{2}{3} > {0}fastqc.log 2>&1".format(
+        "{0} -t {5} --extract -o {1}{2}{3}{4} > {1}fastqc.log 2>&1".format(
+            exe,
             outdir,
             " " + args.fastq1 if args.fastq1 is not None else "",
             " " + args.fastq2 if args.fastq2 is not None else "",
@@ -1342,7 +1344,7 @@ def run_fastq_cmd(cmd, logger=None):
         logger.warning("Error running fastqc with command %s", fastqc_cmd)
         sys.exit(1)
 
-def run_fastqc(reads_ns, args, logger=None):
+def run_fastqc(reads_ns, args, config, logger=None):
     """
     Carries out QC analysis using fastqc...
 
@@ -1354,7 +1356,7 @@ def run_fastqc(reads_ns, args, logger=None):
     logger.info("Running FastQC...")
     fastqc_dir = os.path.join(args.tmp_dir, "fastqc", "")
     os.makedirs(fastqc_dir)
-    fastqc_cmd = make_fastqc_cmd(args, outdir=fastqc_dir)
+    fastqc_cmd = make_fastqc_cmd(exe=config.fastqc, args=args, outdir=fastqc_dir)
     run_fastq_cmd(fastqc_cmd, logger=logger)
     report = []
     report.append(["Status", "Metric", "File"])
@@ -2594,7 +2596,8 @@ def split_origin(origin_dict, ori_dir, scaffolds, min_len, logger):
     splitIO = os.path.join(ori_dir, "scaffolds_ori_split.fasta")  # SplitIO
     counter = 0
     if len(origin_dict) == 0:
-        raise ValueError("no origin found!")
+        logger.warning("no origin found! Continuing...")
+        return scaffolds
     # for ref_id, origin in sorted(origin_dict.items())
     contigs_containing_scaffolds = \
         [x.split(":")[0] for x in origin_dict.values()]
@@ -3263,7 +3266,6 @@ def main(args=None, logger=None):
         logger.debug("    %s: %s", k, str(v))
     logger.debug(
         "-----------------------  END CONFIG ------------------------------")
-   # logger.debug(" \nconfig)
     # lets not be hasty
     check_args(args, config)
 
@@ -3289,7 +3291,7 @@ def main(args=None, logger=None):
     logger.debug("Determining if fastqc will be run")
     if reads_ns.QC:
         if  config.fastqc is not None:
-            run_fastqc(reads_ns, args, logger=logger)
+            run_fastqc(reads_ns, args, config, logger=logger)
         else:
             logger.info("Skipping fastqc, as no executable is in PATH")
 
