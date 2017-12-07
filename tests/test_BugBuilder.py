@@ -750,7 +750,7 @@ class test_BugBuilder(unittest.TestCase):
 
     def test_get_contig_stats(self):
         sample_results = [
-            ['Name', 'Old seqs', 'Old seqs > 200', 'New seqs', 'New seqs > 200'],
+            ['', 'Old seqs', 'Old seqs > 200', 'New seqs', 'New seqs > 200'],
             ['count', 7, 7, 4, 4],
             ['Max Length', 13713, 13713, 13713, 13713],
             ['Assembly size', 38720, 38720, 37928, 37928],
