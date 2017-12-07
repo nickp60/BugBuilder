@@ -115,11 +115,12 @@ assembler_categories:
 assemblers:
    - name: abyss
      create_dir: 1
-     min_length: 200
+     min_length: null
      max_length: null
-     command_pe: run_abyss --tmpdir __TMPDIR__ --fastq1 __FASTQ1__ --fastq2 __FASTQ2__ --read_length __READ_LENGTH__
+     command_pe: run_abyss -o __TMPDIR__  __FASTQ1__  __FASTQ2__
      contig_output: __TMPDIR__/abyss/abyss-contigs.fa
      scaffold_output: __TMPDIR__/abyss/abyss-scaffolds.fa
+     default_args: -v
      insert_size_required: 0
      downsample_reads: 1
    - name: spades
@@ -234,7 +235,7 @@ finishers:
    - name: abyss-sealer
      command: run_abyss-sealer --tmpdir __TMPDIR__ --encoding __ENCODING__ --threads __THREADS__
      create_dir: 1
-     output_scaffolds: abyss.fasta
+     output_scaffolds: sealed_scaffold.fa
      needs: fixed_gaps
      ref_required: 0
      paired_reads: 1
@@ -249,11 +250,11 @@ finishers:
      priority: 1
    - name: fgap
      command: run_pilon --tmpdir __TMPDIR__ --threads __THREADS__
-     output_scaffolds: pilon.fasta
+     output_scaffolds: fgap.final.fasta
      create_dir: 1
      needs: fixed_gaps
      ref_required: 0
-     paired_reads: 1
+     paired_reads: 0
      priority: 1
 
 varcallers:
@@ -308,7 +309,7 @@ sub_mains = {
     "ragout": run_ragout,
     "pilon": run_pilon,
     "fgap": run_fgap,
-    "sealer": run_sealer,
+    "abyss-sealer": run_sealer,
 }
 
 
@@ -363,6 +364,7 @@ def configure(config_path, hardfail=True):
             ["show-coords", "MUMmer"],
             ['R', "R"],
             ['bwa', 'BWA'],
+            ["perl", "perl"],
             ],
         "opt_programs": [
             ["prokka", "PROKKA"],
@@ -577,8 +579,7 @@ def get_args():  # pragma: no cover
                      "PacBio/MinION assemblies when not using a reference ",
                      type=int, default=0) # 0 is better than None for addition :)
     opt.add_argument("--downsample", dest='downsample', action="store",
-                     help="Downsample depth; set to 0 to skip " +
-                     "downsampling. default is 100x ",
+                     help="Downsample depth; default is 100x ",
                      type=int, default=100)
     opt.add_argument("--species", dest='species', action="store",
                      help="Specific name of species if known (ie pyogenes)." +
@@ -1472,7 +1473,7 @@ def make_seqtk_ds_cmd(args, reads_ns, new_coverage, outdir, config, logger):
     assert isinstance(new_coverage, int), "new_coverage must be an int"
     frac = float(new_coverage / reads_ns.coverage)
     cmd_list = []
-    logger.info("downsampleing to %f X  to %f X (%f)",
+    logger.info("downsampleing from %f X  to %f X (%f)",
                 reads_ns.coverage, new_coverage , frac )
     for reads in [args.fastq1, args.fastq2]:
         print(reads)
@@ -2181,7 +2182,7 @@ def log_read_and_run_data(reads_ns, args, results, logger):  # pragma nocover
         ["Library type", paired_str],
         ["Platform", args.platform],
         ["Quality Encoding", reads_ns.encoding],
-        ["Projected Coverage", str(reads_ns.coverage) + "x"],
+        ["Initial Coverage", str(reads_ns.coverage) + "x"],
         ["Projected Coverage (Downsampled)", str(reads_ns.downsampled_coverage) + "x"],
         ["Projected Long Read Coverage", str(reads_ns.long_read_coverage) + "x"]
         ]
@@ -3306,9 +3307,25 @@ def main(args=None, logger=None):
 
     #-------------------------- DOWNSAMPLE
     if reads_ns.DOWNSAMPLE:
+        # we need to check other potentially conflicitng args
+        ACTUALLY_DOWNSAMPLE = True
         logger.debug("Determining whether to downsample")
-        if (reads_ns.coverage is not None or reads_ns.coverage > 100) and \
-           (assembler_needs_downsampling(tools) or args.downsample != 0):
+        if reads_ns.coverage is None:
+            ACTUALLY_DOWNSAMPLE = False
+            raise ValueError(
+                "Cannot downsample, as coverage could not be " +
+                "calcuated! Try rerunning without 'd' in --stages")
+        if (reads_ns.coverage < args.downsample):
+            ACTUALLY_DOWNSAMPLE = False
+            logger.info(str("Skipping downsampling; coverage %d is less " +
+                            "than --downsample value of %d"),
+                        reads_ns.coverage,
+                        args.downsample)
+        if not assembler_needs_downsampling(tools):
+            ACTUALLY_DOWNSAMPLE = False
+            logger.info("Skipping downsampling; one or more assemblers "+
+                        "does not need it")
+        if ACTUALLY_DOWNSAMPLE:
             logger.info("Downsampling reads to %dx coverage", args.downsample)
             reads_ns.downsampled_coverage = downsample_reads(
                 args=args, reads_ns=reads_ns,

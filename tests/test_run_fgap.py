@@ -35,11 +35,11 @@ class test_run_fgap(unittest.TestCase):
         self.assertEqual(
             rf.make_fgap_cmd(fgap_exe="FGAP",
                              finisher_dir="./fgap/",
+                             refs_string="ref1.fasta,ref2.fasta",
                              scaffolds="scaffs.fasta", threads=7),
-            "FGAP '--genome scaffs.fasta " +
-               "--bam ./fgap/scaffolds.sorted.bam --changes --vcf " +
-               "--tracks --threads 7 --outdir ./fgap/' > " +
-               "./fgap/FGAP.log 2>&1"
+            "FGAP '--draft-file scaffs.fasta " +
+            "--datasets-files ref1.fasta,ref2.fasta --threads 7 " +
+            "--output-prefix ./fgap/fgap' > ./fgap/FGAP.log 2>&1"
         )
 
     def tearDown(self):

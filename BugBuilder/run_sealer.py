@@ -9,14 +9,18 @@
 # file for details
 #
 ######################################################################
+import subprocess
+import os
+import sys
+import glob
 
 def run(config, args, results, reads_ns, scaffolds, finisher_dir, logger):
     logger.info("Using abyss-sealer to finish our scaffolds: %s", scaffolds)
     # Following contributed by Andrey Tovchigrechko <andreyto@gmail.com>
-    filled_prefix = "gap_sealed"
+    filled_prefix = os.path.join(finisher_dir, "sealed")
     # First, try to use reads error-corrected by Spades if they exits
     reads = glob.glob(
-        "{args.tmp_dir}/spades/corrected/*.cor.fastq.gz".format(locals()))
+        "{args.tmp_dir}/spades/corrected/*.cor.fastq.gz".format(**locals()))
     if len(reads) == 0:
         # Otherwise, use the input reads and rely on error-correction built into abyss-sealer
         reads = [args.fastq1, args.fastq2]
@@ -35,10 +39,12 @@ def run(config, args, results, reads_ns, scaffolds, finisher_dir, logger):
                        stdout=subprocess.PIPE,
                        stderr=subprocess.PIPE,
                        check=True)
-    with open(seal_scaffs, "r") as inf, open("100bpNs.fasta", "w") as outf:
-        for rec in SeqIO.parse(inf, fasta):
-            # expand gaps of a single N to 100 Ns as per convention for unknown gap sizes,
-            # since these are probably the 1 base remaining following gap closure...
-            # gap = 'N' x 100;
-            # new_seq = re.sub("N*", rec.seq, gap )
-            SeqIO.write(outf, rec, "fasta")
+
+    # do we even need this?
+    # with open(filled_prefix + "_scaffolds.fasta", "r") as inf, open("100bpNs.fasta", "w") as outf:
+    #     for rec in SeqIO.parse(inf, fasta):
+    #         # expand gaps of a single N to 100 Ns as per convention for unknown gap sizes,
+    #         # since these are probably the 1 base remaining following gap closure...
+    #         # gap = 'N' x 100;
+    #         # new_seq = re.sub("N*", rec.seq, gap )
+    #         SeqIO.write(outf, rec, "fasta")
