@@ -2,7 +2,7 @@
 import subprocess
 import sys
 
-def run(exe, cmd, logger):
+def run(exe, cmd, config, reads_ns, logger):
     full_cmd = "{0} {1}".format(exe, cmd)
     logger.debug("executing the following command: %s", full_cmd)
     subprocess.run(full_cmd,

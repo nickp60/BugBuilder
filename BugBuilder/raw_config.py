@@ -118,10 +118,11 @@ assemblers:
      create_dir: 1
      min_length: null
      max_length: null
-     command_pe: run_abyss -o __TMPDIR__  __FASTQ1__  __FASTQ2__
+     command_pe: run_abyss -C __TMPDIR__/abyss/  in='__FASTQ1__  __FASTQ2__' name=abyss
+     command_se: run_abyss -C __TMPDIR__/abyss/  in=__FASTQ1__ name=abyss
      contig_output: __TMPDIR__/abyss/abyss-contigs.fa
      scaffold_output: __TMPDIR__/abyss/abyss-scaffolds.fa
-     default_args: -v
+     default_args: k=55
      insert_size_required: 0
      downsample_reads: 1
    - name: spades
@@ -137,7 +138,7 @@ assemblers:
      default_args: -t __THREADS__ --careful
      insert_size_required: 0
      downsample_reads: 1
-   - name: ribo
+   - name: riboSeed
      create_dir: 0
      min_length: null
      max_length: null

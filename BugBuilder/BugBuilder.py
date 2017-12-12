@@ -82,7 +82,7 @@ def parse_available(thing, path=None):
         print("It looks like there is a damaged config file; Fixing!")
         with open(get_config_path(), "w") as conf:
             conf.write("STATUS: INCOMPLETE")
-        configure(config_path)
+        configure(get_config_path())
         return(parse_available(thing=thing, path=get_config_path()))
 
 # def get_program_version(prog, ver_cmd):
@@ -100,6 +100,8 @@ def configure(config_path, hardfail=True):
     with open(config_path, 'w') as outfile:  # write header and config params
         for line in __config_data__:
             outfile.write(line)
+    #  the structure is {program_category:[[executable, name],
+    #                                      [another_executable, its_name]}
     all_programs_dict = {
         "mandatory_programs": [
             ['seqtk', 'seqtk'],
@@ -107,12 +109,14 @@ def configure(config_path, hardfail=True):
             ['picard', 'Picard'],
             ['blastn', "BLASTn"],
             ['makeblastdb', "makeblastdb"],
-            ["nucmer", "MUMmer"],
+            ["nucmer", "nucmer"],
             ["mummer", "MUMmer"],
             ["mummerplot", "MUMmerplot"],
-            ["delta-filter", "MUMmer"],
-            ["show-coords", "MUMmer"],
+            ["delta-filter", "delta-filter"],
+            ["show-coords", "show_coords"],
             ['R', "R"],
+            ['cgview', 'cgview'],
+            ['cgview_xml_builder.pl', 'cgview_xml_builder'],
             ['bwa', 'BWA'],
             ["perl", "perl"],
             ],
@@ -122,8 +126,8 @@ def configure(config_path, hardfail=True):
             ['sickle', 'sickle-trim'],
             ['mauve','mauve'],
             ['ribo', 'riboSeed'],
-            ["FGAP", "fgap"],
-            ["minimus", "minimus"],
+            ['FGAP', 'fgap'],
+            ['minimus', 'minimus'],
             ['sam2afg','sam2afg'],
             ['aragorn', 'aragorn'],
             ['prodigal','prodigal'],
@@ -132,12 +136,20 @@ def configure(config_path, hardfail=True):
             ['ragout.py', 'ragout'],
             ['infernal','infernal'],
             ['bank-transact','bank-transact'],
-            ['rnammer','rnammer'], ['tbl2asn','tbl2asn'], ['abyss','abyss'],
-            ['celera','celera'], ["abyss","abyss"], ["abyss-sealer","abyss-sealer"],
-            ['gapfiller','gapfiller'], ['sspace','sspace'], ['asn2gb','asn2gb'],
-            ['amos','amos'] , ['masurca','masurca'],
-            ['gfinisher', 'gfinisher'], ['pilon','pilon'],
-            ['vcflib','vcflib'], ['cgview','cgview'],
+            ['rnammer','rnammer'],
+            ['tbl2asn','tbl2asn'],
+            ['celera','celera'],
+            ["abyss-pe","abyss"],
+            ["abyss-sealer","abyss-sealer"],
+            ['gapfiller','gapfiller'],
+            ['sspace','sspace'],
+            ['asn2gb','asn2gb'],
+            ['amos','amos'] ,
+            ['masurca','masurca'],
+            ['gfinisher', 'gfinisher'],
+            ['pilon','pilon'],
+            ['vcflib','vcflib'],
+            ['cgview','cgview'],
             ['spades.py','spades'],
             ['sis.py','sis'], ['multifasta.py','multifasta'], ['barrnap','barrnap'],
             ],
@@ -148,7 +160,7 @@ def configure(config_path, hardfail=True):
             continue
         for prog, name in programs:
             # trim off extension, replace dashes with underscores
-            clean_name = os.path.splitext(prog)[0].lower().replace("-", "_")
+            clean_name = os.path.splitext(name)[0].lower().replace("-", "_")
             if shutil.which(prog):
                 output_dict[clean_name] = shutil.which(prog)
             else:
@@ -1060,7 +1072,7 @@ def select_tools(args, config, reads_ns, logger):
     return Namespace(assemblers=assembler_tools,
                      scaffolder=scaffolder_tool,
                      scaffold_type=linkage_evidence,
-                     merger=args.merger,
+                     merger=merger,
                      finisher=finisher_tool,
                      varcaller=varcall_tool)
 
@@ -1493,9 +1505,9 @@ def get_assembler_cmds(assembler, assembler_args, args, config, reads_ns):
     # get output name
     contig_output = assembler['contig_output']
     scaffold_output = assembler['scaffold_output'] if assembler['scaffold_output'] else None
-    CREATE = assembler['create_dir']
-    if CREATE:
-        os.makedirs(os.path.join(args.tmp_dir, assembler['name']))
+    # CREATE = assembler['create_dir']
+    # if CREATE:
+    #     os.makedirs(os.path.join(args.tmp_dir, assembler['name']))
     cmd = replace_placeholders(string=cmd, config=config, args=args,
                                reads_ns=reads_ns)
     # cmd = cmd + " > {0}/{1}.log 2>&1".format(args.tmp_dir, assembler['name'])
@@ -1650,7 +1662,6 @@ def check_spades_kmers(assembler, cmd, readlen, min_diff=2, logger=None):
 def run_assembler(assembler, assembler_args, args, reads_ns, config, logger):
     """
     Runs specified assembler on fastq files
-
     required params: $ (tmpdir)
                  $ (assembler name)
                  $ (reference fasta sequece - probably not needed)
@@ -1674,9 +1685,12 @@ def run_assembler(assembler, assembler_args, args, reads_ns, config, logger):
         args=args,
         config=config, reads_ns=reads_ns)
     logger.info("Starting %s assembly ... ", assembler)
+    if conf_assembler['create_dir']:
+        outdir = os.path.join(args.tmp_dir, conf_assembler['name'])
+        os.makedirs(outdir)
     # here we execute the "run" function from the appropriate runner script
-    sub_mains[assembler](getattr(config, assembler), assembler_cmd, logger)
-
+    sub_mains[assembler](getattr(config, assembler), assembler_cmd, config,
+                         reads_ns, logger)
 
     logger.info("%s assembly statistics", assembler);
     report = get_contig_stats(contigs_path)
@@ -1712,7 +1726,7 @@ def run_assembler(assembler, assembler_args, args, reads_ns, config, logger):
     return(renamed_contigs, renamed_scaffolds)
 
 
-def merge_assemblies(args, config, reads_ns, logger):
+def merge_assemblies(tool, args, config, reads_ns, logger):
     """
     combines two assemblies using the selected merge-method
 
@@ -1724,15 +1738,10 @@ def merge_assemblies(args, config, reads_ns, logger):
     returns        : $ (0)
     """
     logger.info("Merging assemblies (%s)...", args.merger)
-    try:
-        tool = getattr(config, args.merger)
-    except AttributeError:
-        raise ValueError("%s merge tool not available" % args.merger)
-
     cmd = tool['command']
     contig_output = tool['contig_output']
     if tool['create_dir']:
-        outdir = os.path.join(args.tmpdir, args.merger)
+        outdir = os.path.join(args.tmp_dir, args.merger)
         os.makedirs(outdir)
     merge_cmd = replace_placeholders(string=cmd, config=config,
                                      reads_ns=reads_ns, args=args)
@@ -1886,7 +1895,7 @@ def check_args(args, config):
         raise ValueError("Seqtk is needed for downsampling")
     if "q" in args.stages.lower() and config.fastqc is None:
         raise ValueError("fastqc not found; remove 'q' from --stages")
-    if "t" in args.stages.lower() and config.sickle is None:
+    if "t" in args.stages.lower() and config.sickle_trim is None:
         raise ValueError("sickle-trim not found; remove 't' from --stages")
     if "s" in args.stages.lower() and args.scaffolder is None:
         raise ValueError("scaffolder arg empty; either provide " +
@@ -2222,7 +2231,7 @@ def run_pe_scaffolder(args, config, reads_ns, results, run_id, logger=None):
 
     # moved scaf_args out of if statement as well!
     exec_cmd = exec_cmd + " 2>&1 > " + os.path.join(
-        args.tmpdir,
+        args.tmp_dir,
         args.scaffolder + "_" + str(run_id) + ".log")
     # scaffolder_cmd_list.append(exec_cmd)
     merge_these_scaffolds.append(os.path.join(run_scaffold_output, "scaffolds.fasta"))
@@ -3124,7 +3133,7 @@ def main(args=None, logger=None):
     # if we have more than one assembler, run merge and point results to merged
     if len(results.assemblers_results_dict_list) > 1:
         #run merge
-        merged_contigs_path = merge_assemblies(args=args, config=config,
+        merged_contigs_path = merge_assemblies(tool=tools.merger, args=args, config=config,
                                                reads_ns=reads_ns, logger=logger)
         results.current_contigs = merged_contigs_path
         results.current_contigs_source = "merged"
@@ -3262,10 +3271,10 @@ def main(args=None, logger=None):
                 reference=results.current_reference,
                 dirname="align", reads_ns=reads_ns,
                 config=config, downsample=True, args=args, logger=logger)
-            amosvalidate( tmpdir, insert_size, stddev )
+            amosvalidate( args.tmp_dir, insert_size, stddev )
 
             # get_contig_to_iid_mapping($tmpdir);
-            amosvalidate_results = summarise_amosvalidate(tmpdir)
+            amosvalidate_results = summarise_amosvalidate(args.tmp_dir)
         try:
             evidence = tools.scaffolder['linkage_evidence']
         except:
@@ -3279,7 +3288,7 @@ def main(args=None, logger=None):
     # run_varcaller( tmpdir, varcall, threads, read_length_mean ) if (varcall)
     # merge_annotations( tmpdir, amosvalidate_results, gaps, genus, species, strain )
 #     #  This kept throwing an error about Bio::SeqIO
-#     # run_cgview($tmpdir);
+    run_cgview(results=results, args=args, config=config, logger=logger)
 
     build_comparisons(args=args, config=config, results=results, logger=logger)
     logger.info("\n\nFinal Assembly Statistics...");
@@ -3747,50 +3756,38 @@ def merge_annotations():
 
 }
 """
-# ######################################################################
-# #
-# # run_cgview
-# #
-# # Runs cgview to generate a genome map from the annotations
-# #
-# # Required parameters: $ (tmpdir)
-# #
-# # Returns: $ (0)
-# #
-# ######################################################################
 
-# sub run_cgview {
+def run_cgview(results, args, config, logger):
+    """
+    run_cgview
 
-#     my $tmpdir = shift;
+    Runs cgview to generate a genome map from the annotations
 
-#     my $cgview_dir  = $config->{'cgview_dir'};
-#     my $xml_creator = $cgview_dir . "cgview_xml_builder/cgview_xml_builder.pl";
-#     my $java        = $config->{'java'};
+    Required parameters: $ (tmpdir)
 
-#     message("Creating genome visualisaton...");
+    Returns: $ (0)
+    """
+    cgview_dir = os.path.join(args.tmp_dir, "cgview", "")
+    os.makedirs(cgview_dir)
+    # my $cgview_dir  = $config->{'cgview_dir'};
+    # my $xml_creator = $cgview_dir . "cgview_xml_builder/cgview_xml_builder.pl";
+    # my $java        = $config->{'java'};
 
-#     chdir $tmpdir  or die "Error chdiring to $tmpdir: $!";
-#     mkdir "cgview" or die "Error creating cgview directory: $!";
-#     chdir "cgview" or die "Error chdiring to cgview $!";
-
-#     my ( $embl, $outfile );
-#     if ( -e "../scaffolds.embl" ) {
-#         $embl    = "../scaffolds.embl";
-#         $outfile = "scaffolds_cgview.png";
-#     }
-#     else {
-#         $embl    = "../contigs.embl";
-#         $outfile = "contigs_cgview.png";
-#     }
-
-#     my $cmd = "$xml_creator -sequence $embl -output scaffolds_cgview.xml -gc_skew T >xml_creator.log 2>&1";
-#     system("$cmd") == 0 or die "Error running $cmd: $!";
-
-#     $cmd = "${java} -jar ${cgview_dir}/cgview.jar -f png -i scaffolds_cgview.xml -o $outfile >cgview.log 2>&1";
-#     system("$cmd") == 0 or die "Error running $cmd: $!";
-
-#     chdir $tmpdir or die "Error chdiring to $tmpdir: $!";
-#     symlink( "cgview/$outfile", "$outfile" ) or die "Error creating symlink: $!";
-
-#     return (0);
-# }
+    logger.info("Creating genome visualisaton...");
+    embl = results.current_embl
+    outfile = os.path.join(cgview_dir, "cgview.png")
+    cmds = []
+    cmds.append(str(
+        "{config.perl} {config.cgview_xml_builder} -sequence {embl} " +
+        "-output {cgview_dir}scaffolds_cgview.xml -gc_skew T > " +
+        "{cgview_dir}xml_creator.log 2>&1").format(**locals()))
+    cmds.append(str(
+        "-f png -i {cgview_dir}scaffolds_cgview.xml -o {outfile} > " +
+        "{cgview_dir}cgview.log 2>&1").format(**locals()))
+    for cmd in cmds:
+        logger.debug(cmd)
+        subprocess.run(cmd,
+                       shell=sys.platform != "win32",
+                       stdout=subprocess.PIPE,
+                       stderr=subprocess.PIPE,
+                       check=True)
