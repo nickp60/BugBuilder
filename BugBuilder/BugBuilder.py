@@ -1017,7 +1017,7 @@ def get_merger_tool(args, config, paired):
 def get_finisher(args, config, paired):
     if args.finisher is None:
         return None
-    print(config.finishers)
+    # print(config.finishers)
     if args.finisher.lower() not in [x['name'].lower() for x in config.finishers]:
         raise ValueError("%s not an available finisher!" %args.finisher)
     for conf_finisher in config.finishers:
@@ -1410,16 +1410,17 @@ def run_picard_insert_stats(bam, config, picard_outdir, logger):  # pragma: no c
 
 def parse_picard_insert_stats(statfile):
     """ look through a picard stats results, return mean and stddev of insert
+    UPDATED 2018-10-05 syntax of picard has changed
 
     """
     get_next = False
     with open(statfile, "r") as inf:
         for line in inf:
             if get_next:
-                min_insert = line.split("\t")[2]
-                max_insert = line.split("\t")[3]
-                mean_insert = line.split("\t")[4]
-                stddev_insert = line.split("\t")[5]
+                min_insert = line.split("\t")[3]
+                max_insert = line.split("\t")[4]
+                mean_insert = line.split("\t")[5]
+                stddev_insert = line.split("\t")[6]
                 break
             if "MEDIAN" in line:
                 #  the next line will contain the results
@@ -1446,6 +1447,7 @@ def get_insert_stats(bam, args, config, logger):  # pragma: no cover
                                        logger=logger)
     mean_insert, stddev_insert = parse_picard_insert_stats(statfile)
     return (mean_insert, stddev_insert)
+
 
 def replace_placeholders(string, config=None, reads_ns=None, args=None, results=None):
     # key is the name of placholder, and value is a list [object, attr]
@@ -1831,6 +1833,7 @@ def check_already_assembled_dirs(args, config, logger):
     res_dict = {"contig": [],
                 "scaffold": []}
     for path in args.already_assembled_dirs:
+
         if not os.path.exists(path):
             raise FileNotFoundError("Could not find directory: %s" % path)
     if len(args.assemblers) != len(args.already_assembled_dirs):

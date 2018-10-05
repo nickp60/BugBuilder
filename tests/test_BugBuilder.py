@@ -29,13 +29,15 @@ class test_BugBuilder(unittest.TestCase):
         self.ref_dir = os.path.join(os.path.dirname(__file__), "references")
         self.encoding_dir = os.path.join(self.ref_dir, "encoding")
         self.test_dir = os.path.join(os.path.dirname(__file__), "tmp_tests")
-        self.aa_dir = os.path.join(os.path.dirname(__file__), "already_assembled_dir")
+        self.aa_dir = os.path.join(os.path.dirname(__file__),
+                                   "already_assembled_dir")
         self.empty_config = os.path.join(self.ref_dir, "empty_config.yaml")
         self.broken_config = os.path.join(self.ref_dir, "broken_config.yaml")
         # the active config actually gets used to run sys commands so feel free
         # to run `mv tests/tmp_tests/to_be_filled.yaml ./tests/references/semicomplete_config.yaml`
         # if you have a error from a wrong executable
-        self.active_config = os.path.join(self.ref_dir, "semicomplete_config.yaml")
+        self.active_config = os.path.join(self.ref_dir,
+                                          "semicomplete_config.yaml")
         # static config should not be changed, it is just used to test parsing
         self.static_config = os.path.join(self.ref_dir, "static_config.yaml")
         self.ref_fasta = os.path.join(self.ref_dir, "AP017923.1.fasta")
@@ -47,11 +49,14 @@ class test_BugBuilder(unittest.TestCase):
         self.sickle_log = os.path.join(self.ref_dir, "sickle.log")
         self.sickle_bad_log = os.path.join(self.ref_dir, "sickle_bad.log")
         self.contigs = os.path.join(self.ref_dir, "contigs.fasta")
-        self.scaffold = os.path.join(self.ref_dir, "scaffolds.fasta")
-        self.contigs_split_ori = os.path.join(self.ref_dir, "contigs_split_ori.fasta")
+        self.scaffold = os.path.join(self.ref_dir, "scaffs.fasta")
+        self.contigs_split_ori = os.path.join(self.ref_dir,
+                                              "contigs_split_ori.fasta")
         self.mapped_bam = os.path.join(self.ref_dir, "mapped.bam")
-        self.contigs_to_scaf = os.path.join(self.ref_dir, "contigs_to_scaffold.fasta")
-        self.distant_contigs = os.path.join(self.ref_dir, "distant_contigs.fasta")
+        self.contigs_to_scaf = os.path.join(self.ref_dir,
+                                            "contigs_to_scaffold.fasta")
+        self.distant_contigs = os.path.join(self.ref_dir,
+                                            "distant_contigs.fasta")
         self.renaming_fq = os.path.join(self.ref_dir, "needs_renaming.fq")
         self.renamed = os.path.join(self.ref_dir, "renamed_ref.fq")
         self.fastq1 = os.path.join(self.ref_dir, "AP017923.1_reads1.fq")
@@ -84,15 +89,17 @@ class test_BugBuilder(unittest.TestCase):
         newpath_config = os.path.join(
             self.test_dir, "to_be_filled.yaml")
         shutil.copyfile(self.empty_config, newpath_config)
-        config = bb.return_config(newpath_config, hardfail=False, logger=logger)
+        config = bb.return_config(newpath_config,
+                                  hardfail=False, logger=logger)
         self.assertEqual(config.STATUS, "COMPLETE")
 
     def test_make_fastqc_cmd(self):
         test_args = Namespace(fastq1="reads1.fastq", fastq2="reads2.fastq",
                               long_fastq=None, threads=7)
-        ref_cmd = "fastqc -t 7 --extract -o ./outdir/ reads1.fastq reads2.fastq > " + \
-                  "./outdir/fastqc.log 2>&1"
-        cmd = bb.make_fastqc_cmd(exe="fastqc", args=test_args, outdir="./outdir/")
+        ref_cmd = "fastqc -t 7 --extract -o ./outdir/ reads1.fastq " + \
+                  "reads2.fastq > ./outdir/fastqc.log 2>&1"
+        cmd = bb.make_fastqc_cmd(exe="fastqc", args=test_args,
+                                 outdir="./outdir/")
         self.assertEqual(ref_cmd, cmd)
 
     # def test_n50(self):
@@ -163,10 +170,11 @@ class test_BugBuilder(unittest.TestCase):
 
     def test_setup_tmp_dir_existingdir(self):
         with self.assertRaises(SystemExit):
-            bad_test_args = Namespace(fastq1=self.fastq1, fastq2=self.fastq2,
-                                      references=[self.ref_fasta], mode="draft",
-                                      tmp_dir=self.test_dir, long_fastq=None,
-                                      de_fere_contigs=None)
+            bad_test_args = Namespace(
+                fastq1=self.fastq1, fastq2=self.fastq2,
+                references=[self.ref_fasta], mode="draft",
+                tmp_dir=self.test_dir, long_fastq=None,
+                de_fere_contigs=None)
             bb.setup_tmp_dir(args=bad_test_args,
                              output_root=bad_test_args.tmp_dir, logger=logger)
 
@@ -208,7 +216,9 @@ class test_BugBuilder(unittest.TestCase):
             test_args = Namespace(
                 fastq1=os.path.join(self.encoding_dir, v), long_fastq=None,
                 de_fere_contigs=None)
-            self.assertEqual(k, bb.id_fastq_encoding(args=test_args, logger=logger))
+            self.assertEqual(
+                k,
+                bb.id_fastq_encoding(args=test_args, logger=logger))
 
     def test_assess_reads(self):
         test_args = Namespace(
@@ -390,7 +400,8 @@ class test_BugBuilder(unittest.TestCase):
         ref_dict = {'AP017923.1': 'NODE_4_length_5704_cov_4.881287:5704',
                     'AP017923.2': 'NODE_2_length_10885_cov_4.771743:869'}
         origin_dict = bb.parse_origin_from_coords(
-            coords=self.coords, flex=5, reference=self.ref_split, logger=logger)
+            coords=self.coords, flex=5,
+            reference=self.ref_split, logger=logger)
         self.assertEqual(origin_dict, ref_dict)
 
     def test_make_empty_results_object(self):
@@ -490,7 +501,8 @@ class test_BugBuilder(unittest.TestCase):
         test_args = Namespace(merger='gfinisher',
                               scaffolder=None,
                               references=[self.ref_fasta])
-        merger = bb.get_merger_tool(args=test_args, config=config, paired=False)
+        merger = bb.get_merger_tool(
+            args=test_args, config=config, paired=False)
         self.assertEqual(merger['name'], 'gfinisher')
 
     def test_get_finisher(self):
@@ -550,8 +562,9 @@ class test_BugBuilder(unittest.TestCase):
         self.assertEqual("SIS", tools.scaffolder['name'])
 
     def test_assembler_needs_downsampling(self):
-        assemblers = [x for x in bb.parse_config(self.active_config).assemblers if \
-                     x['name' ]== "spades"]
+        assemblers = [
+            x for x in bb.parse_config(self.active_config).assemblers if \
+            x['name' ]== "spades"]
         tools = Namespace(assemblers=assemblers)
         self.assertEqual(True, bb.assembler_needs_downsampling(tools))
 
@@ -564,12 +577,14 @@ class test_BugBuilder(unittest.TestCase):
             trim_length=50,
             trim_qv=10,
             references=[self.ref_fasta])
-        test_cmd = "sickle se -f {0} -t sanger -q 10 -l 50 -o sickle/read1.fastq > sickle/sickle.log".format(
+        test_cmd = str("sickle se -f {0} -t sanger -q 10 -l 50 -o " +
+                       "sickle/read1.fastq > sickle/sickle.log").format(
             self.fastq1)
         self.assertEqual(
             bb.make_sickle_cmd(
                 args=test_args,
-                reads_ns=Namespace(encoding="sanger", paired=False), out_dir="sickle/",
+                reads_ns=Namespace(encoding="sanger", paired=False),
+                out_dir="sickle/",
                 paired=False),
             test_cmd)
 
@@ -687,7 +702,8 @@ class test_BugBuilder(unittest.TestCase):
               "INPUT=file.bam HISTOGRAM_FILE=./test/insert_histogram.pdf " +
               "OUTPUT=./test/insert_stats.txt QUIET=true VERBOSITY=ERROR " +
               "ASSUME_SORTED=true VALIDATION_STRINGENCY=LENIENT > " +
-              "./test/CollectInsertMetrics.log 2>&1 "), "./test/insert_stats.txt"),
+              "./test/CollectInsertMetrics.log 2>&1 "),
+             "./test/insert_stats.txt"),
             bb.make_picard_stats_command(bam="file.bam",
                                       config=Namespace(picard="picard"),
                                       picard_outdir="./test/")
@@ -711,7 +727,8 @@ class test_BugBuilder(unittest.TestCase):
         self.assertEqual(('207.5',  '3.535534'),
                          bb.parse_picard_insert_stats(self.picard_stats))
 
-    def replace_placeholders(string, config=None, reads_ns=None, args=None, results=None):
+    def replace_placeholders(string, config=None, reads_ns=None,
+                             args=None, results=None):
         pass
     def get_assembler_cmds(assembler, assembler_args, args, config, reads_ns):
         pass
@@ -865,12 +882,15 @@ class test_BugBuilder(unittest.TestCase):
     def test_parse_stages_error(self):
         with self.assertRaises(ValueError):
             bb.parse_stages(args=Namespace(stages="za"),
-                         reads_ns=Namespace(TRIM=None), logger=logger)
+                            reads_ns=Namespace(TRIM=None),
+                            logger=logger,
+                            all_stages=bb.all_stages)
 
     def test_parse_stages(self):
         reads_ns = Namespace(TRIM=None)
         bb.parse_stages(args=Namespace(stages="t"),
-                        reads_ns=reads_ns, logger=logger)
+                        reads_ns=reads_ns, logger=logger,
+                        all_stages=bb.all_stages)
         self.assertTrue(reads_ns.TRIM)
 
     def order_scaffolds():
