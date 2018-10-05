@@ -564,18 +564,6 @@ def parse_stages(args, reads_ns, logger, all_stages):
     """ pare the "stages" arg to determine the steps to be performed
     We want to be able to run all the stages individualy if possible
     """
-    # if stages == None:
-    #     stages = [
-    #         ["q", "QC reads", "QC"],
-    #         ["t", "trim reads", "TRIM"],
-    #         ["d", "downsample reads", "DOWNSAMPLE"],
-    #         ["a", "run assembler(s)", "ASSEMBLE"],
-    #         ["b", "break contig at the origin ", "BREAK"],
-    #         ["s", "scaffold the contigs", "SCAFFOLD"],
-    #         ["f", "run genome polishing", "FINISH"],
-    #         ["v", "run variant caller", "VARCALL"],
-    #         ["g", "gene call with prokka", "GENECALL"]
-    #     ]
     allowed = [x[0] for x in all_stages]
     illegal_in_arg = [letter for letter in args.stages if letter not in allowed]
     if len(illegal_in_arg) > 0:
@@ -1042,6 +1030,7 @@ def get_finisher(args, config, paired):
             else:
                 pass
             return conf_finisher
+
 
 def get_varcaller(args, config, paired):
     if args.varcaller is None:
@@ -2842,6 +2831,10 @@ def get_prokka_cmd(exe, outdir, args, seqs):
             args.tmp_dir,  #8
             seqs)
 
+def make_embl_from_gbk(gbk, output_file):
+    with open(gbk, "r") as inf, open(output_file, "w") as outf:
+        for rec in SeqIO.parse(inf, "genbank"):
+            SeqIO.write(rec, outf, "embl")
 
 def run_prokka(config, args, results, logger):
     """
@@ -2879,6 +2872,7 @@ def run_prokka(config, args, results, logger):
                    path=os.path.join(prokka_dir, "prokka.embl"), source="prokka" )
     update_results(results, thing="scaffolds",
                    path=os.path.join(prokka_dir, "prokka.fna"), source="prokka" )
+    return prokka_dir
 
 
 def update_results(results, thing, path, source ):
@@ -3378,11 +3372,13 @@ def main(args=None, logger=None):
         # gaps = build_agp(args, results, reads_ns,
         #                  evidence=evidence,
         #                  logger=logger)
-        run_prokka(config, args, results, logger)
+        prokka_dir = run_prokka(config, args, results, logger)
+        make_embl_from_gbk(gbk=os.path.join(prokka_dir, "prokka.gbk"),
+                           output_file=os.path.join(prokka_dir, "prokka.embl"))
         # make_embl(config, args, results
         amosvalidate_results = None
         # run_varcaller( tmpdir, varcall, threads, read_length_mean ) if (varcall)
-        # merge_annotations( tmpdir, amosvalidate_results, gaps, genus, species, strain )
+        # merge_annotations(tmpdir, amosvalidate_results, gaps, genus, species, strain )
         #     #  This kept throwing an error about Bio::SeqIO
         run_cgview(results=results, args=args, config=config, logger=logger)
 
@@ -3865,9 +3861,6 @@ def run_cgview(results, args, config, logger):
     """
     cgview_dir = os.path.join(args.tmp_dir, "cgview", "")
     os.makedirs(cgview_dir)
-    # my $cgview_dir  = $config->{'cgview_dir'};
-    # my $xml_creator = $cgview_dir . "cgview_xml_builder/cgview_xml_builder.pl";
-    # my $java        = $config->{'java'};
 
     logger.info("Creating genome visualisaton...");
     embl = results.current_embl
@@ -3880,7 +3873,7 @@ def run_cgview(results, args, config, logger):
         "-output {cgview_dir}scaffolds_cgview.xml -gc_skew T > " +
         "{cgview_dir}xml_creator.log 2>&1").format(**locals()))
     cmds.append(str(
-        "-f png -i {cgview_dir}scaffolds_cgview.xml -o {outfile} > " +
+        "{config.cgview} -f png -i {cgview_dir}scaffolds_cgview.xml -o {outfile} > " +
         "{cgview_dir}cgview.log 2>&1").format(**locals()))
     for cmd in cmds:
         logger.debug(cmd)
