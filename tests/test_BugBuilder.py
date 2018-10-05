@@ -47,6 +47,7 @@ class test_BugBuilder(unittest.TestCase):
         self.sickle_log = os.path.join(self.ref_dir, "sickle.log")
         self.sickle_bad_log = os.path.join(self.ref_dir, "sickle_bad.log")
         self.contigs = os.path.join(self.ref_dir, "contigs.fasta")
+        self.scaffold = os.path.join(self.ref_dir, "scaffolds.fasta")
         self.contigs_split_ori = os.path.join(self.ref_dir, "contigs_split_ori.fasta")
         self.mapped_bam = os.path.join(self.ref_dir, "mapped.bam")
         self.contigs_to_scaf = os.path.join(self.ref_dir, "contigs_to_scaffold.fasta")
@@ -930,6 +931,25 @@ class test_BugBuilder(unittest.TestCase):
             run_id=1, logger=logger)
         self.to_be_removed.append(os.path.join(self.test_dir, "SIS_1"))
 
+    def test_build_agp(self):
+        test_args = Namespace(
+            fastq1=self.fastq1, fastq2=self.fastq2, long_fastq=None,
+            # de_fere_contigs=None,
+            references=[self.ref_split],
+            genome_size=0,
+            tmp_dir=self.test_dir,
+            scaffolder="sis",
+            scaffolder_args=None,
+            mode="draft"
+            # memory=8, untrimmed_fastq1=None, untrimmed_fastq2=None, platform="illumina", threads=1
+        )
+        config = bb.parse_config(self.active_config)
+        results = bb.make_empty_results_object()
+        results.current_scaffolds=self.scaffold
+
+        reads_ns = bb.assess_reads(args=test_args, config=config,
+                                platform="illumina", logger=logger)
+        bb.build_agp(args=test_args, results=results, reads_ns=reads_ns, evidence="linkage", logger=logger)
 
     def tearDown(self):
         """ delete temp files if no errors, and report elapsed time

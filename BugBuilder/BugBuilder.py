@@ -2674,7 +2674,7 @@ def build_agp(args, results, reads_ns, evidence, logger):
     lines = []
     lines.append(">scaffolds.agp")
     lines.append( "##agp-version 2.0\n")
-    lines.append("#$organism\n")
+    lines.append("#$organism\n") # TODO
     contigs_path = os.path.join(agp_dir, "contigs.fasta")
     scaffolds_path = os.path.join(agp_dir, "scaffolds.fasta")
     contig_count = 0
@@ -2686,7 +2686,7 @@ def build_agp(args, results, reads_ns, evidence, logger):
             scaffold_loc = 1
             scaffold_id  = scaffold.id;
             scaff_count  = scaffold_count
-            scaffold_id = "scaffold_%06s" % scaff_count
+            scaffold_id = "scaffold_%06d" % scaff_count
             scaffold_end = len(scaffold.seq);
             contig_start, contig_end, gap_start, gap_end = 0, None, None, None
 
@@ -2695,123 +2695,154 @@ def build_agp(args, results, reads_ns, evidence, logger):
             contigs_dict, gaps = {}, []
             # this is kind of crude, but seems to work...
             for idx, base in enumerate(bases):
-                print("{}, {}, gs: {}; ge: {}".format(idx, base, gap_start, gap_end ))
-                if base != "N" and gap_start is None:
-                    contig_end = idx
-                elif base == "N" and gap_start is None:
-                    gap_start = idx
-                # elif base != "N" and  gap_start:
-                else:
-                    assert base != "N" and gap_start is not None, "something wrong with AGP"
-                    gap_end = idx
-                    gap_length = gap_end - gap_start
+                # print("{}, {}, gs: {}; ge: {}".format(idx, base, gap_start, gap_end ))
+                # if a normal base and it isnt immediately following a gap,
+                # go to the next base, keeping track of where we were
 
-                    if gap_length < 10 and mode == 'submission':
-                        # skip gaps <10 bp which are acceptable by EMBL
-                        gap_start = None
-                    elif mode == 'draft' and gap_length <= 1:
-                        # we can leave single ambiguous bases alone
-                        gap_start = None
-                    else:
+
+
+                # if this base is an N
+                if base == "N":
+                    # and we are not in a gap yet
+                    if gap_start is None:
+                        # mark the end of the old contig (if needed)
+                        # and the start of the gap
+                        contig_end = idx
+                        gap_start = idx
+                    else:  # ie, a gap has already been opened
                         gap_end = idx
-                        if contig_end - contig_start < 200 and mode == "submission":
-                            #need to extend previous gap to new position including short contig
-                            if len(gaps) != 0:
-                                last_gap = gaps[len(gaps)]
-                                last_start, last_end = last_gaps.split("-")
-                                new_gap = "{0}-{1}".format(last_start, gap_end)
-                                gaps.append(new_gap)
+                else: # base is not an N
+                    if gap_start is None:
+                        # if this isnt first base after a gap
+                        contig_end = idx
+                    else:
+                        # we just exited a gap!!!
+                        # report the contig lengths, the gaps, etc
+
+
+                # if base != "N" and gap_start is None:
+                #     contig_end = idx
+                # # if we hit an N and aren't already in a gap, mark the gap start
+                # elif (base == "N" and gap_start is None):
+                #     gap_start = idx
+                # # elif base != "N" and  gap_start:
+                # else:
+                        gap_end = idx
+                        gap_length = gap_end - gap_start
+
+                        if gap_length < 10 and args.mode == 'submission':
+                            # skip gaps <10 bp which are acceptable by EMBL
+                            gap_start = None
+                        elif args.mode == 'draft' and gap_length <= 1:
+                            # we can leave single ambiguous bases alone
+                            gap_start = None
+                        else:
+                            gap_end = idx
+                            if contig_end - contig_start < 200 and args.mode == "submission":
+                                #need to extend previous gap to new position including short contig
+                                if len(gaps) != 0:
+                                    last_gap = gaps[len(gaps)]
+                                    last_start, last_end = last_gaps.split("-")
+                                    new_gap = "{0}-{1}".format(last_start, gap_end)
+                                    gaps.append(new_gap)
+                                    gap_start = None
+                                    contig_start = idx
+                                else:
+                                    pass
+                            else:
+                                contig_count = contig_count + 1
+                                contig_id = "contig_%06d" % contig_count
+                                with open(contigs_path, "a") as  outf:
+                                    SeqIO.write(
+                                        SeqRecord(
+                                            scaffold.seq[contig_start: contig_end],
+                                            id=contig_id),
+                                        outf, "fasta")
+                                contigs_dict[contig_id] = {
+                                    'coords': "{}-{}".format(contig_start, contig_end),
+                                    'length': contig_end - contig_start
+                                }
+                                gap = "{}-{}".format(gap_start, gap_end)
+                                gaps.append(gap)
                                 gap_start = None
                                 contig_start = idx
-                            else:
-                                pass
-                        else:
-                            contig_count = contig_count + 1
-                            contig_id = "contig_%06s", contig_count
-                            with open(contigs_path, "a") as  outf:
-                                SeqIO.write(
-                                    SeqRecord("".join(bases), id=contig_id),
-                                    outf, "fasta")
-                            contigs_dict[contig] = {
-                                'coords': "{}-{}".format(contig_start, contig_end),
-                                'length': len(bases)
-                            }
-                            gap = "{}-{}".foramt(gap_start, gap_end)
-                            gaps.append(gap)
-                            gap_start = None
-                            contig_start = idx
-        # Output last contig from last contig_start position to scaffold end if it is longer than
-        # 200 bp and we are running in submission mode, otherwise remove the last gap to truncate the scaffold...
-        if scaffold_end - contig_start  > 200 or mode == 'draft' or contig_count == 0:
-            contig_count = contig_count + 1
-            contig_id = "contig_%06s", contig_count
-            with open(contigsIO, "a") as  outf:
-                SeqIO.write(SeqRecord("".join(bases), id=contig_id), outf, "fasta")
-                contigs_dict[contig] = {
+            # Output last contig from last contig_start position to scaffold end if it is longer than
+            # 200 bp and we are running in submission mode, otherwise remove the last gap to truncate the scaffold...
+            if scaffold_end - contig_start  > 200 or args.mode == 'draft' or contig_count == 0:
+                contig_count = contig_count + 1
+                contig_id = "contig_%06d" % contig_count
+                with open(contigs_path, "a") as  outf:
+
+                    SeqIO.write(SeqRecord(scaffold.seq[contig_start: len(scaffold.seq)], id=contig_id), outf, "fasta")
+                contigs_dict[contig_id] = {
                     'coords': "{}-{}".format(contig_start, contig_end),
-                    'length': len(bases)
+                    'length': contig_end - contig_start
                 }
-        else:
-            gaps.pop()
+            else:
+                gaps.pop()
 
-        gap_dict[scaffold_id] = gaps
-        scaffold_part = 0
+            gap_dict[scaffold_id] = gaps
+            scaffold_part = 0
+            print(gaps)
+            print(gap_dict)
 
-        #write AGP output and new scaffolds fasta file
-        record_dict = SeqIO.index("example.fasta", "fasta")
-        # unlink("contigs.fasta.index") if ( -e "contigs.fasta.index" );
-        # contig_db = Bio::DB::Fasta->new("contigs.fasta");
-        scaffold_seq = None
+            #write AGP output and new scaffolds fasta file
+            # record_dict = SeqIO.index("example.fasta", "fasta")
+            # unlink("contigs.fasta.index") if ( -e "contigs.fasta.index" );
+            # contig_db = Bio::DB::Fasta->new("contigs.fasta");
+            scaffold_seq = None
 
-        # I think this is just a sorted list of ids
-        contig_ids = sort([k.split("_")[1] for k, v in contigs_dict.items()])
-        # my @contig_ids = map { $_->[0] }
-        #   sort { $a->[1] <=> $b->[1] }
-        #   map { [ $_, /(\d+)$/ ] } keys(%contigs);
-        if len(contig_ids) > 0:
-        # if ( $#contig_ids > -1 ) {
-            for i, contig_id in enumerate(contig_ids):
-                contig_data = contigs_dict[contig_id]
-                coords      = contig_data['coords']
-                length      = contig_data['length']
-                if contig_id != "" :  # dont know when this could possibly be true
-                    contig = record_dict['contig_id']
-                    contig_start, contig_end  = coords.split("-")
-                    scaffold_part = scaffold_part + 1
-                    lines.append(
-                        "{ob}\t{ob_beg}\t{ob_end}\t{part_number}\t{comp_type}\t{comp_id}\t{comp_beg}\t{comp_end}\t{orientation}".format(
-                            ob=scaffold_id,
-                            ob_beg=contig_start + 1,
-                            ob_end=contig_end + 1,
-                            part_number=scaffold_part,
-                            comp_type="W",
-                            comp_id=contig_id,
-                            comp_beg=1,
-                            comp_end=length,
-                            orientation="+"))
-                    scaffold_seq = scaffold_seq + str(contig.seq)
-                    if i < len(contig_ids) - 1:
-                        gap_start, gap_end = gaps[i].split("-")
-                        gap_size = gap_end - gap_start
+            # I think this is just a sorted list of ids
+            contig_ids = ["contigs_" + str(x) for x in
+                          sorted([k.split("_")[1] for k, v in contigs_dict.items()])]
+            # my @contig_ids = map { $_->[0] }
+            #   sort { $a->[1] <=> $b->[1] }
+            #   map { [ $_, /(\d+)$/ ] } keys(%contigs);
+            print(contigs_dict)
+            if len(contig_ids) > 0:
+                # if ( $#contig_ids > -1 ) {
+                for i, contig_id in enumerate(contig_ids):
+                    contig_data = contigs_dict[contig_id]
+                    coords      = contig_data['coords']
+                    length      = contig_data['length']
+                    if contig_id != "" :  # dont know when this could possibly be true
+                        contig = record_dict['contig_id']
+                        contig_start, contig_end  = coords.split("-")
                         scaffold_part = scaffold_part + 1
                         lines.append(
-                            "{ob}\t{ob_beg}\t{ob_end}\t{part_number}\t{comp_type}\t{gap_len}\t{gap_type}\t{linkage}\t{linkage_ev}".format(
+                            "{ob}\t{ob_beg}\t{ob_end}\t{part_number}\t{comp_type}\t{comp_id}\t{comp_beg}\t{comp_end}\t{orientation}".format(
                                 ob=scaffold_id,
-                                ob_beg=gap_start + 1,
-                                ob_end=gap_end + 1,
+                                ob_beg=contig_start + 1,
+                                ob_end=contig_end + 1,
                                 part_number=scaffold_part,
-                                comp_type="N",
-                                gap_length=gap_size,
-                                gap_type="scaffold",
-                                linkage="yes",
-                                linkage_ev=evidence))
-                        scaffold_seq = scaffold_seq + "N" * gap_size
-        if scaffold_seq is not None:
-            with open(scaffolds_path, "a") as outf:
-                SeqIO.write(SeqRecord(scaffold_seq, id=scaffold_id))
-    with open(agpfile_path, "w") as outf:
-        for line in lines:
-            outf.write(line)
+                                comp_type="W",
+                                comp_id=contig_id,
+                                comp_beg=1,
+                                comp_end=length,
+                                orientation="+"))
+                        scaffold_seq = scaffold_seq + str(contig.seq)
+                        if i < len(contig_ids) - 1:
+                            gap_start, gap_end = gaps[i].split("-")
+                            gap_size = gap_end - gap_start
+                            scaffold_part = scaffold_part + 1
+                            lines.append(
+                                "{ob}\t{ob_beg}\t{ob_end}\t{part_number}\t{comp_type}\t{gap_len}\t{gap_type}\t{linkage}\t{linkage_ev}".format(
+                                    ob=scaffold_id,
+                                    ob_beg=gap_start + 1,
+                                    ob_end=gap_end + 1,
+                                    part_number=scaffold_part,
+                                    comp_type="N",
+                                    gap_length=gap_size,
+                                    gap_type="scaffold",
+                                    linkage="yes",
+                                    linkage_ev=evidence))
+                            scaffold_seq = scaffold_seq + "N" * gap_size
+            if scaffold_seq is not None:
+                with open(scaffolds_path, "a") as outf:
+                    SeqIO.write(SeqRecord(scaffold_seq, id=scaffold_id))
+        with open(agpfile_path, "w") as outf:
+            for line in lines:
+                outf.write(line)
     return gaps
 
 
@@ -3055,6 +3086,34 @@ def finish_if_done(this_stage, args, all_stages, logger, t0, results):
             all_stages=all_stages, logger=logger):
         finish_up(results=results, t0=t0, logger=logger,
                   args=args, all_stages=all_stages)
+
+
+def make_gene_report(results, logger):
+    if results.current_embl is None:
+        return 1
+    cds, tRNA, rRNA, gap = 0, 0, 0, 0
+    with open(results.current_embl, "r") as inf:
+        for rec in SeqIO.parse(inf, "embl"):
+            for feature in rec.features:
+                if feature.type=="CDS":
+                    cds = cds + 1
+                if feature.type=="assembly_gap":
+                    gap = gap + 1
+                if feature.type=="tRNA":
+                    tRNA = tRNA + 1
+                if feature.type=="rRNA":
+                    rRNA = rRNA + 1
+    genes = [
+        ["Feature Type", "Number"],
+        ["CDS", cds],
+        ["tRNA", tRNA],
+        ["rRNA", rRNA],
+        ["gap", gap]
+    ]
+    logger.info("\n\nANNOTATION SUMMARY:" +
+                "\n=========================\n" +
+                tabulate.tabulate(genes) + "\n")
+    return 1
 
 
 def main(args=None, logger=None):
@@ -3358,24 +3417,25 @@ def main(args=None, logger=None):
             if results.current_scaffolds is not None:
                 seq_file = results.current_scaffolds
             sorted_bam = align_reads(
-                reference=results.current_reference,
-                dirname="align", reads_ns=reads_ns,
+                ref=results.current_reference,
+                dirname="align_pregenecall", reads_ns=reads_ns,
                 config=config, downsample=True, args=args, logger=logger)
-            amosvalidate( args.tmp_dir, insert_size, stddev )
+            # amosvalidate( args.tmp_dir, reads_ns )
 
-            # get_contig_to_iid_mapping($tmpdir);
-            amosvalidate_results = summarise_amosvalidate(args.tmp_dir)
+            # # get_contig_to_iid_mapping($tmpdir);
+            # amosvalidate_results = summarise_amosvalidate(args.tmp_dir)
         try:
             evidence = tools.scaffolder['linkage_evidence']
         except:
             evidence = "paired-ends"
-        # gaps = build_agp(args, results, reads_ns,
-        #                  evidence=evidence,
-        #                  logger=logger)
+        gaps = build_agp(args, results, reads_ns,
+                         evidence=evidence,
+                         logger=logger)
+        print(gaps);
+        sys.exit(0)
         prokka_dir = run_prokka(config, args, results, logger)
         make_embl_from_gbk(gbk=os.path.join(prokka_dir, "prokka.gbk"),
                            output_file=os.path.join(prokka_dir, "prokka.embl"))
-        # make_embl(config, args, results
         amosvalidate_results = None
         # run_varcaller( tmpdir, varcall, threads, read_length_mean ) if (varcall)
         # merge_annotations(tmpdir, amosvalidate_results, gaps, genus, species, strain )
@@ -3383,45 +3443,20 @@ def main(args=None, logger=None):
         run_cgview(results=results, args=args, config=config, logger=logger)
 
         build_comparisons(args=args, config=config, results=results, logger=logger)
-        logger.info("\n\nFinal Assembly Statistics...");
-        report_config = get_contig_stats(results.current_contigs)
-        report_scaffold = get_contig_stats(results.current_scaffolds)
-        logger.info ("\n\nFinal Contig Statistics:\n"
-                     "=========================\n" +
-                     tabulate.tabulate(report_config) + "\n")
-        logger.info ("\n\nFinal Scaffold Statistics:\n"
-                     "=========================\n" +
-                     tabulate.tabulate(report_scaffold) + "\n")
-        logger.info("Done building your Bug!")
-        logger.info("Elapsed time: %.2fm" % ((time.time() - t0) / 60))
-        #     get_contig_stats( "$tmpdir/scaffolds.fasta", 'scaffolds' ) if ( -e "$tmpdir/scaffolds.fasta" );
-#     my $emblfile;
-#     ( -e "$tmpdir/scaffolds.embl" ) ? ( $emblfile = "$tmpdir/scaffolds.embl" ) : ( $emblfile = "$tmpdir/contigs.embl" );
-
-#     my $io = Bio::SeqIO->new( -format => 'embl', -file => "$emblfile" );
-#     my ( $cds, $tRNA, $rRNA );
-#     while ( my $contig = $io->next_seq() ) {
-#         foreach my $feature ( $contig->get_SeqFeatures() ) {
-#             $cds++  if ( $feature->primary_tag eq 'CDS' );
-#             $tRNA++ if ( $feature->primary_tag eq 'tRNA' );
-#             $rRNA++ if ( $feature->primary_tag eq 'rRNA' );
-#         }
-#     }
-
-#     $tb = Text::ASCIITable->new();
-#     $tb->setCols( "Feature Type", "Number" );
-#     $tb->addRow( "CDS",  $cds );
-#     $tb->addRow( "tRNA", $tRNA );
-#     $tb->addRow( "rRNA", $rRNA );
-#     print "\nAnnotated features\n==================\n\n";
-#     print $tb, "\n";
-
-#     return_results( $tmpdir, $out_dir, $prefix, $keepall, $mode );
-#     chdir $orig_dir or warn "Failed to chdir:$ !";
-
-#     message("All done...");
-
-# }
+        make_gene_report(results=results, logger=logger)
+        finish_if_done(this_stage="p", args=args, all_stages=all_stages,
+                       logger=logger, t0=t0, results=results)
+        # logger.info("\n\nFinal Assembly Statistics...");
+        # report_config = get_contig_stats(results.current_contigs)
+        # report_scaffold = get_contig_stats(results.current_scaffolds)
+        # logger.info ("\n\nFinal Contig Statistics:\n"
+        #              "=========================\n" +
+        #              tabulate.tabulate(report_config) + "\n")
+        # logger.info ("\n\nFinal Scaffold Statistics:\n"
+        #              "=========================\n" +
+        #              tabulate.tabulate(report_scaffold) + "\n")
+        # logger.info("Done building your Bug!")
+        # logger.info("Elapsed time: %.2fm" % ((time.time() - t0) / 60))
 
 
 

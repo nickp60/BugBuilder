@@ -27,7 +27,7 @@ Installation
 Everything is now available to install via conda:
 
 ```
-conda create --name bugbuilder abyss aragorn arrow barrnap biopython blast bwa cgview curl fastqc gmp gnuplot minced mummer mkl  parallel pilon prokka picard prodigal pyyaml samtools sis seqtk sickle-trim spades tbl2asn hmmer
+conda create --name bugbuilder abyss aragorn arrow barrnap biopython blast bwa cgview curl fastqc gmp gnuplot minced mummer mkl  parallel pilon prokka picard prodigal pyyaml samtools sis seqtk sickle-trim spades tabulate tbl2asn hmmer
 source activate bugbuilder
 ```
 then, clone this repo, and install:
