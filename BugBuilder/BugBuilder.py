@@ -1413,19 +1413,33 @@ def parse_picard_insert_stats(statfile):
     UPDATED 2018-10-05 syntax of picard has changed
 
     """
+    # get_next, = False
+    # with open(statfile, "r") as inf:
+    #     for line in inf:
+    #         if get_next:
+    #             min_insert = line.split("\t")[3]
+    #             max_insert = line.split("\t")[4]
+    #             mean_insert = line.split("\t")[5]
+    #             stddev_insert = line.split("\t")[6]
+    #             break
+    #         if "MEDIAN" in line:
+    #             #  the next line will contain the results
+    #             get_next=True
+    data_dict = {}
+
     get_next = False
     with open(statfile, "r") as inf:
         for line in inf:
-            if get_next:
-                min_insert = line.split("\t")[3]
-                max_insert = line.split("\t")[4]
-                mean_insert = line.split("\t")[5]
-                stddev_insert = line.split("\t")[6]
+            if get_next :
+                data = line.split("\t")
                 break
             if "MEDIAN" in line:
-                #  the next line will contain the results
-                get_next=True
-    return (mean_insert, stddev_insert)
+                headers = line.split("\t")
+                #  the next line will contain the data
+                get_next = True
+    for k, v in zip(headers, data):
+        data_dict[k] = v
+    return (data_dict['MEAN_INSERT_SIZE'], data_dict['STANDARD_DEVIATION'])
 
 
 
