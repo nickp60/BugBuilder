@@ -61,6 +61,23 @@ sub_mains = {
     "abyss-sealer": run_sealer,
 }
 
+##################################################################
+# a few constants
+
+# stages [stage_flag, name, code, prereq_stages
+all_stages = [
+    ["q", "QC reads", "QC", None],
+    ["t", "trim reads", "TRIM", None],
+    ["d", "downsample reads", "DOWNSAMPLE", None],
+    ["a", "run assembler(s)", "ASSEMBLE", None],
+    ["b", "break contig at the origin ", "BREAK", "sa"],
+    ["s", "scaffold the contigs", "SCAFFOLD", "a"],
+    ["f", "run genome polishing", "FINISH", "as"],
+    ["v", "run variant caller", "VARCALL", "a"],
+    ["g", "gene call with prokka", "GENECALL", "a"]
+]
+
+##################################################################
 
 def parse_available(thing, path=None):
     if path is None: # path var is to allow easier testing
@@ -543,28 +560,29 @@ def match_assembler_args(args):
     return assembler_list
 
 
-def parse_stages(args, reads_ns, logger):
+def parse_stages(args, reads_ns, logger, all_stages):
     """ pare the "stages" arg to determine the steps to be performed
     We want to be able to run all the stages individualy if possible
     """
-    stages = [
-        ["q", "QC reads", "QC"],
-        ["t", "trim reads", "TRIM"],
-        ["d", "downsample reads", "DOWNSAMPLE"],
-        ["a", "run assembler(s)", "ASSEMBLE"],
-        ["b", "break contig at the origin ", "BREAK"],
-        ["s", "scaffold the contigs", "SCAFFOLD"],
-        ["f", "run genome polishing", "FINISH"],
-        ["v", "run variant caller", "VARCALL"],
-        ["g", "gene call with prokka", "GENECALL"]
-    ]
-    allowed= [x[0] for x in stages]
+    # if stages == None:
+    #     stages = [
+    #         ["q", "QC reads", "QC"],
+    #         ["t", "trim reads", "TRIM"],
+    #         ["d", "downsample reads", "DOWNSAMPLE"],
+    #         ["a", "run assembler(s)", "ASSEMBLE"],
+    #         ["b", "break contig at the origin ", "BREAK"],
+    #         ["s", "scaffold the contigs", "SCAFFOLD"],
+    #         ["f", "run genome polishing", "FINISH"],
+    #         ["v", "run variant caller", "VARCALL"],
+    #         ["g", "gene call with prokka", "GENECALL"]
+    #     ]
+    allowed = [x[0] for x in all_stages]
     illegal_in_arg = [letter for letter in args.stages if letter not in allowed]
     if len(illegal_in_arg) > 0:
         raise ValueError("%s is not a valid stage; see --help" %
                          " and ".join(illegal_in_arg))
     logger.debug("Stages to be run:")
-    for flag, message, attribute in stages:
+    for flag, message, attribute, prereqs in all_stages:
         if flag in args.stages:
             setattr(reads_ns, attribute, True)
             logger.debug(message)
@@ -2981,6 +2999,70 @@ def summarise_amosvalidate():
     return results_dict
 
 
+def finish_up(results, t0, all_stages, logger=None, args=None):
+    """ print some summarizing information when we're done
+    """
+    logger.info("\n\nFinished BugBuilding!")
+
+    stages_string = " - "
+    for s in list(args.stages):
+        stage_name = [x[1] for x in all_stages if x[0] == s][0]
+        stages_string = stages_string + str(stage_name) + "\n - "
+    logger.info("\n\nStages Executed:\n%s", stages_string)
+    if "a" in args.stages:
+        report_config = get_contig_stats(results.current_contigs)
+        report_scaffold = get_contig_stats(results.current_scaffolds)
+        logger.info ("\n\nFinal Contig Statistics:\n"
+                     "=========================\n" +
+                     tabulate.tabulate(report_config) + "\n")
+        logger.info ("\n\nFinal Scaffold Statistics:\n"
+                    "=========================\n" +
+                     tabulate.tabulate(report_scaffold) + "\n")
+    logger.info("Done building your Bug!")
+    logger.info("Elapsed time: %.2fm" % ((time.time() - t0) / 60))
+    sys.exit(0)
+
+
+def finished_desired_stages(this_stage, args, all_stages, logger):
+    """ Check if any remaining stages need to be/can be done
+    """
+    found_this = False
+    # run through each of the stages, marking where we are now
+    for s in all_stages:
+        if this_stage == s[0]:
+            found_this = True
+        else:
+            # for future stages, are they requested via args.stages?
+            # and if so, have we completed the prereques
+            if found_this:
+                if s[0] in args.stages:
+                    if s[3] is not None:
+                        prereqs = list(s[3])
+                        prereqs_requested = [x for x in prereqs if
+                                             x in list(args.stages)]
+                        if prereqs  == prereqs_requested:
+                            return False
+                        else:
+                            logger.warning(str(
+                                "Cannot run stage {0} or later stages " +
+                                "becauseit requires stages {1}").format(
+                                    s[1], s[3]))
+                            return True
+                    else: # if no prereqs
+                        return False
+
+    return True
+
+
+def finish_if_done(this_stage, args, all_stages, logger, t0, results):
+    if finished_desired_stages(
+            this_stage=this_stage,
+            args=args,
+            all_stages=all_stages, logger=logger):
+        finish_up(results=results, t0=t0, logger=logger,
+                  args=args, all_stages=all_stages)
+
+
 def main(args=None, logger=None):
     if args is None:
         args = get_args()
@@ -3040,7 +3122,7 @@ def main(args=None, logger=None):
                              platform=args.platform, logger=logger)
     logger.debug(reads_ns)
     # determine which steps we will be doing
-    parse_stages(args, reads_ns, logger)
+    parse_stages(args, reads_ns, logger, all_stages=all_stages)
     logger.info("Determining if a reference is needed")
     check_ref_needed(args=args, lib_type=reads_ns.lib_type)
 
@@ -3054,6 +3136,8 @@ def main(args=None, logger=None):
             run_fastqc(reads_ns, args, config, logger=logger)
         else:
             logger.info("Skipping fastqc, as no executable is in PATH")
+        finish_if_done(this_stage="q", args=args, all_stages=all_stages,
+                       logger=logger, t0=t0, results=results)
 
     #-------------------------- TRIM
     if reads_ns.TRIM:
@@ -3063,6 +3147,8 @@ def main(args=None, logger=None):
         if reads_ns.lib_type != "long":  # and not args.skip_trim:
             logger.info("Trimming reads based on quality")
             quality_trim_reads(args, config, reads_ns, logger)
+        finish_if_done(this_stage="t", args=args, all_stages=all_stages,
+                       logger=logger, t0=t0, results=results)
 
     #-------------------------- DOWNSAMPLE
     if reads_ns.DOWNSAMPLE:
@@ -3089,6 +3175,8 @@ def main(args=None, logger=None):
             reads_ns.downsampled_coverage = downsample_reads(
                 args=args, reads_ns=reads_ns,
                 config=config, new_cov=args.downsample, logger=logger)
+        finish_if_done(this_stage="d", args=args, all_stages=all_stages,
+                       logger=logger, t0=t0, results=results)
 
     #-------------------------- Report status, pre assembly
     if args.fastq2 and len(args.references) != 0:
@@ -3154,6 +3242,8 @@ def main(args=None, logger=None):
     logger.debug(tools.__dict__)
     logger.debug("ARGS:")
     logger.debug(args.__dict__)
+    finish_if_done(this_stage="a", args=args, all_stages=all_stages,
+                   logger=logger, t0=t0, results=results)
     #-------------------------  Check our reference(s)
     if len(args.references) > 0:
         if len(args.references) == 1:
@@ -3193,6 +3283,8 @@ def main(args=None, logger=None):
         if results.ID_OK:
             find_and_split_origin(args=args, config=config, results=results,
                                   tools=None, reads_ns=None, logger=logger)
+        finish_if_done(this_stage="b", args=args, all_stages=all_stages,
+                       logger=logger, t0=t0, results=results)
 
     #-------------------------- SCAFFOLD
     # right.  Now our results should contain contigs and/or scaffolds.
@@ -3225,6 +3317,8 @@ def main(args=None, logger=None):
                 find_origin(args,config, results,  tools, reads_ns, logger )
             if results.ID_OK:
                 order_scaffolds(args, config, results, logger)
+        finish_if_done(this_stage="s", args=args, all_stages=all_stages,
+                       logger=logger, t0=t0, results=results)
 
     #-------------------------- FINISHING
     if reads_ns.FINISH:
@@ -3235,6 +3329,8 @@ def main(args=None, logger=None):
                 results=results, config=config, logger=logger)
         if args.finisher and results.ID_OK:
             run_finisher(args, config, reads_ns, tools, results, logger=logger)
+        finish_if_done(this_stage="f", args=args, all_stages=all_stages,
+                       logger=logger, t0=t0, results=results)
 
     #-------------------------- ANNOTATE WITH PROKKA
 
@@ -3283,26 +3379,26 @@ def main(args=None, logger=None):
         #                  evidence=evidence,
         #                  logger=logger)
         run_prokka(config, args, results, logger)
+        # make_embl(config, args, results
+        amosvalidate_results = None
+        # run_varcaller( tmpdir, varcall, threads, read_length_mean ) if (varcall)
+        # merge_annotations( tmpdir, amosvalidate_results, gaps, genus, species, strain )
+        #     #  This kept throwing an error about Bio::SeqIO
+        run_cgview(results=results, args=args, config=config, logger=logger)
 
-    amosvalidate_results = None
-    # run_varcaller( tmpdir, varcall, threads, read_length_mean ) if (varcall)
-    # merge_annotations( tmpdir, amosvalidate_results, gaps, genus, species, strain )
-#     #  This kept throwing an error about Bio::SeqIO
-    run_cgview(results=results, args=args, config=config, logger=logger)
-
-    build_comparisons(args=args, config=config, results=results, logger=logger)
-    logger.info("\n\nFinal Assembly Statistics...");
-    report_config = get_contig_stats(results.current_contigs)
-    report_scaffold = get_contig_stats(results.current_scaffolds)
-    logger.info ("\n\nFinal Contig Statistics:\n"
-                 "=========================\n" +
-                 tabulate.tabulate(report_config) + "\n")
-    logger.info ("\n\nFinal Scaffold Statistics:\n"
-                 "=========================\n" +
-                 tabulate.tabulate(report_scaffold) + "\n")
-    logger.info("Done building your Bug!")
-    logger.info("Elapsed time: %.2fm" % ((time.time() - t0) / 60))
-#     get_contig_stats( "$tmpdir/scaffolds.fasta", 'scaffolds' ) if ( -e "$tmpdir/scaffolds.fasta" );
+        build_comparisons(args=args, config=config, results=results, logger=logger)
+        logger.info("\n\nFinal Assembly Statistics...");
+        report_config = get_contig_stats(results.current_contigs)
+        report_scaffold = get_contig_stats(results.current_scaffolds)
+        logger.info ("\n\nFinal Contig Statistics:\n"
+                     "=========================\n" +
+                     tabulate.tabulate(report_config) + "\n")
+        logger.info ("\n\nFinal Scaffold Statistics:\n"
+                     "=========================\n" +
+                     tabulate.tabulate(report_scaffold) + "\n")
+        logger.info("Done building your Bug!")
+        logger.info("Elapsed time: %.2fm" % ((time.time() - t0) / 60))
+        #     get_contig_stats( "$tmpdir/scaffolds.fasta", 'scaffolds' ) if ( -e "$tmpdir/scaffolds.fasta" );
 #     my $emblfile;
 #     ( -e "$tmpdir/scaffolds.embl" ) ? ( $emblfile = "$tmpdir/scaffolds.embl" ) : ( $emblfile = "$tmpdir/contigs.embl" );
 
@@ -3775,6 +3871,8 @@ def run_cgview(results, args, config, logger):
 
     logger.info("Creating genome visualisaton...");
     embl = results.current_embl
+    if embl is None:
+        raise ValueError("No EMBL file currently defined")
     outfile = os.path.join(cgview_dir, "cgview.png")
     cmds = []
     cmds.append(str(
