@@ -26,7 +26,7 @@ def run(config, args, results, reads_ns, scaffolds, finisher_dir, logger):
     logger.info("Using [FINISHER] to finish our scaffolds: %s", scaffolds)
     cmds, sorted_bam = make_preprocessing_cmds()
     cmds.append(
-        make_finisher_cmd()
+        make_finisher_cmd())
     for cmd in cmds:
         logger.debug(cmd)
         subprocess.run(cmd,

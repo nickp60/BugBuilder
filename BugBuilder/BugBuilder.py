@@ -2738,15 +2738,6 @@ def build_agp(args, results, reads_ns, evidence, logger):
                     else:
                         # we just exited a gap!!!
                         # report the contig lengths, the gaps, etc
-
-
-                # if base != "N" and gap_start is None:
-                #     contig_end = idx
-                # # if we hit an N and aren't already in a gap, mark the gap start
-                # elif (base == "N" and gap_start is None):
-                #     gap_start = idx
-                # # elif base != "N" and  gap_start:
-                # else:
                         gap_end = idx
                         gap_length = gap_end - gap_start
 
@@ -2869,10 +2860,12 @@ def get_prokka_cmd(exe, outdir, args, seqs):
             args.tmp_dir,  #8
             seqs)
 
+
 def make_embl_from_gbk(gbk, output_file):
     with open(gbk, "r") as inf, open(output_file, "w") as outf:
         for rec in SeqIO.parse(inf, "genbank"):
             SeqIO.write(rec, outf, "embl")
+
 
 def run_prokka(config, args, results, logger):
     """

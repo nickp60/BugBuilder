@@ -92,6 +92,7 @@ class test_BugBuilder(unittest.TestCase):
         config = bb.return_config(newpath_config,
                                   hardfail=False, logger=logger)
         self.assertEqual(config.STATUS, "COMPLETE")
+        self.to_be_removed.append(newpath_config)
 
     def test_make_fastqc_cmd(self):
         test_args = Namespace(fastq1="reads1.fastq", fastq2="reads2.fastq",
@@ -246,7 +247,7 @@ class test_BugBuilder(unittest.TestCase):
     def test_check_ref_needed(self):
         test_args = Namespace(genome_size=0, references=[])
         with self.assertRaises(ValueError):
-            bb.check_ref_needed(args=test_args, lib_type="long")
+            bb.check_ref_required(args=test_args, lib_type="long")
 
     def test_get_config_path(self):
         pass
@@ -709,6 +710,7 @@ class test_BugBuilder(unittest.TestCase):
                                       picard_outdir="./test/")
             )
 
+
     @unittest.skipIf("TRAVIS" in os.environ and os.environ["TRAVIS"] == "true",
                      "Skipping this test on Travis CI. Too hard to debug")
     def test_get_insert_stats(self):
@@ -722,6 +724,8 @@ class test_BugBuilder(unittest.TestCase):
             bb.get_insert_stats(bam=self.mapped_bam, config=integration_config,
                                 args=test_args, logger=logger)
         )
+        self.to_be_removed.append(
+            os.path.join(self.test_dir, "insert_stats", ""))
 
     def test_parse_picard_insert_stats(self):
         self.assertEqual(('207.5',  '3.535534'),
@@ -829,9 +833,10 @@ class test_BugBuilder(unittest.TestCase):
         config = bb.parse_config(self.active_config)
         ref_dict = {'AP017923.1': 'NODE_4_length_5704_cov_4.88129:1',
                     'AP017923.2': 'NODE_2_length_10885_cov_4.76832:869'}
-        ori = bb.find_origin(args=test_args, config=config, results=results,
-                             ori_dir=self.test_dir, flex=10,
-                             logger=logger)
+        ori = bb.find_origin(
+            args=test_args, config=config, results=results,
+            ori_dir=self.test_dir, flex=10,
+            logger=logger)
         for k, v in sorted(ori.items()):
             self.assertEqual(ref_dict[k], v)
 
@@ -850,6 +855,8 @@ class test_BugBuilder(unittest.TestCase):
         self.assertEqual(
             bb.md5(self.contigs_split_ori),
             bb.md5(results_path))
+        self.to_be_removed.append(
+            os.path.join(self.test_dir, "origin", ""))
 
     @unittest.skipIf("TRAVIS" in os.environ and os.environ["TRAVIS"] == "true",
                      "Skipping this test on Travis CI. Too hard to debug")
@@ -972,6 +979,8 @@ class test_BugBuilder(unittest.TestCase):
         bb.build_agp(
             args=test_args, results=results, reads_ns=reads_ns,
             evidence="paired-ends", logger=logger)
+        self.to_be_removed.append(
+            os.path.join(self.test_dir, "agp", ""))
 
     def tearDown(self):
         """ delete temp files if no errors, and report elapsed time
