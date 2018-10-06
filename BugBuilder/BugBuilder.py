@@ -36,6 +36,7 @@ import multiprocessing
 from BugBuilder import __version__
 from Bio import SeqIO # , SearchIO
 from Bio.SeqRecord import SeqRecord
+from Bio.Seq import Seq
 from argparse import Namespace
 from .shared_methods import make_nucmer_delta_show_cmds, run_nucmer_cmds
 from .raw_config import __config_data__
@@ -2683,36 +2684,33 @@ def build_agp(args, results, reads_ns, evidence, logger):
     """
 
     if evidence not in ['paired-ends', 'align_genus', 'align_xgenus']:
-        logger.error("Unknown evidence type: %s", evidence)
+        raise ValueError("Unknown evidence type: %s", evidence)
     logger.info("Creating AGP file...");
     agp_dir = os.path.join(args.tmp_dir, "agp")
     agpfile_path = os.path.join(agp_dir, "scaffolds.agp")
     os.makedirs(agp_dir)
     lines = []
-    lines.append(">scaffolds.agp")
-    lines.append( "##agp-version 2.0\n")
-    lines.append("#$organism\n") # TODO
+    lines.append( "##agp-version 2.0")
+    lines.append("#{}".format(results.organism))
     contigs_path = os.path.join(agp_dir, "contigs.fasta")
     scaffolds_path = os.path.join(agp_dir, "scaffolds.fasta")
     contig_count = 0
     scaffold_count = 0
     gap_dict = {}    #overall per-scaffold gaps to return....
     with open(results.current_scaffolds, "r") as scaffold_inIO:
-        for scaffold in SeqIO.parse(scaffold_inIO, "fasta"):
-            scaffold_count = scaffold_count + 1
-            scaffold_loc = 1
-            scaffold_id  = scaffold.id;
-            scaff_count  = scaffold_count
-            scaffold_id = "scaffold_%06d" % scaff_count
-            scaffold_end = len(scaffold.seq);
+        for scaffold_count, scaffold in enumerate(SeqIO.parse(scaffold_inIO, "fasta")):
+            scaffold_id = "scaffold_%06d" % (scaffold_count + 1)
             contig_start, contig_end, gap_start, gap_end = 0, None, None, None
 
-            bases = list(scaffold.seq)
             # location tracking for included contigs/gaps
-            contigs_dict, gaps = {}, []
+            # changed from a dict to a list, cause we like order
+            # [id, coords_string, legnth]
+            contigs_list = []
+            gaps =  []
             # this is kind of crude, but seems to work...
-            for idx, base in enumerate(bases):
-                # print("{}, {}, gs: {}; ge: {}".format(idx, base, gap_start, gap_end ))
+            for idx, base in enumerate(list(scaffold.seq)):
+                # print("{}, {}, gs: {}; ge: {}".format(
+                #     idx, base, gap_start, gap_end ))
                 # if a normal base and it isnt immediately following a gap,
                 # go to the next base, keeping track of where we were
 
@@ -2775,62 +2773,47 @@ def build_agp(args, results, reads_ns, evidence, logger):
                                             scaffold.seq[contig_start: contig_end],
                                             id=contig_id),
                                         outf, "fasta")
-                                contigs_dict[contig_id] = {
-                                    'coords': "{}-{}".format(contig_start, contig_end),
-                                    'length': contig_end - contig_start
-                                }
+                                contigs_list.append(
+                                    [contig_id,
+                                     "{}-{}".format(contig_start, contig_end),
+                                    contig_end - contig_start
+                                     ])
                                 gap = "{}-{}".format(gap_start, gap_end)
                                 gaps.append(gap)
                                 gap_start = None
                                 contig_start = idx
             # Output last contig from last contig_start position to scaffold end if it is longer than
             # 200 bp and we are running in submission mode, otherwise remove the last gap to truncate the scaffold...
-            if scaffold_end - contig_start  > 200 or args.mode == 'draft' or contig_count == 0:
+            if len(scaffold.seq) - contig_start  > 200 or args.mode == 'draft' or contig_count == 0:
                 contig_count = contig_count + 1
                 contig_id = "contig_%06d" % contig_count
                 with open(contigs_path, "a") as  outf:
 
                     SeqIO.write(SeqRecord(scaffold.seq[contig_start: len(scaffold.seq)], id=contig_id), outf, "fasta")
-                contigs_dict[contig_id] = {
-                    'coords': "{}-{}".format(contig_start, contig_end),
-                    'length': contig_end - contig_start
-                }
+                contigs_list.append([contig_id,
+                                     "{}-{}".format(contig_start, contig_end),
+                                     contig_end - contig_start])
             else:
                 gaps.pop()
 
             gap_dict[scaffold_id] = gaps
             scaffold_part = 0
-            print(gaps)
-            print(gap_dict)
 
             #write AGP output and new scaffolds fasta file
-            # record_dict = SeqIO.index("example.fasta", "fasta")
-            # unlink("contigs.fasta.index") if ( -e "contigs.fasta.index" );
-            # contig_db = Bio::DB::Fasta->new("contigs.fasta");
-            scaffold_seq = None
-
-            # I think this is just a sorted list of ids
-            contig_ids = ["contigs_" + str(x) for x in
-                          sorted([k.split("_")[1] for k, v in contigs_dict.items()])]
-            # my @contig_ids = map { $_->[0] }
-            #   sort { $a->[1] <=> $b->[1] }
-            #   map { [ $_, /(\d+)$/ ] } keys(%contigs);
-            print(contigs_dict)
-            if len(contig_ids) > 0:
+            record_dict = SeqIO.index(contigs_path, "fasta")
+            scaffold_seq = ""
+            if len(contigs_list) > 0:
                 # if ( $#contig_ids > -1 ) {
-                for i, contig_id in enumerate(contig_ids):
-                    contig_data = contigs_dict[contig_id]
-                    coords      = contig_data['coords']
-                    length      = contig_data['length']
+                for i, (contig_id, coords, length) in enumerate(contigs_list):
                     if contig_id != "" :  # dont know when this could possibly be true
-                        contig = record_dict['contig_id']
+                        contig = record_dict[contig_id]
                         contig_start, contig_end  = coords.split("-")
                         scaffold_part = scaffold_part + 1
                         lines.append(
                             "{ob}\t{ob_beg}\t{ob_end}\t{part_number}\t{comp_type}\t{comp_id}\t{comp_beg}\t{comp_end}\t{orientation}".format(
                                 ob=scaffold_id,
-                                ob_beg=contig_start + 1,
-                                ob_end=contig_end + 1,
+                                ob_beg=int(contig_start) + 1,
+                                ob_end=int(contig_end) + 1,
                                 part_number=scaffold_part,
                                 comp_type="W",
                                 comp_id=contig_id,
@@ -2838,28 +2821,30 @@ def build_agp(args, results, reads_ns, evidence, logger):
                                 comp_end=length,
                                 orientation="+"))
                         scaffold_seq = scaffold_seq + str(contig.seq)
-                        if i < len(contig_ids) - 1:
+                        if i < len(contigs_list) - 1:
                             gap_start, gap_end = gaps[i].split("-")
-                            gap_size = gap_end - gap_start
+                            gap_size = int(gap_end) - int(gap_start)
                             scaffold_part = scaffold_part + 1
                             lines.append(
-                                "{ob}\t{ob_beg}\t{ob_end}\t{part_number}\t{comp_type}\t{gap_len}\t{gap_type}\t{linkage}\t{linkage_ev}".format(
+                                "{ob}\t{ob_beg}\t{ob_end}\t{part_number}\t{comp_type}\t{gap_length}\t{gap_type}\t{linkage}\t{linkage_ev}".format(
                                     ob=scaffold_id,
-                                    ob_beg=gap_start + 1,
-                                    ob_end=gap_end + 1,
+                                    ob_beg=int(gap_start) + 1,
+                                    ob_end=int(gap_end) + 1,
                                     part_number=scaffold_part,
                                     comp_type="N",
                                     gap_length=gap_size,
                                     gap_type="scaffold",
                                     linkage="yes",
                                     linkage_ev=evidence))
-                            scaffold_seq = scaffold_seq + "N" * gap_size
+                            scaffold_seq = scaffold_seq + ("N" * gap_size)
             if scaffold_seq is not None:
                 with open(scaffolds_path, "a") as outf:
-                    SeqIO.write(SeqRecord(scaffold_seq, id=scaffold_id))
+                    SeqIO.write(SeqRecord(Seq(scaffold_seq), id=scaffold_id),
+                                outf, "fasta")
+            record_dict.close()
         with open(agpfile_path, "w") as outf:
             for line in lines:
-                outf.write(line)
+                outf.write(line + "\n")
     return gaps
 
 

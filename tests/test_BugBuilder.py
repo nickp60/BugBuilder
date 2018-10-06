@@ -969,7 +969,9 @@ class test_BugBuilder(unittest.TestCase):
 
         reads_ns = bb.assess_reads(args=test_args, config=config,
                                 platform="illumina", logger=logger)
-        bb.build_agp(args=test_args, results=results, reads_ns=reads_ns, evidence="linkage", logger=logger)
+        bb.build_agp(
+            args=test_args, results=results, reads_ns=reads_ns,
+            evidence="paired-ends", logger=logger)
 
     def tearDown(self):
         """ delete temp files if no errors, and report elapsed time
