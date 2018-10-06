@@ -38,6 +38,8 @@ from Bio import SeqIO # , SearchIO
 from Bio.SeqRecord import SeqRecord
 from Bio.Seq import Seq
 from argparse import Namespace
+
+from .program_info import all_programs_dict
 from .shared_methods import make_nucmer_delta_show_cmds, run_nucmer_cmds
 from .raw_config import __config_data__
 # Assemblers
@@ -103,75 +105,72 @@ def parse_available(thing, path=None):
         configure(get_config_path())
         return(parse_available(thing=thing, path=get_config_path()))
 
-# def get_program_version(prog, ver_cmd):
-#     fastqc_res = subprocess.run("{} {}".format(prog, ver_cmd),
-#                                 shell=sys.platform != "win32",
-#                                 stdout=subprocess.PIPE,
-#                                 stderr=subprocess.PIPE,
-#                                 check=False)
-#     if fastqc_res.returncode != 0:
-#         logger.warning("Error running fastqc with command %s", fastqc_cmd)
-#         sys.exit(1)
+
+def check_version_from_cmd(
+        exe,
+        cmd, line,
+        pattern=r"^__version__ = '(?P<version>[^']+)'$",
+        where='stderr',
+        min_version="0.0.0", logger=None,
+        coerce_two_digit=False):
+    """ returns version string from an system call
+    Hacky, but better than nothing.
+    line arg is 1-indexed
+    .strip() is called on match to remove whitspaces
+    20170920 changed to remove shutil.which call.
+    That should be done outside of this funciton
+    """
+    assert logger is not None, "must use logging"
+    from distutils.version import StrictVersion
+    result = subprocess.run("{0} {1}".format(exe, cmd),
+                             # is this a securiy risk?
+                            shell=sys.platform != "win32",
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            check=False)
+    logger.debug(result)
+    try:
+        if where == 'stderr':
+            printout = result.stderr.decode("utf-8").split("\n")
+        elif where == 'stdout':
+            printout = result.stdout.decode("utf-8").split("\n")
+        else:
+            raise ValueError("where option can only be 'stderr' or 'stdout'")
+    except Exception as e:
+        raise e
+    if logger:
+        logger.debug(printout)
+    this_version = None
+    try:
+        m = re.search(pattern, printout[line - 1])
+    except IndexError as e:
+        raise e
+    if m:
+        this_version = m.group('version').strip()
+    if logger:
+        logger.debug("this_version: %s", this_version)
+    if coerce_two_digit:
+        this_version = "0.{0}".format(this_version)
+        if logger:
+            logger.debug("coerced this_version: %s", this_version)
+    if this_version is None:
+        raise ValueError("No verison was captured with pattern" +
+                         "{0}".format(pattern))
+    try:
+        if StrictVersion(this_version) < StrictVersion(min_version):
+            raise ValueError("{0} version {1} must be greater than {2}".format(
+                cmd, this_version, min_version))
+    except Exception as e:
+        raise e
+    return(this_version)
+
 
 
 def configure(config_path, hardfail=True):
     with open(config_path, 'w') as outfile:  # write header and config params
         for line in __config_data__:
             outfile.write(line)
-    #  the structure is {program_category:[[executable, name],
-    #                                      [another_executable, its_name]}
-    all_programs_dict = {
-        "mandatory_programs": [
-            ['seqtk', 'seqtk'],
-            ['samtools','samtools'],
-            ['picard', 'Picard'],
-            ['blastn', "BLASTn"],
-            ['makeblastdb', "makeblastdb"],
-            ["nucmer", "nucmer"],
-            ["mummer", "MUMmer"],
-            ["mummerplot", "MUMmerplot"],
-            ["delta-filter", "delta-filter"],
-            ["show-coords", "show_coords"],
-            ['R', "R"],
-            ['cgview', 'cgview'],
-            ['cgview_xml_builder.pl', 'cgview_xml_builder'],
-            ['bwa', 'BWA'],
-            ["perl", "perl"],
-            ],
-        "opt_programs": [
-            ["prokka", "PROKKA"],
-            ['fastqc', 'FastQC'],
-            ['sickle', 'sickle-trim'],
-            ['mauve','mauve'],
-            ['ribo', 'riboSeed'],
-            ['FGAP', 'fgap'],
-            ['minimus', 'minimus'],
-            ['sam2afg','sam2afg'],
-            ['aragorn', 'aragorn'],
-            ['prodigal','prodigal'],
-            ['hmmer3', 'hmmer3'],
-            ["python2", "python2"], # needed for ragout
-            ['ragout.py', 'ragout'],
-            ['infernal','infernal'],
-            ['bank-transact','bank-transact'],
-            ['rnammer','rnammer'],
-            ['tbl2asn','tbl2asn'],
-            ['celera','celera'],
-            ["abyss-pe","abyss"],
-            ["abyss-sealer","abyss-sealer"],
-            ['gapfiller','gapfiller'],
-            ['sspace','sspace'],
-            ['asn2gb','asn2gb'],
-            ['amos','amos'] ,
-            ['masurca','masurca'],
-            ['gfinisher', 'gfinisher'],
-            ['pilon','pilon'],
-            ['vcflib','vcflib'],
-            ['cgview','cgview'],
-            ['spades.py','spades'],
-            ['sis.py','sis'], ['multifasta.py','multifasta'], ['barrnap','barrnap'],
-            ],
-        }
+    # imported from program_info.py
     output_dict = {}
     for category, programs in all_programs_dict.items():
         if len(programs) == 0: # pyyaml will write out curly brackets otherwise
@@ -187,8 +186,14 @@ def configure(config_path, hardfail=True):
                     if hardfail:
                         raise OSError(
                             "%s is a mandatory program; please install" % name)
+    # get conda env too
+    conda_env = subprocess.run("conda list",
+                               shell=sys.platform != "win32",
+                               stdout=subprocess.PIPE)
     with open(config_path, 'a') as outfile:  # write paths to exes in config
         yaml.dump(output_dict, outfile, default_flow_style=False)
+        for line in conda_env.stdout.decode("utf-8").split("\n"):
+            outfile.write("## " + line + "\n")
 
 
 def return_config(config_path, force=False, hardfail=True, logger=None):
@@ -895,7 +900,7 @@ def assess_reads(args, config, platform, logger=None):
                      downsampled_coverage=None)
 
 
-def check_ref_needed(args, lib_type):
+def check_ref_required(args, lib_type):
     """ ensure either a reference or genome size is provided for long read assembly
     """
     if lib_type == "long" :
@@ -3179,7 +3184,7 @@ def main(args=None, logger=None):
     # determine which steps we will be doing
     parse_stages(args, reads_ns, logger, all_stages=all_stages)
     logger.info("Determining if a reference is needed")
-    check_ref_needed(args=args, lib_type=reads_ns.lib_type)
+    check_ref_required(args=args, lib_type=reads_ns.lib_type)
 
     logger.info("Preparing config and tools")
     tools = select_tools(args, config=config, reads_ns=reads_ns, logger=logger)
@@ -3433,8 +3438,6 @@ def main(args=None, logger=None):
         gaps = build_agp(args, results, reads_ns,
                          evidence=evidence,
                          logger=logger)
-        print(gaps);
-        sys.exit(0)
         prokka_dir = run_prokka(config, args, results, logger)
         make_embl_from_gbk(gbk=os.path.join(prokka_dir, "prokka.gbk"),
                            output_file=os.path.join(prokka_dir, "prokka.embl"))
@@ -3716,18 +3719,7 @@ def build_comparisons(args, config, results, logger):
     logger.info("Building comparison plots with mummerplot")
     comp_dir = os.path.join(args.tmp_dir, "comparisons", "")
     os.makedirs(comp_dir)
-    # my $io     = Bio::SeqIO->new( -format => 'fasta', -file => "$tmpdir/$reference" );
-    # my $ref    = $io->next_seq();
-    # my $ref_id = $ref->display_id();
-    # $ref_id = ( split( /\|/, $ref_id ) )[0] if ( $ref_id =~ /\|/ );
 
-    # my $query;
-    # if ( -l "$tmpdir/scaffolds.fasta" ) {
-    #     $query = "$tmpdir/scaffolds.fasta";
-    # }
-    # else {
-    #     $query = "$tmpdir/contigs.fasta";
-    # }
     query = results.current_scaffolds
     comp_cmds = make_comparison_cmds(
         config=config, query=query,
