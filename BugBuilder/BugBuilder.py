@@ -65,6 +65,7 @@ sub_mains = {
     "pilon": run_pilon,
     "fgap": run_fgap,
     "abyss-sealer": run_sealer,
+    "pilon_var": run_pilon_var,
 }
 
 ##################################################################
@@ -1151,7 +1152,7 @@ def run_fastqc(reads_ns, args, config, logger=None):
                     fails = fails + 1
                 report.append(line.split("\t"))
         shutil.copyfile(os.path.join(fastqc_dir, name + ".html"),
-                        os.path.join(args.tmp_dir, name + ".html"))
+                        os.path.join(args.outdir, name + ".html"))
     logger.info("FastQC STATISTICS:\n" + tabulate.tabulate(report))
     if fails > 0:
         if reads_ns.lib_type in ["long", "hybrid", "de_fere"]:
@@ -1952,6 +1953,7 @@ def make_empty_results_object():
         ID_OK=None, # to be set by check_id
         reference_percent_sim=None, # to be set by check_id
         current_agp=None,
+        current_vcf=None,
         current_contigs=None,
         current_scaffolds=None,
         current_reference=None,
@@ -3199,7 +3201,7 @@ def return_results(args, results):
     # get the ones in the results object
     targets = [
         "current_scaffolds", "current_embl", "current_contigs",
-        "current_agp"]
+        "current_agp", "current_vcf"]
     target_paths = []
     for t in targets:
         if t is not None:
@@ -3310,7 +3312,7 @@ def run_cgview(results, args, config, logger):
                        check=True)
 
 
-def run_varcaller(args, results, config, tools, logger):
+def run_varcaller(args, results, reads_ns, config, tools, logger):
     """
     Carries out variant calling using requested variant caller
 
@@ -3329,11 +3331,11 @@ def run_varcaller(args, results, config, tools, logger):
     logger.info("Running variant calling %s", tools.varcaller['name'])
     varcall_dir = os.path.join(args.tmp_dir, "varcaller_" + tools.varcaller['name'], "")
     os.makedirs(varcall_dir)
-    sub_mains[tools.finisher['name']](config=config, args=args, results=results,
-                               reads_ns=reads_ns,
-                               scaffolds=results.current_scaffolds,
-                               finisher_dir=finisher_dir,
-                               logger=logger)
+    # sub_mains[tools.finisher['name']](config=config, args=args, results=results,
+    #                            reads_ns=reads_ns,
+    #                            scaffolds=results.current_scaffolds,
+    #                            finisher_dir=finisher_dir,
+    #                            logger=logger)
 
     # my ( $cmd, $caller_cmd, $create_dir );
 
@@ -3370,13 +3372,13 @@ def run_varcaller(args, results, config, tools, logger):
         bwa_aln_single = str(
             "{config.bwa} sampe {results.current_reference} " +
             "{varcall_dir}read1.sai {args.fastq1} " +
-            "2> {varcall_dir}/sampe.log > {varcall_dir}/scaffolds.sam").format(
+            "2> {varcall_dir}sampe.log > {varcall_dir}reference.sam").format(
                 **locals())
         bwa_aln_paired = str(
             "{config.bwa} sampe {results.current_reference} " +
             "{varcall_dir}read1.sai {varcall_dir}read2.sai  " +
-            "{args.fastq1} " +
-            "2> {varcall_dir}/sampe.log > {varcall_dir}/scaffolds.sam").format(
+            "{args.fastq1} {args.fastq2} " +
+            "2> {varcall_dir}sampe.log > {varcall_dir}reference.sam").format(
                 **locals())
         if reads_ns.paired:
             bwa_cmds = [bwa_index, bwa_map1, bwa_map2, bwa_aln_paired]
@@ -3389,14 +3391,14 @@ def run_varcaller(args, results, config, tools, logger):
             "2> {varcall_dir}bwa_mem.log").format(**locals())
         bwa_mem_paired = str(
             "{config.bwa} mem -t {args.threads} {results.current_scaffolds} " +
-            "{args.fastq1} {args.fastq2} > {varcaller_dir} reference.sam "+
+            "{args.fastq1} {args.fastq2} > {varcaller_dir}reference.sam "+
             "2> {varcall_dir}bwa_mem.log").format(**locals())
         if reads_ns.paired:
             bwa_cmds = [bwa_index, bwa_mem_paired]
         else:
             bwa_cmds = [bwa_index, bwa_mem_single]
 
-    samtools_index_cmd = str(
+    samtools_view_cmd = str(
         "{config.samtools} view -q 10 -Sb " +
         "{varcall_dir}reference.sam 2> " +
         "{varcall_dir}samtoolsview.log >" +
@@ -3405,10 +3407,15 @@ def run_varcaller(args, results, config, tools, logger):
     samtools_sort_cmd = str(
         "{config.samtools} sort {varcall_dir}reference.bam -o " +
         "{varcall_dir}reference.sorted.bam > " +
-        "{varcall_dir}samtools_sort.log 2>&1").format(**locals)
+        "{varcall_dir}samtools_sort.log 2>&1").format(**locals())
+    samtools_index_cmd = str(
+        "{config.samtools} index " +
+        "{varcall_dir}reference.sorted.bam").format(
+            **locals())
     map_cmds = bwa_cmds
-    map_cmds.append(samtools_index_cmd)
+    map_cmds.append(samtools_view_cmd)
     map_cmds.append(samtools_sort_cmd)
+    map_cmds.append(samtools_index_cmd)
     for cmd in map_cmds:
         logger.debug(cmd)
         subprocess.run(cmd,
@@ -3416,11 +3423,11 @@ def run_varcaller(args, results, config, tools, logger):
                        stdout=subprocess.PIPE,
                        stderr=subprocess.PIPE,
                        check=True)
-    sub_mains[tools.varcaller['name']](
+    results.current_vcf = sub_mains[tools.varcaller['name'] + "_var"](
         config=config, args=args, results=results,
         reads_ns=reads_ns,
-        scaffolds=results.current_scaffolds,
-        reference_bam=os.path.join(varcall_dir, "reference.bam"),
+        reference=results.current_reference,
+        reference_bam=os.path.join(varcall_dir, "reference.sorted.bam"),
         varcall_dir=varcall_dir,
         logger=logger)
 
@@ -3755,7 +3762,7 @@ def main(args=None, logger=None):
                            output_file=os.path.join(prokka_dir, "prokka.embl"))
         amosvalidate_results = None
         if reads_ns.VARCALL:
-            run_varcaller(args, results, config, tools, logger)
+            run_varcaller(args, results, reads_ns, config, tools, logger)
         # merge_annotations(tmpdir, amosvalidate_results, gaps, genus, species, strain )
         #     #  This kept throwing an error about Bio::SeqIO
         run_cgview(results=results, args=args, config=config, logger=logger)

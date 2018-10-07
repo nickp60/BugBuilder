@@ -29,14 +29,14 @@ import sys
 #     return (cmd_list, "{varcall_dir}scaffolds.sorted.bam".format(**locals()))
 
 
-def make_pilon_varcall_cmds(pilon_exe, varcall_dir, scaffolds, threads, reference_bam):
+def make_pilon_varcall_cmds(pilon_exe, varcall_dir, threads, reference_bam, reference):
     """ with conda, there is a lovely runner script so we dont have
     to tango with java
     """
-    return str("{pilon_exe} --genome {scaffolds} " +
-               "--bam {varcall_dir}scaffolds.sorted.bam --variant --changes --vcf " +
+    return [str("{pilon_exe} --genome {reference} " +
+               "--bam {reference_bam} --variant --changes --vcf " +
                " --threads {threads} --outdir {varcall_dir} > " +
-               "{varcall_dir}pilon.log 2>&1").format(**locals())
+               "{varcall_dir}pilon.log 2>&1").format(**locals())]
     # my $pilon_dir  = $config->{'pilon_dir'};
     # my $vcflib_dir = $config->{'vcflib_dir'};
     # my $java       = $config->{'java'};
@@ -51,20 +51,20 @@ def make_pilon_varcall_cmds(pilon_exe, varcall_dir, scaffolds, threads, referenc
     #   . "|$vcflib_dir/vcffilter -f 'AC > 0'> ${tmpdir}/var_pilon/var.filtered.vcf";
 
 
-def run(config, args, results, reads_ns, reference_bam, varcall_dir, logger):
-    logger.info("Using Pilon to finish our scaffolds: %s", scaffolds)
+def run(config, args, results, reads_ns, reference, reference_bam, varcall_dir, logger):
+    logger.info("Using Pilon to call variants between  reads and %s",
+                reference)
     if not reads_ns.paired:
         raise ValueError("Error: paired reads do not seem to be available....\n")
-    cmds = []
+
     # cmds, sorted_bam = make_pilon_bwa_cmds(
     #     bwa_exe=config.bwa, samtools_exe=config.samtools, args=args, scaffolds=scaffolds,
     #     varcall_dir=varcall_dir, threads=args.threads)
-    cmds.extend(
-        make_pilon_varcall_cmds(pilon_exe=config.pilon,
-                                varcall_dir=varcall_dir,
-                                scaffolds=scaffolds,
-                                threads=args.threads,
-                                reference_bam=reference_bam))
+    cmds = make_pilon_varcall_cmds(pilon_exe=config.pilon,
+                                   varcall_dir=varcall_dir,
+                                   reference=reference,
+                                   threads=args.threads,
+                                   reference_bam=reference_bam)
     for cmd in cmds:
         logger.debug(cmd)
         subprocess.run(cmd,
@@ -72,3 +72,4 @@ def run(config, args, results, reads_ns, reference_bam, varcall_dir, logger):
                        stdout=subprocess.PIPE,
                        stderr=subprocess.PIPE,
                        check=True)
+    return os.path.join(varcall_dir, "pilon.vcf")
