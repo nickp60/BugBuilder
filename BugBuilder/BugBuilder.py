@@ -52,6 +52,9 @@ from .run_ragout import run as run_ragout
 from .run_pilon import run as run_pilon
 from .run_fgap import run as run_fgap
 from .run_sealer import run as run_sealer
+# varcallers
+from .run_pilon_var import run as run_pilon_var
+
 
 sub_mains = {
     # "canu": run_canu,
@@ -343,7 +346,6 @@ def get_args():  # pragma: no cover
     opt.add_argument("--varcaller", dest='varcaller', action="store",
                      help="Method for variant calling",
                      choices=parse_available("varcallers"),
-                     nargs="*",
                      type=str)
     opt.add_argument("--insert-size", dest='insert_size', action="store",
                      help="Size (bp) of insert in paired-read library.  " +
@@ -1041,7 +1043,7 @@ def get_finisher(args, config, paired):
 def get_varcaller(args, config, paired):
     if args.varcaller is None:
         return None
-    if args.varcaller not in [x['name'] for x in config.varcallers]:
+    if args.varcaller.lower() not in [x['name'].lower() for x in config.varcallers]:
         raise ValueError("%s not an available varcaller!" %args.varcaller)
     for conf_varcallers in config.varcallers:
         if conf_varcallers['name'] == args.varcaller:
@@ -1933,6 +1935,9 @@ def check_args(args, config):
     if "f" in args.stages.lower() and args.finisher is None:
         raise ValueError("finisher arg empty; either provide " +
                          "finisher or remove 'f' from --stages")
+    if "v" in args.stages.lower() and args.varcaller is None:
+        raise ValueError("varcaller arg empty; either provide " +
+                         "varcaller or remove 'v' from --stages")
 
 
 def make_empty_results_object():
@@ -1946,9 +1951,12 @@ def make_empty_results_object():
         assemblers_results_dict_list=[], # {name:None, contigs:None, scaffold:None}
         ID_OK=None, # to be set by check_id
         reference_percent_sim=None, # to be set by check_id
-        current_contigs=None, current_scaffolds=None,
+        current_agp=None,
+        current_contigs=None,
+        current_scaffolds=None,
         current_reference=None,
-        current_contigs_source=None, current_scaffolds_source=None,
+        current_contigs_source=None,
+        current_scaffolds_source=None,
         current_embl=None, # run_prokka fills this in
         current_embl_source=None, # run_prokka fills this in
         old_embl=[(None, "init")],  # [path, source]
@@ -2841,6 +2849,7 @@ def build_agp(args, results, reads_ns, evidence, logger):
         with open(agpfile_path, "w") as outf:
             for line in lines:
                 outf.write(line + "\n")
+    results.current_agp = agpfile_path
     return gaps
 
 
@@ -2923,7 +2932,7 @@ def update_results(results, thing, path, source ):
     setattr(results, "current_" + thing + "_source", source)
 
 
-def amosvalidate(args, seq_file, config, reads_ns):
+def amosvalidate(args, results, config, reads_ns, logger):
     """
     Uses abyss's abyss-samtoafg script to convert spades sam and contigs
     to an amos bank
@@ -2936,19 +2945,23 @@ def amosvalidate(args, seq_file, config, reads_ns):
     """
     amos_dir = os.path.join(args.tmp_dir, "amos", "")
     os.makedirs(amos_dir)
+    seq_file = results.current_contigs
+    if results.current_scaffolds is not None:
+        seq_file = results.current_scaffolds
+
     out_sequences = os.path.join(amos_dir, os.path.basename(seq_file))
     # copy sequences with a newline separating records
-    with open(seq_file, "r") as inf, open(out_sequences, "w") as outf:
+    with open(results.current_scaffolds, "r") as inf, open(out_sequences, "w") as outf:
         for rec in SeqIO.parse(inf, "fasta"):
             SeqIO.write(rec, outf, "fasta")
             outf.write("\n")
-    assert reads_ns.insert_size is not None and \
+    assert reads_ns.insert_mean is not None and \
         reads_ns.insert_stddev is not None, "how did we get here with paired reads but no insert size calcualted?"
     logger.info("Converting to amos bank...");
     sam2afg_cmd = "{exe}  -m {ins_size} -s {ins_stddev} {infile} {sam} > {outdir}amos.afg".format(
         exe=config.sam2afg,
-        ins_size=insert_size,
-        ins_stddev=insert_stddev,
+        ins_size=reads_ns.insert_mean,
+        ins_stddev=reads_ns.insert_stddev,
         infile=out_sequences,
         sam=os.path.join(args.tmp_dir, "bwa",
                          os.path.splitext(os.path.basename(seq_file))[0]),
@@ -3028,7 +3041,7 @@ def finish_up(results, t0, all_stages, logger=None, args=None):
     """ print some summarizing information when we're done
     """
     logger.info("\n\nFinished BugBuilding!")
-
+    return_results(args, results)
     stages_string = " - "
     for s in list(args.stages):
         stage_name = [x[1] for x in all_stages if x[0] == s][0]
@@ -3114,6 +3127,313 @@ def make_gene_report(results, logger):
                 "\n=========================\n" +
                 tabulate.tabulate(genes) + "\n")
     return 1
+
+def make_comparison_cmds(config, query, results, ref_id, comp_dir):
+    cmds = []
+    prefix = os.path.join(comp_dir, ref_id)
+    cmds.append(str(
+        "{config.blastn} -query {query} -subject {results.current_reference}" +
+        " -out {prefix}_comparison.blastout -outfmt 6 > " +
+        "{comp_dir}blast.log").format(**locals())
+    )
+    # also build a mummerplot in png format...
+    cmds.append(str(
+        "{config.nucmer} --prefix {prefix} {results.current_reference} " +
+        "{query} > {comp_dir}nucmer.log "+"2>&1").format(**locals()))
+    cmds.append(str(
+        "{config.mummerplot} -large --filter --layout -p {prefix} -t png " +
+        "-R {results.current_reference} -Q {query} {prefix}.delta  > " +
+        "{comp_dir}mummerplot.log 2>&1").format(**locals()))
+    cmds.append(str(
+        "{config.mummerplot} -large --filter --layout -c -p {prefix}cover -t png " +
+        "-R {results.current_reference} -Q {query} {prefix}.delta  > " +
+        "{comp_dir}mummerplot_pip.log 2>&1").format(**locals()))
+    return cmds
+
+
+def build_comparisons(args, config, results, logger):
+    """
+    generates a comparison appropriate for viewing with ACT and a
+    MUMmerplot to provide a quick overview
+
+    required params: $ (tmpdir)
+                     $ (reference)
+                     $ (organism)
+
+    returns        : $ (0)
+
+    """
+    logger.info("Building comparison plots with mummerplot")
+    comp_dir = os.path.join(args.tmp_dir, "comparisons", "")
+    os.makedirs(comp_dir)
+
+    query = results.current_scaffolds
+    comp_cmds = make_comparison_cmds(
+        config=config, query=query,
+        results=results,
+        ref_id=os.path.splitext(
+            os.path.basename(results.current_reference))[0],
+        comp_dir=comp_dir)
+    for cmd in comp_cmds:
+        logger.debug(cmd)
+        subprocess.run(cmd,
+                       shell=sys.platform != "win32",
+                       stdout=subprocess.PIPE,
+                       stderr=subprocess.PIPE,
+                       check=True)
+
+
+def return_results(args, results):
+    """
+    Copies results back from tmpdir, returning full working directory
+    if dircopy argument specified
+
+    required params: $ (tmpdir)
+        $ (strain)
+        $ (dircopy - flag to indicate entire directory
+        should be returned)
+        $ (mode - draft mode also needs amos bank copying)
+
+    returns        : $ (0)
+    """
+    # get the ones in the results object
+    targets = [
+        "current_scaffolds", "current_embl", "current_contigs",
+        "current_agp"]
+    target_paths = []
+    for t in targets:
+        if t is not None:
+            tfile = getattr(results, t)
+            target_paths.append(tfile)
+
+    for t in target_paths:
+            if os.path.exists(tfile):
+                shutil.copyfile(
+                    tfile,
+                    os.path.join(args.outdir, os.path.basename(tfile)))
+            else:
+                raise FileNotFoundError
+                #     my $tmpdir  = shift;
+#     my $dir     = shift;
+#     my $prefix  = shift;
+#     my $dircopy = shift;
+#     my $mode    = shift;
+
+#     if ($dircopy) {
+#         dircopy( $tmpdir, "$dir" )
+#           or die "Error copying $tmpdir: $!";
+#     }
+#     else {
+#         my @files = qw(annotated.embl contigs.fasta scaffolds.fasta scaffolds.embl scaffolds.agp
+#           unplaced_contigs.fasta BugBuilder.log read1_fastqc.html read2_fastqc.html
+#           scaffolds_cgview.png contigs_cgview.png circleator.png circleator.svg reference.variants.vcf
+#           );
+
+#         opendir TMP, "$tmpdir" or die "Error opening $tmpdir: $!";
+#         my @all_files = readdir TMP;
+#         close TMP;
+
+#         foreach my $pattern (qw(blastout png)) {
+#             my @found = grep /$pattern/, @all_files;
+#             push @files, @found;
+#         }
+
+#         mkdir "$dir"
+#           or die "Error creating $dir: $!";
+
+#         foreach my $file (@files) {
+#             my $outfile;
+#             if ($prefix) {
+#                 $outfile = "$dir/${prefix}_${file}";
+#             }
+#             else {
+#                 $outfile = "$dir/$file";
+#             }
+#             my $target;
+#             if ( -l "$tmpdir/$file" ) {
+#                 $target = readlink("$tmpdir/$file");
+#             }
+#             else {
+#                 $target = "$tmpdir/$file";
+#             }
+#             copy( "$target", "$outfile" )
+#               or die "Error copying $file: $!"
+#               if ( -e "$tmpdir/$file" );
+#         }
+#         if ( $mode eq 'draft' ) {
+#             my $outfile;
+#             if ($prefix) {
+#                 $outfile = "$dir/${prefix}_assembly.bnk";
+#             }
+#             else {
+#                 $outfile = "$dir/assembly.bnk";
+#             }
+#             dircopy( "$tmpdir/amos/assembly.bnk", "$outfile" )
+#               or die "Error copying $tmpdir/amos/assembly.bnk: $!";
+#         }
+
+#     }
+
+# }
+def run_cgview(results, args, config, logger):
+    """
+    run_cgview
+
+    Runs cgview to generate a genome map from the annotations
+
+    Required parameters: $ (tmpdir)
+
+    Returns: $ (0)
+    """
+    cgview_dir = os.path.join(args.tmp_dir, "cgview", "")
+    os.makedirs(cgview_dir)
+
+    logger.info("Creating genome visualisaton...");
+    embl = results.current_embl
+    if embl is None:
+        raise ValueError("No EMBL file currently defined")
+    outfile = os.path.join(cgview_dir, "cgview.png")
+    cmds = []
+    cmds.append(str(
+        "{config.perl} {config.cgview_xml_builder} -sequence {embl} " +
+        "-output {cgview_dir}scaffolds_cgview.xml -gc_skew T > " +
+        "{cgview_dir}xml_creator.log 2>&1").format(**locals()))
+    cmds.append(str(
+        "{config.cgview} -f png -i {cgview_dir}scaffolds_cgview.xml -o {outfile} > " +
+        "{cgview_dir}cgview.log 2>&1").format(**locals()))
+    for cmd in cmds:
+        logger.debug(cmd)
+        subprocess.run(cmd,
+                       shell=sys.platform != "win32",
+                       stdout=subprocess.PIPE,
+                       stderr=subprocess.PIPE,
+                       check=True)
+
+
+def run_varcaller(args, results, config, tools, logger):
+    """
+    Carries out variant calling using requested variant caller
+
+    required params: $ (tmpdir)
+                 $ (varcall)
+                 $ (no. threads)
+                 $ (read length)
+
+    """
+
+    # my $tmpdir      = shift;
+    # my $varcall     = shift;
+    # my $threads     = shift;
+    # my $read_length = shift;
+
+    logger.info("Running variant calling %s", tools.varcaller['name'])
+    varcall_dir = os.path.join(args.tmp_dir, "varcaller_" + tools.varcaller['name'], "")
+    os.makedirs(varcall_dir)
+    sub_mains[tools.finisher['name']](config=config, args=args, results=results,
+                               reads_ns=reads_ns,
+                               scaffolds=results.current_scaffolds,
+                               finisher_dir=finisher_dir,
+                               logger=logger)
+
+    # my ( $cmd, $caller_cmd, $create_dir );
+
+    # symlink( "$tmpdir/reference_parsed_ids.fasta", "$vardir/reference.fasta" )
+    #   or die "Error creating $vardir/reference.fasta symlink: $!";
+    # $cmd = $config->{'bwa_dir'} . symlink( "$tmpdir/read1.fastq", "$vardir/read1.fastq" )
+    #   or die "Error creating symlink: $! ";
+    # symlink( "$tmpdir/read2.fastq", "$vardir/read2.fastq" )
+    #   if ( -e "$tmpdir/read2.fastq" )
+    #   or die "Error creating symlink: $! ";
+
+    # print "BWA aligning reads to assembly...\n";
+    # my $samtools_dir = $config->{'samtools_dir'};
+    map_cmds = []
+    bwa_index = str("{config.bwa} index {results.current_reference} > " +
+                    "{varcall_dir}bwa_index.log 2>&1").format(**locals())
+    # mem_cmd = str("{{config.bwa}} mem -t {threads} {scaffolds} {args.fastq1} " +
+    #               "{args.fastq2} 2> {varcall_dir}bwa_mem.log | " +
+    #               "{samtools_exe} view -bS - > {varcall_dir}scaffolds.bam " +
+    #               "2>{varcall_dir}samtools_view.log").format(**locals())
+
+    # Use bwa-bwt for 'short' reads less than 100 bp, and bwa-mem for longer reads
+    if reads_ns.read_length_mean <= 100:
+        bwa_map1 = str(
+            "{config.bwa} aln -t {args.threads} " +
+            "{results.current_reference} {args.fastq1} > " +
+            "{varcall_dir}read1.sai 2> {varcall_dir}bwa_aln1.log").format(
+                **locals())
+        bwa_map2 =  str(
+            "{config.bwa} aln -t {args.threads} " +
+            "{results.current_reference} {args.fastq2} > " +
+            "{varcall_dir}read2.sai 2> {varcall_dir}bwa_aln2.log").format(
+                **locals())
+        bwa_aln_single = str(
+            "{config.bwa} sampe {results.current_reference} " +
+            "{varcall_dir}read1.sai {args.fastq1} " +
+            "2> {varcall_dir}/sampe.log > {varcall_dir}/scaffolds.sam").format(
+                **locals())
+        bwa_aln_paired = str(
+            "{config.bwa} sampe {results.current_reference} " +
+            "{varcall_dir}read1.sai {varcall_dir}read2.sai  " +
+            "{args.fastq1} " +
+            "2> {varcall_dir}/sampe.log > {varcall_dir}/scaffolds.sam").format(
+                **locals())
+        if reads_ns.paired:
+            bwa_cmds = [bwa_index, bwa_map1, bwa_map2, bwa_aln_paired]
+        else:
+            bwa_cmds = [bwa_index, bwa_map1, bwa_aln_single]
+    else:
+        bwa_mem_single = str(
+            "{config.bwa} mem -t {args.threads} {results.current_scaffolds} " +
+            "{args.fastq1} {args.fastq2} > {varcall_dir} reference.sam "+
+            "2> {varcall_dir}bwa_mem.log").format(**locals())
+        bwa_mem_paired = str(
+            "{config.bwa} mem -t {args.threads} {results.current_scaffolds} " +
+            "{args.fastq1} {args.fastq2} > {varcaller_dir} reference.sam "+
+            "2> {varcall_dir}bwa_mem.log").format(**locals())
+        if reads_ns.paired:
+            bwa_cmds = [bwa_index, bwa_mem_paired]
+        else:
+            bwa_cmds = [bwa_index, bwa_mem_single]
+
+    samtools_index_cmd = str(
+        "{config.samtools} view -q 10 -Sb " +
+        "{varcall_dir}reference.sam 2> " +
+        "{varcall_dir}samtoolsview.log >" +
+        "{varcall_dir}reference.bam").format(
+            **locals())
+    samtools_sort_cmd = str(
+        "{config.samtools} sort {varcall_dir}reference.bam -o " +
+        "{varcall_dir}reference.sorted.bam > " +
+        "{varcall_dir}samtools_sort.log 2>&1").format(**locals)
+    map_cmds = bwa_cmds
+    map_cmds.append(samtools_index_cmd)
+    map_cmds.append(samtools_sort_cmd)
+    for cmd in map_cmds:
+        logger.debug(cmd)
+        subprocess.run(cmd,
+                       shell=sys.platform != "win32",
+                       stdout=subprocess.PIPE,
+                       stderr=subprocess.PIPE,
+                       check=True)
+    sub_mains[tools.varcaller['name']](
+        config=config, args=args, results=results,
+        reads_ns=reads_ns,
+        scaffolds=results.current_scaffolds,
+        reference_bam=os.path.join(varcall_dir, "reference.bam"),
+        varcall_dir=varcall_dir,
+        logger=logger)
+
+
+#     symlink( "var_${varcall}/var.filtered.vcf", "reference.variants.vcf" )
+#       or die "Error creating $tmpdir/reference.variants.vcf: $!";
+#     my $varcount = `grep -vc ^# $tmpdir/reference.variants.vcf`;
+#     chomp $varcount;
+
+#     print "\nIdentified $varcount variants...\n";
+
+#     return (0);
+# }
 
 
 def main(args=None, logger=None):
@@ -3420,8 +3740,7 @@ def main(args=None, logger=None):
                 ref=results.current_reference,
                 dirname="align_pregenecall", reads_ns=reads_ns,
                 config=config, downsample=True, args=args, logger=logger)
-            # amosvalidate( args.tmp_dir, reads_ns )
-
+            # amosvalidate(args, results, config, reads_ns, logger)
             # # get_contig_to_iid_mapping($tmpdir);
             # amosvalidate_results = summarise_amosvalidate(args.tmp_dir)
         try:
@@ -3435,7 +3754,8 @@ def main(args=None, logger=None):
         make_embl_from_gbk(gbk=os.path.join(prokka_dir, "prokka.gbk"),
                            output_file=os.path.join(prokka_dir, "prokka.embl"))
         amosvalidate_results = None
-        # run_varcaller( tmpdir, varcall, threads, read_length_mean ) if (varcall)
+        if reads_ns.VARCALL:
+            run_varcaller(args, results, config, tools, logger)
         # merge_annotations(tmpdir, amosvalidate_results, gaps, genus, species, strain )
         #     #  This kept throwing an error about Bio::SeqIO
         run_cgview(results=results, args=args, config=config, logger=logger)
@@ -3458,90 +3778,6 @@ def main(args=None, logger=None):
 
 
 
-# #######################################################################
-# #
-# ######################################################################
-# ######################################################################
-# #
-# # return_results
-# #
-# # Copies results back from tmpdir, returning full working directory
-# # if dircopy argument specified
-# #
-# # required params: $ (tmpdir)
-# #                  $ (strain)
-# #                  $ (dircopy - flag to indicate entire directory
-# #                     should be returned)
-# #                  $ (mode - draft mode also needs amos bank copying)
-# #
-# # returns        : $ (0)
-# #
-# ######################################################################
-
-# sub return_results {
-
-#     my $tmpdir  = shift;
-#     my $dir     = shift;
-#     my $prefix  = shift;
-#     my $dircopy = shift;
-#     my $mode    = shift;
-
-#     if ($dircopy) {
-#         dircopy( $tmpdir, "$dir" )
-#           or die "Error copying $tmpdir: $!";
-#     }
-#     else {
-#         my @files = qw(annotated.embl contigs.fasta scaffolds.fasta scaffolds.embl scaffolds.agp
-#           unplaced_contigs.fasta BugBuilder.log read1_fastqc.html read2_fastqc.html
-#           scaffolds_cgview.png contigs_cgview.png circleator.png circleator.svg reference.variants.vcf
-#           );
-
-#         opendir TMP, "$tmpdir" or die "Error opening $tmpdir: $!";
-#         my @all_files = readdir TMP;
-#         close TMP;
-
-#         foreach my $pattern (qw(blastout png)) {
-#             my @found = grep /$pattern/, @all_files;
-#             push @files, @found;
-#         }
-
-#         mkdir "$dir"
-#           or die "Error creating $dir: $!";
-
-#         foreach my $file (@files) {
-#             my $outfile;
-#             if ($prefix) {
-#                 $outfile = "$dir/${prefix}_${file}";
-#             }
-#             else {
-#                 $outfile = "$dir/$file";
-#             }
-#             my $target;
-#             if ( -l "$tmpdir/$file" ) {
-#                 $target = readlink("$tmpdir/$file");
-#             }
-#             else {
-#                 $target = "$tmpdir/$file";
-#             }
-#             copy( "$target", "$outfile" )
-#               or die "Error copying $file: $!"
-#               if ( -e "$tmpdir/$file" );
-#         }
-#         if ( $mode eq 'draft' ) {
-#             my $outfile;
-#             if ($prefix) {
-#                 $outfile = "$dir/${prefix}_assembly.bnk";
-#             }
-#             else {
-#                 $outfile = "$dir/assembly.bnk";
-#             }
-#             dircopy( "$tmpdir/amos/assembly.bnk", "$outfile" )
-#               or die "Error copying $tmpdir/amos/assembly.bnk: $!";
-#         }
-
-#     }
-
-# }
 
 
 
@@ -3555,178 +3791,8 @@ def main(args=None, logger=None):
 
 
 
-# def run_varcaller():
-#     """"
-# Carries out variant calling using requested variant caller
-
-# required params: $ (tmpdir)
-#                  $ (varcall)
-#                  $ (no. threads)
-#                  $ (read length)
 
 
-# sub run_varcaller {
-
-#     my $tmpdir      = shift;
-#     my $varcall     = shift;
-#     my $threads     = shift;
-#     my $read_length = shift;
-
-#     message("Running variant calling ($varcall)...");
-
-#     my ( $cmd, $caller_cmd, $create_dir );
-#     my $varcallers = $config->{'varcallers'};
-#     foreach my $caller (@$varcallers) {
-#         my $name = $caller->{'name'};
-#         if ( $name eq $varcall ) {
-#             $caller_cmd = $caller->{'command'};
-#             $create_dir = $caller->{'create_dir'};
-#         }
-#     }
-#     my $vardir = "$tmpdir/var_${varcall}/";
-#     if ($create_dir) {
-#         mkdir "$tmpdir/var_${varcall}" or die "Error creating $tmpdir/var_${varcall}: $! ";
-#         chdir "$tmpdir/var_${varcall}" or die "Error chdiring to $tmpdir/var_${varcall}: $!";
-#     }
-
-#     symlink( "$tmpdir/reference_parsed_ids.fasta", "$vardir/reference.fasta" )
-#       or die "Error creating $vardir/reference.fasta symlink: $!";
-#     $cmd = $config->{'bwa_dir'} . symlink( "$tmpdir/read1.fastq", "$vardir/read1.fastq" )
-#       or die "Error creating symlink: $! ";
-#     symlink( "$tmpdir/read2.fastq", "$vardir/read2.fastq" )
-#       if ( -e "$tmpdir/read2.fastq" )
-#       or die "Error creating symlink: $! ";
-
-#     print "BWA aligning reads to assembly...\n";
-#     my $samtools_dir = $config->{'samtools_dir'};
-
-#     $cmd = $config->{'bwa_dir'} . "/bwa index $vardir/reference.fasta >$vardir/bwa_index.log 2>&1";
-#     system($cmd) == 0 or die " Error running $cmd";
-
-#     # Use bwa-bwt for 'short' reads less than 100 bp, and bwa-mem for longer reads
-#     if ( $read_length <= 100 ) {
-#         $cmd =
-#             $config->{'bwa_dir'}
-#           . "/bwa aln -t $threads $vardir/reference.fasta $vardir/read1.fastq > $vardir/read1.sai"
-#           . " 2> $vardir/bwa_sai1.log";
-#         system($cmd) == 0 or die "Error running $cmd";
-#         if ( -e "$vardir/read2.fastq" ) {
-#             $cmd =
-#                 $config->{'bwa_dir'}
-#               . "/bwa aln -t $threads $vardir/reference.fasta $vardir/read2.fastq > $vardir/read2.sai"
-#               . " 2> $vardir/bwa_sai2.log";
-#             system($cmd) == 0 or die "Error running $cmd";
-#             $cmd =
-#                 $config->{'bwa_dir'}
-#               . "/bwa sampe $vardir/reference.fasta $vardir/read1.sai $vardir/read2.sai "
-#               . "$vardir/read1.fastq $vardir/read2.fastq";
-#             $cmd .= " 2> $vardir/sampe.log > $vardir/scaffolds.sam";
-#             system($cmd) == 0 or die "Error running $cmd";
-#         }
-#         else {
-#             $cmd = $config->{'bwa_dir'} . "/bwa samse $vardir/reference.fasta $vardir/read1.sai $vardir/read1.fastq";
-#             $cmd .= "2> $vardir/samse.log > $vardir/scaffolds.sam";
-#             system($cmd) == 0 or die "Error running $cmd";
-#         }
-#     }
-#     else {
-#         if ( !-e "$vardir/read2.fastq" ) {
-
-#             # single-ended long reads
-#             $cmd =
-#                 $config->{'bwa_dir'}
-#               . "/bwa mem -t $threads -M $vardir/reference.fasta $vardir/read1.fastq > reference.sam "
-#               . "2>$vardir/bwa_mem.log";
-#             system($cmd) == 0 or die "Error running $cmd: $!";
-#         }
-#         else {
-
-#             # paired-end long reads
-#             $cmd =
-#                 $config->{'bwa_dir'}
-#               . "/bwa mem -t $threads -M $vardir/reference.fasta $vardir/read1.fastq $vardir/read2.fastq >reference.sam "
-#               . "2>$vardir/bwa_mem.log";
-#             system($cmd) == 0 or die "Error running $cmd: $!";
-#         }
-#     }
-
-#     $cmd = "$samtools_dir/samtools view -q 10 -Sb $vardir/reference.sam 2>$vardir/samtoolsview.log"
-#       . "|$samtools_dir/samtools sort - $vardir/reference";
-#     system($cmd) == 0 or die "Error running $cmd";
-
-#     $cmd = "$samtools_dir/samtools index $vardir/reference.bam 2>$vardir/samtools_index.log";
-#     system($cmd) == 0 or die "Error running $cmd";
-
-#     $caller_cmd =~ s/__BUGBUILDER_BIN__/$FindBin::Bin/;
-#     $caller_cmd =~ s/__TMPDIR__/$tmpdir/;
-#     $caller_cmd =~ s/__THREADS__/$threads/;
-
-#     system($caller_cmd) == 0 or die "Error running $cmd: $!";
-#     chdir $tmpdir            or die " Error chdiring to $tmpdir: $! ";
-
-#     symlink( "var_${varcall}/var.filtered.vcf", "reference.variants.vcf" )
-#       or die "Error creating $tmpdir/reference.variants.vcf: $!";
-#     my $varcount = `grep -vc ^# $tmpdir/reference.variants.vcf`;
-#     chomp $varcount;
-
-#     print "\nIdentified $varcount variants...\n";
-
-#     return (0);
-# }
-
-def make_comparison_cmds(config, query, results, ref_id, comp_dir):
-    cmds = []
-    prefix = os.path.join(comp_dir, ref_id)
-    cmds.append(str(
-        "{config.blastn} -query {query} -subject {results.current_reference}" +
-        " -out {prefix}_comparison.blastout -outfmt 6 > " +
-        "{comp_dir}blast.log").format(**locals())
-    )
-    # also build a mummerplot in png format...
-    cmds.append(str(
-        "{config.nucmer} --prefix {prefix} {results.current_reference} " +
-        "{query} > {comp_dir}nucmer.log "+"2>&1").format(**locals()))
-    cmds.append(str(
-        "{config.mummerplot} -large --filter --layout -p {prefix} -t png " +
-        "-R {results.current_reference} -Q {query} {prefix}.delta  > " +
-        "{comp_dir}mummerplot.log 2>&1").format(**locals()))
-    cmds.append(str(
-        "{config.mummerplot} -large --filter --layout -c -p {prefix}cover -t png " +
-        "-R {results.current_reference} -Q {query} {prefix}.delta  > " +
-        "{comp_dir}mummerplot_pip.log 2>&1").format(**locals()))
-    return cmds
-
-
-def build_comparisons(args, config, results, logger):
-    """
-    generates a comparison appropriate for viewing with ACT and a
-    MUMmerplot to provide a quick overview
-
-    required params: $ (tmpdir)
-                     $ (reference)
-                     $ (organism)
-
-    returns        : $ (0)
-
-    """
-    logger.info("Building comparison plots with mummerplot")
-    comp_dir = os.path.join(args.tmp_dir, "comparisons", "")
-    os.makedirs(comp_dir)
-
-    query = results.current_scaffolds
-    comp_cmds = make_comparison_cmds(
-        config=config, query=query,
-        results=results,
-        ref_id=os.path.splitext(
-            os.path.basename(results.current_reference))[0],
-        comp_dir=comp_dir)
-    for cmd in comp_cmds:
-        logger.debug(cmd)
-        subprocess.run(cmd,
-                       shell=sys.platform != "win32",
-                       stdout=subprocess.PIPE,
-                       stderr=subprocess.PIPE,
-                       check=True)
 
 
 def merge_annotations():
@@ -3870,37 +3936,3 @@ def merge_annotations():
 
 }
 """
-
-def run_cgview(results, args, config, logger):
-    """
-    run_cgview
-
-    Runs cgview to generate a genome map from the annotations
-
-    Required parameters: $ (tmpdir)
-
-    Returns: $ (0)
-    """
-    cgview_dir = os.path.join(args.tmp_dir, "cgview", "")
-    os.makedirs(cgview_dir)
-
-    logger.info("Creating genome visualisaton...");
-    embl = results.current_embl
-    if embl is None:
-        raise ValueError("No EMBL file currently defined")
-    outfile = os.path.join(cgview_dir, "cgview.png")
-    cmds = []
-    cmds.append(str(
-        "{config.perl} {config.cgview_xml_builder} -sequence {embl} " +
-        "-output {cgview_dir}scaffolds_cgview.xml -gc_skew T > " +
-        "{cgview_dir}xml_creator.log 2>&1").format(**locals()))
-    cmds.append(str(
-        "{config.cgview} -f png -i {cgview_dir}scaffolds_cgview.xml -o {outfile} > " +
-        "{cgview_dir}cgview.log 2>&1").format(**locals()))
-    for cmd in cmds:
-        logger.debug(cmd)
-        subprocess.run(cmd,
-                       shell=sys.platform != "win32",
-                       stdout=subprocess.PIPE,
-                       stderr=subprocess.PIPE,
-                       check=True)
