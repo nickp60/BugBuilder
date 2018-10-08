@@ -169,7 +169,6 @@ def check_version_from_cmd(
     return(this_version)
 
 
-
 def configure(config_path, hardfail=True):
     with open(config_path, 'w') as outfile:  # write header and config params
         for line in __config_data__:
@@ -244,6 +243,7 @@ class SmartFormatter(argparse.HelpFormatter):
             return text[2:].splitlines()
         # this is the RawTextHelpFormatter._split_lines
         return argparse.HelpFormatter._split_lines(self, text, width)
+
 
 def get_args():  # pragma: no cover
     """
@@ -470,7 +470,7 @@ def get_args():  # pragma: no cover
     opt.add_argument("-v", "--verbosity", dest='verbosity',
                      action="store",
                      default=2, type=int, choices=[1, 2, 3, 4, 5],
-                     help="R|Logger writes debug to file in output dir;\n" +
+                     help="writes debug to file in output dir;\n" +
                      "this sets verbosity level sent to stderr. \n" +
                      "  1 = debug()\n  2 = info()\n  3 = warning()\n" +
                      "  4 = error() \n  5 = critical(); " +
@@ -483,6 +483,7 @@ def get_args():  # pragma: no cover
     # args = parser.parse_args(sys.argv[2:])
     args = parser.parse_args()
     return args
+
 
 def set_up_logging(verbosity, outfile, name): # pragma: no cover
     """
@@ -3277,6 +3278,8 @@ def return_results(args, results):
 #     }
 
 # }
+
+
 def run_cgview(results, args, config, logger):
     """
     run_cgview
@@ -3331,31 +3334,10 @@ def run_varcaller(args, results, reads_ns, config, tools, logger):
     logger.info("Running variant calling %s", tools.varcaller['name'])
     varcall_dir = os.path.join(args.tmp_dir, "varcaller_" + tools.varcaller['name'], "")
     os.makedirs(varcall_dir)
-    # sub_mains[tools.finisher['name']](config=config, args=args, results=results,
-    #                            reads_ns=reads_ns,
-    #                            scaffolds=results.current_scaffolds,
-    #                            finisher_dir=finisher_dir,
-    #                            logger=logger)
 
-    # my ( $cmd, $caller_cmd, $create_dir );
-
-    # symlink( "$tmpdir/reference_parsed_ids.fasta", "$vardir/reference.fasta" )
-    #   or die "Error creating $vardir/reference.fasta symlink: $!";
-    # $cmd = $config->{'bwa_dir'} . symlink( "$tmpdir/read1.fastq", "$vardir/read1.fastq" )
-    #   or die "Error creating symlink: $! ";
-    # symlink( "$tmpdir/read2.fastq", "$vardir/read2.fastq" )
-    #   if ( -e "$tmpdir/read2.fastq" )
-    #   or die "Error creating symlink: $! ";
-
-    # print "BWA aligning reads to assembly...\n";
-    # my $samtools_dir = $config->{'samtools_dir'};
     map_cmds = []
     bwa_index = str("{config.bwa} index {results.current_reference} > " +
                     "{varcall_dir}bwa_index.log 2>&1").format(**locals())
-    # mem_cmd = str("{{config.bwa}} mem -t {threads} {scaffolds} {args.fastq1} " +
-    #               "{args.fastq2} 2> {varcall_dir}bwa_mem.log | " +
-    #               "{samtools_exe} view -bS - > {varcall_dir}scaffolds.bam " +
-    #               "2>{varcall_dir}samtools_view.log").format(**locals())
 
     # Use bwa-bwt for 'short' reads less than 100 bp, and bwa-mem for longer reads
     if reads_ns.read_length_mean <= 100:
@@ -3423,7 +3405,7 @@ def run_varcaller(args, results, reads_ns, config, tools, logger):
                        stdout=subprocess.PIPE,
                        stderr=subprocess.PIPE,
                        check=True)
-    results.current_vcf = sub_mains[tools.varcaller['name'] + "_var"](
+    sub_mains[tools.varcaller['name'] + "_var"](
         config=config, args=args, results=results,
         reads_ns=reads_ns,
         reference=results.current_reference,
@@ -3431,16 +3413,15 @@ def run_varcaller(args, results, reads_ns, config, tools, logger):
         varcall_dir=varcall_dir,
         logger=logger)
 
+    results.current_vcf = os.path.join(varcall_dir, "var.filtered.vcf")
+    varcount = 0
+    with open(results.current_vcf, "r") as vcf:
+        for line in vcf:
+            if line.startswith("#"):
+                varcount = varcount + 1
 
-#     symlink( "var_${varcall}/var.filtered.vcf", "reference.variants.vcf" )
-#       or die "Error creating $tmpdir/reference.variants.vcf: $!";
-#     my $varcount = `grep -vc ^# $tmpdir/reference.variants.vcf`;
-#     chomp $varcount;
-
-#     print "\nIdentified $varcount variants...\n";
-
-#     return (0);
-# }
+    logger.info("Identified {varcount} variants...".format(**locals()))
+    return 0
 
 
 def main(args=None, logger=None):
