@@ -40,7 +40,7 @@ class test_BugBuilder(unittest.TestCase):
                                           "semicomplete_config.yaml")
         # static config should not be changed, it is just used to test parsing
         self.static_config = os.path.join(self.ref_dir, "static_config.yaml")
-        self.ref_fasta = os.path.join(self.ref_dir, "AP017923.1.fasta")
+        self.ref_fasta = os.path.join(self.ref_dir, "2chrom.fasta")
         self.coords = os.path.join(self.ref_dir, "origin", "ori.coords")
         self.picard_stats = os.path.join(self.ref_dir, "picard_insert.txt")
         self.ref_split = os.path.join(self.ref_dir, "2chrom.fasta")
