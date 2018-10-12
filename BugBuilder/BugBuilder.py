@@ -886,7 +886,9 @@ def assess_reads(args, config, platform, logger=None):
     coverage, long_coverage = None, None
     try:
         # (total length of libraries/genome_size) / number of libraries
-        coverage = round(float((tot_length / args.genome_size) / short_libs), 3)
+        # coverage = round(float((tot_length / args.genome_size) / short_libs), 3)
+        # think this doesnt matter how many libries are involved
+        coverage = round(float(tot_length / args.genome_size), 3)
         long_coverage = round(float(long_tot_length / args.genome_size), 3)
     except:
         logger.error("Cannot calculate coverage without a reference!")

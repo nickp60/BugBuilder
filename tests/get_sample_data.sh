@@ -18,7 +18,15 @@ else
     conda install art
 fi
 
+# unpack the configs and other static test files
+tar xzf ./tests/configs.tar.gz
+tar xzf ./tests/static_test_files.tar.gz
+
 mkdir $refdir
+
+mv ./configs/ $refdir/
+mv ./static_test_files/ $refdir/
+
 cd $refdir
 wget ftp://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/009/985/GCF_000009985.1_ASM998v1/GCF_000009985.1_ASM998v1_genomic.fna.gz
 gunzip GCF_000009985.1_ASM998v1_genomic.fna.gz
@@ -41,6 +49,8 @@ bwa mem -M  2chrom.fasta 2chrom1.fq 2chrom2.fq | samtools sort - > mapped.sam
 
 samtools view -q 10 -b mapped.sam | samtools sort - > mapped.bam
 
+# k is small so we have lots of contigs
+spades.py -o ./assembly/ -1 2chrom1.fq -2 2chrom2.fq --careful -k 17
 
 # get_genomes.py -q AP007255.1 -o ./tests/references/
 

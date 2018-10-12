@@ -1,0 +1,13 @@
+1: PREPARING DATA
+2,3: RUNNING mummer AND CREATING CLUSTERS
+# reading input file "/Users/nicholas/GitHub/BugBuilder/out/temp_dir/origin/ori.ntref" of length 37967
+# construct suffix tree for sequence of length 37967
+# (maximum reference length is 536870908)
+# (maximum query length is 4294967295)
+# CONSTRUCTIONTIME /Users/nicholas/miniconda3/envs/bug/opt/mummer-3.23/mummer /Users/nicholas/GitHub/BugBuilder/out/temp_dir/origin/ori.ntref 0.01
+# reading input file "/Users/nicholas/GitHub/BugBuilder/out2/temp_dir/spades/scaffolds.fasta" of length 37931
+# matching query-file "/Users/nicholas/GitHub/BugBuilder/out2/temp_dir/spades/scaffolds.fasta"
+# against subject-file "/Users/nicholas/GitHub/BugBuilder/out/temp_dir/origin/ori.ntref"
+# COMPLETETIME /Users/nicholas/miniconda3/envs/bug/opt/mummer-3.23/mummer /Users/nicholas/GitHub/BugBuilder/out/temp_dir/origin/ori.ntref 0.02
+# SPACE /Users/nicholas/miniconda3/envs/bug/opt/mummer-3.23/mummer /Users/nicholas/GitHub/BugBuilder/out/temp_dir/origin/ori.ntref 0.07
+4: FINISHING DATA

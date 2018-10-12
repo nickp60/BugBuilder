@@ -23,7 +23,7 @@ logger = logging
                  "Subprocess.call among other things wont run if tried " +
                  " with less than python 3.5")
 class test_BugBuilder(unittest.TestCase):
-    """ tests for riboSeed.py
+    """ tests for BugBuilder
     """
     def setUp(self):
         self.ref_dir = os.path.join(os.path.dirname(__file__), "references")
@@ -31,24 +31,28 @@ class test_BugBuilder(unittest.TestCase):
         self.test_dir = os.path.join(os.path.dirname(__file__), "tmp_tests")
         self.aa_dir = os.path.join(os.path.dirname(__file__),
                                    "already_assembled_dir")
-        self.empty_config = os.path.join(self.ref_dir, "empty_config.yaml")
-        self.broken_config = os.path.join(self.ref_dir, "broken_config.yaml")
+        self.empty_config = os.path.join(self.ref_dir,
+                                         "configs",  "empty_config.yaml")
+        self.broken_config = os.path.join(self.ref_dir,
+                                          "configs",  "broken_config.yaml")
         # the active config actually gets used to run sys commands so feel free
-        # to run `mv tests/tmp_tests/to_be_filled.yaml ./tests/references/semicomplete_config.yaml`
+        # to run `mv tests/tmp_tests/to_b  e_filled.yaml ./tests/references/semicomplete_config.yaml`
         # if you have a error from a wrong executable
         self.active_config = os.path.join(self.ref_dir,
+                                           "configs",
                                           "semicomplete_config.yaml")
         # static config should not be changed, it is just used to test parsing
-        self.static_config = os.path.join(self.ref_dir, "static_config.yaml")
-        self.ref_fasta = os.path.join(self.ref_dir, "2chrom.fasta")
-        self.coords = os.path.join(self.ref_dir, "origin", "ori.coords")
-        self.picard_stats = os.path.join(self.ref_dir, "picard_insert.txt")
+        self.static_config = os.path.join(self.ref_dir,  "configs", "static_config.yaml")
+        self.ref_fasta = os.path.join(self.ref_dir, "AP017923.1.fasta")
+        self.coords = os.path.join(self.ref_dir,  "origin", "ori.coords")
+        self.picard_stats_old = os.path.join(self.ref_dir,  "picard_insert_old.txt")
+        self.picard_stats = os.path.join(self.ref_dir,  "insert_stats_new.txt")
         self.ref_split = os.path.join(self.ref_dir, "2chrom.fasta")
-        self.ref_split_1 = os.path.join(self.ref_dir, "2chrom1.fq")
-        self.ref_split_2 = os.path.join(self.ref_dir, "2chrom2.fq")
+        self.fastq1 = os.path.join(self.ref_dir, "2chrom1.fq")
+        self.fastq2 = os.path.join(self.ref_dir, "2chrom2.fq")
         self.sickle_log = os.path.join(self.ref_dir, "sickle.log")
         self.sickle_bad_log = os.path.join(self.ref_dir, "sickle_bad.log")
-        self.contigs = os.path.join(self.ref_dir, "contigs.fasta")
+        self.contigs = os.path.join(self.ref_dir, "assembly", "contigs.fasta")
         self.scaffold = os.path.join(self.ref_dir, "scaffs.fasta")
         self.contigs_split_ori = os.path.join(self.ref_dir,
                                               "contigs_split_ori.fasta")
@@ -57,10 +61,10 @@ class test_BugBuilder(unittest.TestCase):
                                             "contigs_to_scaffold.fasta")
         self.distant_contigs = os.path.join(self.ref_dir,
                                             "distant_contigs.fasta")
-        self.renaming_fq = os.path.join(self.ref_dir, "needs_renaming.fq")
+        self.renaming_fq = os.path.join(self.ref_dir,
         self.renamed = os.path.join(self.ref_dir, "renamed_ref.fq")
-        self.fastq1 = os.path.join(self.ref_dir, "AP017923.1_reads1.fq")
-        self.fastq2 = os.path.join(self.ref_dir, "AP017923.1_reads2.fq")
+        # self.fastq1 = os.path.join(self.ref_dir, "AP017923.1_reads1.fq")
+        # self.fastq2 = os.path.join(self.ref_dir, "AP017923.1_reads2.fq")
         self.args = Namespace()
         os.makedirs(self.test_dir, exist_ok=True)
         self.startTime = time.time() # for timing
@@ -228,7 +232,7 @@ class test_BugBuilder(unittest.TestCase):
         config = bb.parse_config(self.active_config)
         reads_ns = bb.assess_reads(args=test_args, config=config,
                                 platform="illumina", logger=logger)
-        self.assertEqual(4.998, reads_ns.coverage)
+        self.assertAlmostEqual(10.000, reads_ns.coverage, 1)
         self.assertEqual("sanger", reads_ns.encoding)
         self.assertEqual("long_illumina", reads_ns.lib_type)
 
@@ -415,6 +419,8 @@ class test_BugBuilder(unittest.TestCase):
             "current_scaffolds",
             "current_scaffolds_source",
             "current_reference",
+            "current_agp",
+            "current_vcf",
             "current_embl",
             "current_embl_source",
             "ID_OK",
@@ -719,16 +725,21 @@ class test_BugBuilder(unittest.TestCase):
         integration_config = bb.return_config(
             os.path.join(self.test_dir, "integration_config.yaml"), force=True,
             hardfail=False, logger=None)
-        self.assertEqual(
-            ('199.816601', '9.857524'),
-            bb.get_insert_stats(bam=self.mapped_bam, config=integration_config,
-                                args=test_args, logger=logger)
+        self.assertAlmostEqual(
+            ('199.816601 ', '9.857524', 1),
+            bb.get_insert_stats(
+                bam=self.mapped_bam, config=integration_config,
+                args=test_args, logger=logger)
         )
         self.to_be_removed.append(
             os.path.join(self.test_dir, "insert_stats", ""))
 
-    def test_parse_picard_insert_stats(self):
+    def test_parse_picard_insert_stats_old(self):
         self.assertEqual(('207.5',  '3.535534'),
+                         bb.parse_picard_insert_stats(self.picard_stats_old))
+
+    def test_parse_picard_insert_stats(self):
+        self.assertEqual(('204', '11.313708'),
                          bb.parse_picard_insert_stats(self.picard_stats))
 
     def replace_placeholders(string, config=None, reads_ns=None,
@@ -767,7 +778,7 @@ class test_BugBuilder(unittest.TestCase):
     def test_get_contig_info(self):
         info_dict = bb.get_contig_info(self.contigs, x=200)
         for metric in [["count", 4],
-                       ["all_lengths", [5704, 7626, 10885, 13713]]]:
+                       ["all_lengths", [86, 3262, 16628, 19927]]]:
             self.assertEqual(info_dict[metric[0]], metric[1])
 
     def test_get_contig_stats(self):
@@ -867,11 +878,13 @@ class test_BugBuilder(unittest.TestCase):
         results = Namespace(current_scaffolds=self.contigs,
                             current_reference=self.ref_split)
         config = bb.parse_config(self.active_config)
-        ref_dict = {'AP017923.1': 'NODE_4_length_5704_cov_4.88129:1',
-                    'AP017923.2': 'NODE_2_length_10885_cov_4.76832:869'}
-        bb.find_and_split_origin(args=test_args, config=config, results=results,
-                                       tools=None, reads_ns=None,
-                                       logger=logger)
+        ref_dict = {
+            'AP017923.1': 'NODE_4_length_5704_cov_4.88129:1',
+            'AP017923.2': 'NODE_2_length_10885_cov_4.76832:869'}
+        bb.find_and_split_origin(
+            args=test_args, config=config, results=results,
+            tools=None, reads_ns=None,
+            logger=logger)
         ###################
         #  write a propper test here
         ###################
@@ -946,15 +959,18 @@ class test_BugBuilder(unittest.TestCase):
             os.path.join(self.test_dir, "integration_config.yaml"), force=True,
             hardfail=False, logger=None)
         tools = Namespace(
-            scaffolder=[x for x in config.scaffolders if x['name'].lower() == "sis"][0])
+            scaffolder=[x for x in config.scaffolders if
+                        x['name'].lower() == "sis"][0])
         results = bb.make_empty_results_object()
         results.current_reference = self.ref_split
-        results.current_contigs = self.contigs_to_scaf
+        results.current_contigs = self.contigs
+        # results.current_contigs = self.contigs_to_scaf
         results.current_scaffolds = "scaffs"
         reads_ns = bb.assess_reads(args=test_args, config=config,
                                    platform="illumina", logger=logger)
         bb.run_ref_scaffolder(
-            args=test_args, config=config, tools=tools, results=results, reads_ns=reads_ns,
+            args=test_args, config=config,
+            tools=tools, results=results, reads_ns=reads_ns,
             run_id=1, logger=logger)
         self.to_be_removed.append(os.path.join(self.test_dir, "SIS_1"))
 

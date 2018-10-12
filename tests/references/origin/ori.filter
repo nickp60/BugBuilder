@@ -1,0 +1,17 @@
+/Users/nicholas/GitHub/BugBuilder/out/temp_dir/2chrom.fasta /Users/nicholas/GitHub/BugBuilder/out2/temp_dir/spades/scaffolds.fasta
+NUCMER
+>AP017923.1 NODE_1_length_13713_cov_4.533734 27930 13713
+5694 19406 1 13713 4 4 0
+0
+>AP017923.1 NODE_2_length_10885_cov_4.771743 27930 10885
+27063 27930 1 868 0 0 0
+0
+>AP017923.2 NODE_2_length_10885_cov_4.771743 10035 10885
+1 10017 869 10885 1 1 0
+0
+>AP017923.1 NODE_3_length_7626_cov_3.927010 27930 7626
+19382 27007 7626 1 2 2 0
+0
+>AP017923.1 NODE_4_length_5704_cov_4.881287 27930 5704
+3 5706 5704 1 1 1 0
+0

@@ -1,0 +1,6 @@
+- "left reads":
+  - "/Users/nicholas/GitHub/BugBuilder/tests/references/2chrom1.fq"
+  "orientation": "fr"
+  "right reads":
+  - "/Users/nicholas/GitHub/BugBuilder/tests/references/2chrom2.fq"
+  "type": "paired-end"

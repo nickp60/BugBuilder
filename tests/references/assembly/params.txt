@@ -1,0 +1,35 @@
+Command line: /Users/nicholas/miniconda3/envs/bug/bin/spades.py	-o	/Users/nicholas/GitHub/BugBuilder/tests/references/assembly	-1	/Users/nicholas/GitHub/BugBuilder/tests/references/2chrom1.fq	-2	/Users/nicholas/GitHub/BugBuilder/tests/references/2chrom2.fq	--careful	-k	17	
+
+System information:
+  SPAdes version: 3.11.1
+  Python version: 3.6.3
+  OS: Darwin-16.5.0-x86_64-i386-64bit
+
+Output dir: /Users/nicholas/GitHub/BugBuilder/tests/references/assembly
+Mode: read error correction and assembling
+Debug mode is turned OFF
+
+Dataset parameters:
+  Multi-cell mode (you should set '--sc' flag if input data was obtained with MDA (single-cell) technology or --meta flag if processing metagenomic dataset)
+  Reads:
+    Library number: 1, library type: paired-end
+      orientation: fr
+      left reads: ['/Users/nicholas/GitHub/BugBuilder/tests/references/2chrom1.fq']
+      right reads: ['/Users/nicholas/GitHub/BugBuilder/tests/references/2chrom2.fq']
+      interlaced reads: not specified
+      single reads: not specified
+Read error correction parameters:
+  Iterations: 1
+  PHRED offset will be auto-detected
+  Corrected reads will be compressed (with gzip)
+Assembly parameters:
+  k: [17]
+  Repeat resolution is enabled
+  Mismatch careful mode is turned ON
+  MismatchCorrector will be used
+  Coverage cutoff is turned OFF
+Other parameters:
+  Dir for temp files: /Users/nicholas/GitHub/BugBuilder/tests/references/assembly/tmp
+  Threads: 16
+  Memory limit (in Gb): 250
+
