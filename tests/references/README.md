@@ -16,6 +16,7 @@ art_illumina -ss HS25 -sam -i 2chrom.fasta -p -l 100 -f 10 -m 200 -s 10 -o 2chro
 
 # art_illumina -ss HS25 -i AP017923.1.fasta -p -l 150 -f 10 -m 200 -s 10 -o AP017923.1_reads
 ```
+
 We delete the .aln files.
 ## generating mapping files
 ```
@@ -38,6 +39,7 @@ We then deleted some of the intermediate files from the assembly to keep the rep
 ./tests/references/
 ├── 2chrom.fasta
 ├── 2chrom.sam
+├── AP017923.1.fasta
 ├── 2chrom1.fq
 ├── 2chrom2.fq
 ├── README.md

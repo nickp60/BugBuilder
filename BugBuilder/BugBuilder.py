@@ -44,6 +44,7 @@ from .shared_methods import make_nucmer_delta_show_cmds, run_nucmer_cmds
 from .raw_config import __config_data__
 # Assemblers
 from .run_spades import run as run_spades
+from .run_skesa import run as run_skesa
 from .run_abyss import run as run_abyss
 # Scaffolders
 from .run_sis import run as run_sis

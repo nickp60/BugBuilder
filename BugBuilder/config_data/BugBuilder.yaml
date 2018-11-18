@@ -28,6 +28,7 @@ assembler_categories:
       - 'illumina'
     assemblers:
       - spades
+      - skesa
       - abyss
     scaffolders:
       - mauve
@@ -42,6 +43,7 @@ assembler_categories:
       - 'illumina'
     assemblers:
       - spades
+      - skesa
       - celera
     scaffolders:
       - mauve
@@ -106,6 +108,17 @@ assemblers:
      contig_output: __TMPDIR__/abyss/abyss-contigs.fa
      scaffold_output: __TMPDIR__/abyss/abyss-scaffolds.fa
      default_args: k=55
+     insert_size_required: 0
+     downsample_reads: 1
+   - name: skesa
+     create_dir: 1
+     min_length: null
+     max_length: null
+     command_pe: skesa --fastq __FASTQ1__  __FASTQ2__ --use_paired_ends --contigs_out __TMPDIR__/contigs.fasta
+     command_se: skesa --fastq __FASTQ1__  __FASTQ2__ --force_single_ends --contigs_out  __TMPDIR__/contigs.fasta
+     contig_output: __TMPDIR__/contigs.fasta
+     scaffold_output: null
+     default_args: --cores __THREADS__ --memory __MEMORY__
      insert_size_required: 0
      downsample_reads: 1
    - name: spades
@@ -249,356 +262,309 @@ varcallers:
      create_dir: 1
      priority: 1
 
-abyss: /Users/nicholas/miniconda3/envs/bug2/bin/abyss-pe
-abyss_sealer: /Users/nicholas/miniconda3/envs/bug2/bin/abyss-sealer
+abyss: /Users/nicholas/miniconda3/envs/bug/bin/abyss-pe
+abyss_sealer: /Users/nicholas/miniconda3/envs/bug/bin/abyss-sealer
 amos: null
-aragorn: /Users/nicholas/miniconda3/envs/bug2/bin/aragorn
+aragorn: /Users/nicholas/miniconda3/envs/bug/bin/aragorn
 asn2gb: null
 bank_transact: null
-barrnap: /Users/nicholas/miniconda3/envs/bug2/bin/barrnap
-blastn: /Users/nicholas/miniconda3/envs/bug2/bin/blastn
-bwa: /Users/nicholas/miniconda3/envs/bug2/bin/bwa
+barrnap: /Users/nicholas/miniconda3/envs/bug/bin/barrnap
+blastn: /Users/nicholas/miniconda3/envs/bug/bin/blastn
+bwa: /Users/nicholas/miniconda3/envs/bug/bin/bwa
 celera: null
-cgview: /Users/nicholas/miniconda3/envs/bug2/bin/cgview
-cgview_xml_builder: /Users/nicholas/miniconda3/envs/bug2/bin/cgview_xml_builder.pl
-delta_filter: /Users/nicholas/miniconda3/envs/bug2/bin/delta-filter
-fastqc: /Users/nicholas/miniconda3/envs/bug2/bin/fastqc
-fgap: null
+cgview: /Users/nicholas/miniconda3/envs/bug/bin/cgview
+cgview_xml_builder: /Users/nicholas/miniconda3/envs/bug/bin/cgview_xml_builder.pl
+delta_filter: /Users/nicholas/miniconda3/envs/bug/bin/delta-filter
+fastqc: /Users/nicholas/miniconda3/envs/bug/bin/fastqc
+fgap: /Users/nicholas/miniconda3/envs/bug/bin/FGAP
 gapfiller: null
-gfinisher: null
+gfinisher: /Users/nicholas/miniconda3/envs/bug/bin/gfinisher
 hmmer3: null
 infernal: null
-makeblastdb: /Users/nicholas/miniconda3/envs/bug2/bin/makeblastdb
+makeblastdb: /Users/nicholas/miniconda3/envs/bug/bin/makeblastdb
 masurca: null
 mauve: null
 minimus: null
-multifasta: /Users/nicholas/miniconda3/envs/bug2/bin/multifasta.py
-mummer: /Users/nicholas/miniconda3/envs/bug2/bin/mummer
-mummerplot: /Users/nicholas/miniconda3/envs/bug2/bin/mummerplot
-nucmer: /Users/nicholas/miniconda3/envs/bug2/bin/nucmer
-perl: /Users/nicholas/miniconda3/envs/bug2/bin/perl
-picard: /Users/nicholas/miniconda3/envs/bug2/bin/picard
-pilon: /Users/nicholas/miniconda3/envs/bug2/bin/pilon
-prodigal: /Users/nicholas/miniconda3/envs/bug2/bin/prodigal
-prokka: /Users/nicholas/miniconda3/envs/bug2/bin/prokka
+multifasta: /Users/nicholas/miniconda3/envs/bug/bin/multifasta.py
+mummer: /Users/nicholas/miniconda3/envs/bug/bin/mummer
+mummerplot: /Users/nicholas/miniconda3/envs/bug/bin/mummerplot
+nucmer: /Users/nicholas/miniconda3/envs/bug/bin/nucmer
+perl: /Users/nicholas/miniconda3/envs/bug/bin/perl
+picard: /Users/nicholas/miniconda3/envs/bug/bin/picard
+pilon: /Users/nicholas/miniconda3/envs/bug/bin/pilon
+prodigal: /Users/nicholas/miniconda3/envs/bug/bin/prodigal
+prokka: /Users/nicholas/miniconda3/envs/bug/bin/prokka
 python2: /Users/nicholas/miniconda3/envs/ragout/bin/python2
 r: /usr/local/bin/R
 ragout: /Users/nicholas/miniconda3/envs/ragout/bin/ragout.py
-riboseed: /Users/nicholas/miniconda3/envs/bug2/bin/ribo
+riboseed: null
 rnammer: null
 sam2afg: null
-samtools: /Users/nicholas/miniconda3/envs/bug2/bin/samtools
-seqtk: /Users/nicholas/miniconda3/envs/bug2/bin/seqtk
-show_coords: /Users/nicholas/miniconda3/envs/bug2/bin/show-coords
-sickle_trim: /Users/nicholas/miniconda3/envs/bug2/bin/sickle
-sis: /Users/nicholas/miniconda3/envs/bug2/bin/sis.py
-spades: /Users/nicholas/miniconda3/envs/bug2/bin/spades.py
+samtools: /Users/nicholas/miniconda3/envs/bug/bin/samtools
+seqtk: /Users/nicholas/miniconda3/envs/bug/bin/seqtk
+show_coords: /Users/nicholas/miniconda3/envs/bug/bin/show-coords
+sickle_trim: /Users/nicholas/miniconda3/envs/bug/bin/sickle
+sis: /Users/nicholas/miniconda3/envs/bug/bin/sis.py
+skesa: /Users/nicholas/miniconda3/envs/bug/bin/skesa
+spades: /Users/nicholas/miniconda3/envs/bug/bin/spades.py
 sspace: null
-tbl2asn: /Users/nicholas/miniconda3/envs/bug2/bin/tbl2asn
-vcffilter: /Users/nicholas/miniconda3/envs/bug2/bin/vcffilter
-vcffixup: /Users/nicholas/miniconda3/envs/bug2/bin/vcffixup
-## # packages in environment at /Users/nicholas/miniconda3/envs/bug2:
+tbl2asn: /Users/nicholas/miniconda3/envs/bug/bin/tbl2asn
+vcffilter: null
+vcffixup: null
+## # packages in environment at /Users/nicholas/miniconda3/envs/bug:
 ## #
 ## # Name                    Version                   Build  Channel
-## abyss                     2.1.1                h02d93b8_0    bioconda
-## aragorn                   1.2.38                        2    bioconda
-## arrow                     0.12.1                   py35_2    conda-forge
-## art                       2016.06.05           h869255c_2    bioconda
-## barrnap                   0.7                           4    bioconda
-## bcftools                  1.5                           3    bioconda
-## bedtools                  2.27.1               ha92aebf_2    bioconda
-## biopython                 1.68                np112py35_0  
-## blas                      1.0                         mkl  
-## blast                     2.7.1                h0f9cf5d_6    bioconda
-## boost                     1.67.0           py35h3e44d54_0    conda-forge
-## boost-cpp                 1.67.0               h3a22d5f_0    conda-forge
-## bwa                       0.7.8                ha92aebf_2    bioconda
+## abyss                     1.9.0               boost1.61_4    bioconda
+## aragorn                   1.2.38                        1    bioconda
+## arpack                    3.4.0           blas_openblas_201  [blas_openblas]  conda-forge
+## arrow                     0.10.0                    <pip>
+## art                       3.19.15                       1    bioconda
+## barrnap                   0.8                           0    bioconda
+## biopython                 1.68                      <pip>
+## biopython                 1.70                     py36_2    conda-forge
+## blas                      1.1                    openblas    conda-forge
+## blast                     2.6.0               boost1.64_2    bioconda
+## boost                     1.67.0           py36h3e44d54_0    conda-forge
+## boost-cpp                 1.67.0                        0    conda-forge
+## BugBuilder                0.0.1                     <pip>
+## bwa                       0.7.17               ha92aebf_3    bioconda
 ## bzip2                     1.0.6                         1    conda-forge
 ## ca-certificates           2018.8.24            ha4d7672_0    conda-forge
-## cairo                     1.14.10                       0    conda-forge
-## certifi                   2018.8.24             py35_1001    conda-forge
-## cgview                    1.0                           2    bioconda
-## clustalw                  2.1                  h2d50403_2    bioconda
-## coverage                  4.4.1                    py35_0    conda-forge
-## curl                      7.61.0               h93b3f91_2    conda-forge
-## cycler                    0.10.0                     py_1    conda-forge
-## decorator                 4.3.0                      py_0    conda-forge
-## emboss                    6.6.0                h6debe1e_0    bioconda
-## expat                     2.2.5                hfc679d8_2    conda-forge
-## fastqc                    0.11.8                        0    bioconda
-## fontconfig                2.12.6                        0    conda-forge
-## freetype                  2.8.1                hfa320df_1    conda-forge
-## gettext                   0.19.8.1             h1f1d5ed_1    conda-forge
-## giflib                    5.1.4                h470a237_1    conda-forge
-## glib                      2.55.0               h464dc38_2    conda-forge
-## gmp                       6.1.2                hfc679d8_0    conda-forge
-## gnuplot                   5.2.3                         0    conda-forge
-## graphite2                 1.3.12               h7d4d677_1    conda-forge
-## graphviz                  2.38.0               hbeef861_8    conda-forge
-## gsl                       2.2.1                h002c638_3  
-## harfbuzz                  1.7.6                         0    conda-forge
-## hmmer                     3.2.1                hfc679d8_0    bioconda
-## htslib                    1.9                  hc238db4_4    bioconda
-## icu                       58.2                 hfc679d8_0    conda-forge
-## infernal                  1.1.2                h470a237_1    bioconda
-## intel-openmp              2019.0                      118  
-## jenkspy                   0.1.4            py35h470a237_0    conda-forge
-## jpeg                      9c                   h470a237_1    conda-forge
-## krb5                      1.14.6                        0    conda-forge
-## libdb                     6.1.26            hfc679d8_1000    conda-forge
+## cairo                     1.14.6                        4    conda-forge
+## certifi                   2018.8.24             py36_1001    conda-forge
+## cgview                    1.0              py36pl5.22.0_1    bioconda
+## coverage                  4.4.2                    py36_0    conda-forge
+## curl                      7.54.1                        0    conda-forge
+## expat                     2.2.1                         0    conda-forge
+## fastqc                    0.11.5               pl5.22.0_3    bioconda
+## fftw                      3.3.7                         0    conda-forge
+## fgap                      1.8.1                         0    bioconda
+## fontconfig                2.12.1                        5    conda-forge
+## freetype                  2.7                           1    conda-forge
+## gettext                   0.19.8.1                      0    conda-forge
+## gfinisher                 1.4                      py36_0    bioconda
+## giflib                    5.1.4                         0    conda-forge
+## glib                      2.51.4                        0    conda-forge
+## glpk                      4.62                          0    conda-forge
+## gmp                       6.1.2                         0    conda-forge
+## gnuplot                   5.0.6                         2    conda-forge
+## gnutls                    3.5.19               h2a4e5f8_1    conda-forge
+## graphite2                 1.3.10                        0    conda-forge
+## graphviz                  2.38.0                        4    conda-forge
+## gsl                       2.2.1           blas_openblas_3  [blas_openblas]  conda-forge
+## harfbuzz                  1.4.3                         0    conda-forge
+## hdf5                      1.10.1                        2    conda-forge
+## hmmer                     3.1b2                         3    bioconda
+## icu                       58.1                          1    conda-forge
+## infernal                  1.1.2                         0    bioconda
+## java-jdk                  8.0.92                        1    bioconda
+## jpeg                      9b                            2    conda-forge
+## krb5                      1.14.2                        0    conda-forge
+## libdb                     6.1.26                        0    bioconda
 ## libdeflate                1.0                  h470a237_0    bioconda
-## libffi                    3.2.1                hfc679d8_5    conda-forge
-## libgd                     2.2.5                         3    conda-forge
-## libgfortran               3.0.1                h93005f0_2  
-## libiconv                  1.15                 h470a237_3    conda-forge
-## libidn11                  1.33                 hf837533_0    conda-forge
-## libpng                    1.6.34               ha92aebf_2    conda-forge
-## libssh2                   1.8.0                h5b517e9_2    conda-forge
-## libtiff                   4.0.9                he6b73bb_2    conda-forge
+## libffi                    3.2.1                         3    conda-forge
+## libflac                   1.3.1                         0    conda-forge
+## libgcc                    4.8.5                         1  
+## libgd                     2.2.4                         2    conda-forge
+## libgfortran               3.0.0                         0    conda-forge
+## libiconv                  1.14                          4    conda-forge
+## libidn                    7.45.0                        1    bioconda
+## libidn11                  1.33                          0    conda-forge
+## libogg                    1.3.2                         0    conda-forge
+## libpng                    1.6.28                        2    conda-forge
+## libsndfile                1.0.27                        1    conda-forge
+## libssh2                   1.8.0                         1    conda-forge
+## libtiff                   4.0.9                he6b73bb_1    conda-forge
+## libvorbis                 1.3.5                         0    conda-forge
 ## libwebp                   0.5.2                         7    conda-forge
-## libxml2                   2.9.8                h422b904_5    conda-forge
-## libxslt                   1.1.32               h88dbc4e_2    conda-forge
-## mafft                     7.407                         0    bioconda
-## make                      4.2.1                h470a237_2    conda-forge
-## matplotlib                1.5.3                    py35_9    conda-forge
-## minced                    0.3.0                         1    bioconda
-## mkl                       2019.0                      118  
-## mkl_fft                   1.0.6                    py35_0    conda-forge
-## mkl_random                1.0.1                    py35_0    conda-forge
-## mpi                       1.0                     openmpi    conda-forge
-## mummer                    3.23                          6    bioconda
+## libxcb                    1.12                          1    conda-forge
+## libxml2                   2.9.5                         0    conda-forge
+## libxslt                   1.1.29                        5    conda-forge
+## make                      4.2.1                         0    conda-forge
+## metis                     5.1.0                         3    conda-forge
+## minced                    0.2.0                         1    bioconda
+## mkl                       2017.0.3                      0  
+## mummer                    3.23                          4    bioconda
 ## ncurses                   5.9                          10    conda-forge
 ## nettle                    3.3                           0    conda-forge
-## networkx                  2.1                        py_1    conda-forge
-## nose                      1.3.7                    py35_2    conda-forge
-## numpy                     1.12.1           py35h655160a_1  
-## numpy-base                1.15.2           py35h8a80b8c_0  
-## openblas                  0.2.20                        8    conda-forge
-## openjdk                   8.0.152              h393ad39_1  
-## openmpi                   3.1.2                h26a2512_0    conda-forge
-## openssl                   1.0.2p               h470a237_0    conda-forge
-## paml                      4.9                  h470a237_3    bioconda
-## pandas                    0.20.1              np112py35_0    conda-forge
-## pango                     1.40.14                       0    conda-forge
-## parallel                  20180922                      0    conda-forge
-## pcre                      8.41                 hfc679d8_3    conda-forge
-## perl                      5.26.2               h16c6ff1_0    conda-forge
-## perl-aceperl              1.92                    pl526_2    bioconda
-## perl-algorithm-diff       1.1903                  pl526_2    bioconda
-## perl-algorithm-munkres    0.08                    pl526_1    bioconda
-## perl-appconfig            1.71                    pl526_1    bioconda
-## perl-archive-tar          2.18                    pl526_3    bioconda
-## perl-array-compare        3.0.1                   pl526_1    bioconda
-## perl-autoloader           5.74                    pl526_1    bioconda
-## perl-base                 2.23                    pl526_1    bioconda
-## perl-bio-asn1-entrezgene  1.72                    pl526_2    bioconda
-## perl-bio-coordinate       1.007001                pl526_0    bioconda
-## perl-bio-featureio        1.6.905                 pl526_1    bioconda
-## perl-bio-phylo            0.58                    pl526_1    bioconda
-## perl-bio-samtools         1.43            pl526h1341992_1    bioconda
-## perl-bio-tools-phylo-paml 1.7.3                   pl526_0    bioconda
-## perl-bio-tools-run-alignment-clustalw 1.7.4                   pl526_0    bioconda
-## perl-bioperl              1.7.2                   pl526_8    bioconda
-## perl-bioperl-core         1.7.2                   pl526_3    bioconda
-## perl-bioperl-run          1.007002                pl526_3    bioconda
-## perl-business-isbn        3.004                   pl526_0    bioconda
-## perl-business-isbn-data   20140910.003            pl526_0    bioconda
-## perl-cache-cache          1.08                    pl526_0    bioconda
-## perl-capture-tiny         0.36                    pl526_2    bioconda
-## perl-carp                 1.38                    pl526_1    bioconda
-## perl-cgi                  4.22            pl526h470a237_4    bioconda
-## perl-class-data-inheritable 0.08                    pl526_1    bioconda
-## perl-class-inspector      1.28                    pl526_2    bioconda
-## perl-class-method-modifiers 2.11                    pl526_2    bioconda
-## perl-clone                0.39            pl526h470a237_0    bioconda
-## perl-common-sense         3.74                    pl526_2    bioconda
-## perl-compress-raw-bzip2   2.074           pl526hfc679d8_0    bioconda
-## perl-compress-raw-zlib    2.081           pl526h2d50403_0    bioconda
-## perl-constant             1.33                    pl526_1    bioconda
-## perl-convert-binary-c     0.78            pl526h2d50403_2    bioconda
-## perl-convert-binhex       1.125                   pl526_1    bioconda
-## perl-crypt-rc4            2.02                    pl526_1    bioconda
-## perl-data-dumper          2.161                   pl526_2    bioconda
-## perl-data-stag            0.14                    pl526_1    bioconda
-## perl-date-format          2.30                    pl526_1    bioconda
-## perl-db-file              1.835           pl526h470a237_6    bioconda
-## perl-dbd-sqlite           1.50            pl526h470a237_3    bioconda
-## perl-dbi                  1.641                   pl526_2    bioconda
-## perl-devel-globaldestruction 0.13                    pl526_2    bioconda
-## perl-devel-stacktrace     2.03                    pl526_1    bioconda
-## perl-digest-hmac          1.03                    pl526_2    bioconda
-## perl-digest-md5           2.52                    pl526_3    bioconda
-## perl-digest-perl-md5      1.9                     pl526_1    bioconda
-## perl-digest-sha1          2.13            pl526h2d50403_0    bioconda
-## perl-dynaloader           1.25                    pl526_1    bioconda
-## perl-email-date-format    1.005                   pl526_1    bioconda
-## perl-encode               2.88                    pl526_1    bioconda
-## perl-encode-locale        1.05                    pl526_6    bioconda
-## perl-error                0.17024                 pl526_1    bioconda
-## perl-exception-class      1.40                    pl526_2    bioconda
-## perl-exporter             5.72                    pl526_1    bioconda
-## perl-exporter-tiny        1.000000                pl526_0    bioconda
-## perl-extutils-makemaker   7.34                    pl526_2    bioconda
-## perl-file-listing         6.04                    pl526_1    bioconda
-## perl-file-slurp-tiny      0.004                   pl526_1    bioconda
-## perl-file-sort            1.01                    pl526_2    bioconda
-## perl-file-which           1.22                    pl526_0    bioconda
-## perl-font-afm             1.20                    pl526_2    bioconda
-## perl-font-ttf             1.06                    pl526_0    bioconda
-## perl-gd                   2.68            pl526he941832_0    bioconda
-## perl-getopt-long          2.50                    pl526_1    bioconda
-## perl-graph                0.9704                  pl526_1    bioconda
-## perl-graphviz             2.24            pl526h734ff71_0    bioconda
-## perl-html-element-extended 1.18                    pl526_1    bioconda
-## perl-html-entities-numbered 0.04                    pl526_1    bioconda
-## perl-html-formatter       2.14                    pl526_1    bioconda
-## perl-html-parser          3.72            pl526h2d50403_4    bioconda
-## perl-html-tableextract    2.13                    pl526_2    bioconda
-## perl-html-tagset          3.20                    pl526_3    bioconda
-## perl-html-tidy            1.56                    pl526_2    bioconda
-## perl-html-tree            5.07                    pl526_0    bioconda
-## perl-html-treebuilder-xpath 0.14                    pl526_1    bioconda
-## perl-http-cookies         6.04                    pl526_0    bioconda
-## perl-http-daemon          6.01                    pl526_1    bioconda
-## perl-http-date            6.02                    pl526_3    bioconda
-## perl-http-message         6.18                    pl526_0    bioconda
-## perl-http-negotiate       6.01                    pl526_2    bioconda
-## perl-image-info           1.38                    pl526_1    bioconda
-## perl-image-size           3.300                   pl526_2    bioconda
-## perl-io-compress          2.069           pl526hfc679d8_5    bioconda
-## perl-io-html              1.001                   pl526_2    bioconda
-## perl-io-sessiondata       1.03                    pl526_1    bioconda
-## perl-io-socket-ssl        2.056                   pl526_0    bioconda
-## perl-io-string            1.08                    pl526_3    bioconda
-## perl-io-stringy           2.111                   pl526_1    bioconda
-## perl-io-tty               1.12                    pl526_1    bioconda
-## perl-io-zlib              1.10                    pl526_2    bioconda
-## perl-ipc-run              0.94                    pl526_1    bioconda
-## perl-ipc-sharelite        0.17            pl526h2d50403_0    bioconda
-## perl-jcode                2.07                    pl526_1    bioconda
-## perl-json                 2.90                    pl526_3    bioconda
-## perl-json-xs              2.34            pl526h2d50403_2    bioconda
-## perl-lib                  0.63                    pl526_1    bioconda
-## perl-libwww-perl          6.15                    pl526_1    bioconda
-## perl-libxml-perl          0.08                    pl526_2    bioconda
-## perl-list-moreutils       0.428                   pl526_1    bioconda
-## perl-list-moreutils-xs    0.428                   pl526_0    bioconda
-## perl-lwp-mediatypes       6.02                    pl526_3    bioconda
-## perl-lwp-protocol-https   6.07                    pl526_4    bioconda
-## perl-lwp-simple           6.15            pl526h470a237_4    bioconda
-## perl-mailtools            2.14                    pl526_1    bioconda
-## perl-math-cdf             0.1             pl526h470a237_4    bioconda
-## perl-math-derivative      0.04                    pl526_1    bioconda
-## perl-math-random          0.72                    pl526_1    bioconda
-## perl-math-spline          0.02                    pl526_2    bioconda
-## perl-mime-base64          3.15                    pl526_1    bioconda
-## perl-mime-lite            3.030                   pl526_1    bioconda
-## perl-mime-tools           5.507                   pl526_1    bioconda
-## perl-mime-types           2.12                    pl526_1    bioconda
-## perl-mldbm                2.05                    pl526_1    bioconda
-## perl-module-runtime       0.016                   pl526_0    bioconda
-## perl-moo                  2.001000                pl526_2    bioconda
-## perl-mozilla-ca           20180117                pl526_0    bioconda
-## perl-net-http             6.18                    pl526_0    bioconda
-## perl-net-ssleay           1.84            pl526h9dad42d_1    bioconda
-## perl-ntlm                 1.09                    pl526_3    bioconda
-## perl-ole-storage_lite     0.19                    pl526_2    bioconda
-## perl-parent               0.236                   pl526_1    bioconda
-## perl-parse-recdescent     1.967013                pl526_1    bioconda
-## perl-pathtools            3.73            pl526h470a237_2    bioconda
-## perl-pdf-api2             2.033                   pl526_0    bioconda
-## perl-pod-escapes          1.07                    pl526_1    bioconda
-## perl-pod-usage            1.69                    pl526_1    bioconda
-## perl-postscript           0.06                    pl526_2    bioconda
-## perl-role-tiny            2.000001                pl526_2    bioconda
-## perl-scalar-list-utils    1.45            pl526h470a237_3    bioconda
-## perl-set-scalar           1.29                    pl526_2    bioconda
-## perl-soap-lite            1.19                    pl526_1    bioconda
-## perl-socket               2.027                   pl526_1    bioconda
-## perl-sort-naturally       1.03                    pl526_1    bioconda
-## perl-spreadsheet-parseexcel 0.65                    pl526_2    bioconda
-## perl-spreadsheet-writeexcel 2.40                    pl526_1    bioconda
-## perl-statistics-descriptive 3.0612                  pl526_2    bioconda
-## perl-storable             3.11                    pl526_0    bioconda
-## perl-sub-exporter-progressive 0.001011                pl526_3    bioconda
-## perl-sub-uplevel          0.25            pl526h470a237_3    bioconda
-## perl-svg                  2.64                    pl526_2    bioconda
-## perl-svg-graph            0.02                    pl526_2    bioconda
-## perl-task-weaken          1.04                    pl526_1    bioconda
-## perl-template-toolkit     2.26                    pl526_1    bioconda
-## perl-test                 1.26                    pl526_1    bioconda
-## perl-test-deep            1.120                   pl526_3    bioconda
-## perl-test-differences     0.64                    pl526_2    bioconda
-## perl-test-exception       0.43                    pl526_2    bioconda
-## perl-test-harness         3.42                    pl526_0    bioconda
-## perl-test-leaktrace       0.16                    pl526_1    bioconda
-## perl-test-more            1.001002                pl526_1    bioconda
-## perl-test-most            0.34                    pl526_2    bioconda
-## perl-test-requiresinternet 0.05                    pl526_0    bioconda
-## perl-test-warn            0.30                    pl526_3    bioconda
-## perl-text-diff            1.44                    pl526_2    bioconda
-## perl-tie-ixhash           1.23                    pl526_2    bioconda
-## perl-time-hires           1.9758                  pl526_0    bioconda
-## perl-time-local           1.28                    pl526_1    bioconda
-## perl-timedate             2.30                    pl526_1    bioconda
-## perl-tree-dag_node        1.29                    pl526_2    bioconda
-## perl-type-tiny            1.002002                pl526_0    bioconda
-## perl-types-serialiser     1.0                     pl526_2    bioconda
-## perl-unicode-map          0.112           pl526h2d50403_2    bioconda
-## perl-uri                  1.74                    pl526_0    bioconda
-## perl-www-robotrules       6.02                    pl526_3    bioconda
-## perl-xml-dom              1.45                    pl526_1    bioconda
-## perl-xml-dom-xpath        0.14                    pl526_1    bioconda
-## perl-xml-filter-buffertext 1.01                    pl526_2    bioconda
-## perl-xml-libxml           2.0132          pl526hbc14f71_0    bioconda
-## perl-xml-libxslt          1.94                    pl526_1    bioconda
-## perl-xml-namespacesupport 1.12                    pl526_0    bioconda
-## perl-xml-parser           2.44_01         pl526h3a4f0e9_1    conda-forge
-## perl-xml-regexp           0.04                    pl526_2    bioconda
-## perl-xml-sax              0.99                    pl526_1    bioconda
-## perl-xml-sax-base         1.09                    pl526_0    bioconda
-## perl-xml-sax-expat        0.51                    pl526_2    bioconda
-## perl-xml-sax-writer       0.56                    pl526_2    bioconda
-## perl-xml-simple           2.22                    pl526_3    bioconda
-## perl-xml-twig             3.52                    pl526_1    bioconda
-## perl-xml-writer           0.625                   pl526_2    bioconda
-## perl-xml-xpath            1.33                    pl526_1    bioconda
-## perl-xml-xpathengine      0.14                    pl526_2    bioconda
-## perl-xsloader             0.24                    pl526_0    bioconda
-## perl-yaml                 1.26                    pl526_1    bioconda
-## picard                    2.18.14                       0    bioconda
-## pilon                     1.22                          1    bioconda
-## pip                       18.0                  py35_1001    conda-forge
-## pixman                    0.34.0               h470a237_3    conda-forge
-## prank                     v.170427             h2d50403_1    bioconda
-## prodigal                  2.6.3                         1    bioconda
-## prokka                    1.13.3                  pl526_0    bioconda
-## pyaml                     17.8.0                   py35_0    conda-forge
-## pyparsing                 2.2.2                      py_0    conda-forge
-## pysam                     0.11.2.2                 py35_1    bioconda
-## python                    3.5.5                         1    conda-forge
-## python-dateutil           2.7.3                      py_0    conda-forge
-## pytz                      2018.5                     py_0    conda-forge
-## pyyaml                    3.13             py35h470a237_1    conda-forge
+## nose                      1.3.7                    py36_2    conda-forge
+## numpy                     1.12.1          py36_blas_openblas_200  [blas_openblas]  conda-forge
+## octave                    4.2.1           blas_openblas_4  [blas_openblas]  conda-forge
+## openblas                  0.2.19                        2    conda-forge
+## openjdk                   8.0.121                       1  
+## openssl                   1.0.2p               h470a237_1    conda-forge
+## pandas                    0.20.1              np112py36_0    conda-forge
+## pango                     1.40.4                        0    conda-forge
+## parallel                  20170422             pl5.22.0_0    bioconda
+## pcre                      8.39                          0    conda-forge
+## perl                      5.22.0.1                      0    conda-forge
+## perl-aceperl              1.92                          0    bioconda
+## perl-algorithm-munkres    0.08                          0    bioconda
+## perl-appconfig            1.71                          0    bioconda
+## perl-array-compare        2.11                          0    bioconda
+## perl-bio-asn1-entrezgene  1.72                          1    bioconda
+## perl-bio-featureio        1.6.905                       0    bioconda
+## perl-bio-phylo            0.58                          0    bioconda
+## perl-bio-samtools         1.43                          0    bioconda
+## perl-bioperl              1.6.924              pl5.22.0_7    bioconda
+## perl-bioperl-core         1.6.924              pl5.22.0_2    bioconda
+## perl-bioperl-run          1.006900                      2    bioconda
+## perl-cgi                  4.22                          3    bioconda
+## perl-class-inspector      1.28                          0    bioconda
+## perl-class-method-modifiers 2.11                          1    bioconda
+## perl-clone                0.38                          0    bioconda
+## perl-common-sense         3.74                          0    bioconda
+## perl-convert-binary-c     0.78                          0    bioconda
+## perl-convert-binhex       1.125                         0    bioconda
+## perl-crypt-rc4            2.02                          0    bioconda
+## perl-data-stag            0.14                          0    bioconda
+## perl-db-file              1.835                         5    bioconda
+## perl-dbd-sqlite           1.50                          1    bioconda
+## perl-dbi                  1.636                         0    bioconda
+## perl-devel-globaldestruction 0.13                          1    bioconda
+## perl-digest-hmac          1.03                 pl5.22.0_1    bioconda
+## perl-digest-perl-md5      1.9                           0    bioconda
+## perl-email-date-format    1.005                         0    bioconda
+## perl-encode-locale        1.05                 pl5.22.0_4    bioconda
+## perl-error                0.17024                       0    bioconda
+## perl-exporter-tiny        0.042                         1    bioconda
+## perl-file-listing         6.04                          0    bioconda
+## perl-file-slurp-tiny      0.004                         0    bioconda
+## perl-file-sort            1.01                 pl5.22.0_1    bioconda
+## perl-file-which           1.20                          0    bioconda
+## perl-font-afm             1.20                          0    bioconda
+## perl-gd                   2.56                          3    bioconda
+## perl-graph                0.9704                        0    bioconda
+## perl-graphviz             2.20                          1    bioconda
+## perl-html-element-extended 1.18                          0    bioconda
+## perl-html-entities-numbered 0.04                          0    bioconda
+## perl-html-formatter       2.14                          0    bioconda
+## perl-html-parser          3.72                 pl5.22.0_1    bioconda
+## perl-html-tableextract    2.13                          0    bioconda
+## perl-html-tagset          3.20                 pl5.22.0_1    bioconda
+## perl-html-tidy            1.56                          1    bioconda
+## perl-html-tree            5.03                          0    bioconda
+## perl-html-treebuilder-xpath 0.14                          0    bioconda
+## perl-http-cookies         6.01                          0    bioconda
+## perl-http-daemon          6.01                          0    bioconda
+## perl-http-date            6.02                 pl5.22.0_1    bioconda
+## perl-http-message         6.11                          0    bioconda
+## perl-http-negotiate       6.01                          0    bioconda
+## perl-image-info           1.38                          0    bioconda
+## perl-image-size           3.300                         0    bioconda
+## perl-io-html              1.001                pl5.22.0_1    bioconda
+## perl-io-sessiondata       1.03                          0    bioconda
+## perl-io-socket-ssl        2.024                         0    bioconda
+## perl-io-string            1.08                 pl5.22.0_1    bioconda
+## perl-io-stringy           2.111                         0    bioconda
+## perl-io-tty               1.12                          0    bioconda
+## perl-ipc-run              0.94                          0    bioconda
+## perl-jcode                2.07                          0    bioconda
+## perl-json                 2.90                          1    bioconda
+## perl-json-xs              2.34                          0    bioconda
+## perl-libwww-perl          6.15                          0    bioconda
+## perl-libxml-perl          0.08                          0    bioconda
+## perl-list-moreutils       0.413                         1    bioconda
+## perl-lwp-mediatypes       6.02                 pl5.22.0_1    bioconda
+## perl-lwp-protocol-https   6.06                          2    bioconda
+## perl-mailtools            2.14                          0    bioconda
+## perl-math-cdf             0.1                           3    bioconda
+## perl-math-derivative      0.04                          0    bioconda
+## perl-math-random          0.72                          0    bioconda
+## perl-math-spline          0.02                          0    bioconda
+## perl-mime-lite            3.030                         0    bioconda
+## perl-mime-tools           5.507                         0    bioconda
+## perl-mime-types           2.12                          0    bioconda
+## perl-mldbm                2.05                          0    bioconda
+## perl-module-runtime       0.014                         1    bioconda
+## perl-moo                  2.001000                      1    bioconda
+## perl-mozilla-ca           20160104                      0    bioconda
+## perl-net-http             6.09                          0    bioconda
+## perl-net-ssleay           1.74                          0    bioconda
+## perl-ntlm                 1.09                          1    bioconda
+## perl-ole-storage_lite     0.19                          0    bioconda
+## perl-parse-recdescent     1.967013                      0    bioconda
+## perl-pdf-api2             2.025                         2    bioconda
+## perl-postscript           0.06                          0    bioconda
+## perl-role-tiny            2.000001                      1    bioconda
+## perl-set-scalar           1.29                          0    bioconda
+## perl-soap-lite            1.19                          0    bioconda
+## perl-sort-naturally       1.03                          0    bioconda
+## perl-spreadsheet-parseexcel 0.65                          0    bioconda
+## perl-spreadsheet-writeexcel 2.40                          0    bioconda
+## perl-statistics-descriptive 3.0612                        0    bioconda
+## perl-sub-exporter-progressive 0.001011                      1    bioconda
+## perl-svg                  2.64                          0    bioconda
+## perl-svg-graph            0.02                          0    bioconda
+## perl-task-weaken          1.04                          0    bioconda
+## perl-template-toolkit     2.26                          0    bioconda
+## perl-test-leaktrace       0.15                          0    bioconda
+## perl-test-pod             1.51                          0    bioconda
+## perl-threaded             5.22.0              pl5.22.0_12    bioconda
+## perl-tie-ixhash           1.23                 pl5.22.0_1    bioconda
+## perl-timedate             2.30                          0    bioconda
+## perl-tree-dag_node        1.29                          0    bioconda
+## perl-type-tiny            1.000005                      0    bioconda
+## perl-unicode-map          0.112                         0    bioconda
+## perl-uri                  1.71                          0    bioconda
+## perl-www-robotrules       6.02                          0    bioconda
+## perl-xml-dom              1.45                          0    bioconda
+## perl-xml-dom-xpath        0.14                          0    bioconda
+## perl-xml-filter-buffertext 1.01                          0    bioconda
+## perl-xml-libxml           2.0124                        0    bioconda
+## perl-xml-libxslt          1.94                          0    bioconda
+## perl-xml-namespacesupport 1.11                          0    bioconda
+## perl-xml-parser           2.44                          4    bioconda
+## perl-xml-regexp           0.04                          0    bioconda
+## perl-xml-sax              0.99                          0    bioconda
+## perl-xml-sax-base         1.08                          0    bioconda
+## perl-xml-sax-expat        0.51                          0    bioconda
+## perl-xml-sax-writer       0.56                          0    bioconda
+## perl-xml-simple           2.22                          0    bioconda
+## perl-xml-twig             3.49                          0    bioconda
+## perl-xml-writer           0.625                         0    bioconda
+## perl-xml-xpath            1.33                          0    bioconda
+## perl-xml-xpathengine      0.14                          0    bioconda
+## perl-yaml                 1.18                          0    bioconda
+## picard                    2.14.1                   py36_0    bioconda
+## pilon                     1.22                     py36_0    bioconda
+## pip                       9.0.1                    py36_0    conda-forge
+## pixman                    0.34.0                        1    conda-forge
+## portaudio                 19                            0  
+## prodigal                  2.6.3                         0    bioconda
+## prokka                    1.12                          3    bioconda
+## pyqt                      5.6.0                    py36_4    conda-forge
+## python                    3.6.3                         1    conda-forge
+## python-dateutil           2.6.1                    py36_0    conda-forge
+## pytz                      2017.3                     py_2    conda-forge
+## pyutilsnrw                0.1.1                    py36_0    conda-forge
+## PyYAML                    3.12                      <pip>
+## qscintilla2               2.9.3                    py36_2    conda-forge
 ## qt                        5.6.2                h9e3eb04_4    conda-forge
-## readline                  7.0                           0    conda-forge
-## riboseed                  0.4.73                   py35_1    bioconda
-## samtools                  1.4.1                         0    bioconda
-## seqtk                     1.3                  ha92aebf_0    bioconda
-## setuptools                40.4.3                   py35_0    conda-forge
+## readline                  6.2                           0    conda-forge
+## samtools                  1.8                           4    bioconda
+## scaffoldsis               0.1.0                     <pip>
+## seqtk                     1.2                           0    bioconda
+## setuptools                36.6.0                   py36_1    conda-forge
 ## sickle-trim               1.33                 ha92aebf_4    bioconda
-## sis                       0.1.2               py35pl526_2    bioconda
-## six                       1.11.0                   py35_1    conda-forge
-## spades                    3.9.0                    py35_2    bioconda
-## sqlite                    3.20.1                        2    conda-forge
-## tabulate                  0.8.2                      py_0    conda-forge
+## sip                       4.18                     py36_1    conda-forge
+## sis                       0.1.2            py36pl5.22.0_1    bioconda
+## six                       1.11.0                    <pip>
+## six                       1.11.0                   py36_1    conda-forge
+## skesa                     2.3.0                h4ef8376_0    bioconda
+## spades                    3.11.1                   py36_0    bioconda
+## sqlite                    3.13.0                        1    conda-forge
+## suitesparse               4.5.4           blas_openblas_200  [blas_openblas]  conda-forge
+## tbb                       2018_20170919                 0    conda-forge
 ## tbl2asn                   25.6                          3    bioconda
-## tidyp                     1.04                          1    bioconda
-## tk                        8.6.8                ha92aebf_0    conda-forge
-## tornado                   5.1.1            py35h470a237_0    conda-forge
-## vcflib                    1.0.0_rc0                     0    bioconda
-## wheel                     0.32.0                py35_1000    conda-forge
-## xz                        5.2.4                h470a237_1    conda-forge
-## yaml                      0.1.7                h470a237_1    conda-forge
+## tidyp                     1.04                          0    bioconda
+## tk                        8.5.19                        2    conda-forge
+## wheel                     0.30.0                     py_1    conda-forge
+## xorg-kbproto              1.0.7                         1    conda-forge
+## xorg-libx11               1.6.4                         6    conda-forge
+## xorg-libxau               1.0.8                         3    conda-forge
+## xorg-libxdmcp             1.1.2                         3    conda-forge
+## xorg-xproto               7.0.31                        6    conda-forge
+## xz                        5.2.3                         0    conda-forge
 ## zlib                      1.2.11               h470a237_3    conda-forge
 ## 

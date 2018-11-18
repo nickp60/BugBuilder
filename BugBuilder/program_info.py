@@ -31,6 +31,7 @@ all_programs_dict = {
         ['sickle', 'sickle-trim'],
         ['mauve','mauve'],
         ['ribo', 'riboSeed'],
+        ['skesa', 'skesa'],
         ['FGAP', 'fgap'],
         ['minimus', 'minimus'],
         ['sam2afg','sam2afg'],

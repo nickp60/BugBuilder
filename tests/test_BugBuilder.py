@@ -61,7 +61,7 @@ class test_BugBuilder(unittest.TestCase):
                                             "contigs_to_scaffold.fasta")
         self.distant_contigs = os.path.join(self.ref_dir,
                                             "distant_contigs.fasta")
-        self.renaming_fq = os.path.join(self.ref_dir,
+        self.renaming_fq = os.path.join(self.ref_dir, "needs_renaming.fq")
         self.renamed = os.path.join(self.ref_dir, "renamed_ref.fq")
         # self.fastq1 = os.path.join(self.ref_dir, "AP017923.1_reads1.fq")
         # self.fastq2 = os.path.join(self.ref_dir, "AP017923.1_reads2.fq")

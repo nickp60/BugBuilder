@@ -45,6 +45,7 @@ assembler_categories:
       - 'illumina'
     assemblers:
       - spades
+      - skesa
       - abyss
     scaffolders:
       - mauve
@@ -59,6 +60,7 @@ assembler_categories:
       - 'illumina'
     assemblers:
       - spades
+      - skesa
       - celera
     scaffolders:
       - mauve
@@ -123,6 +125,17 @@ assemblers:
      contig_output: __TMPDIR__/abyss/abyss-contigs.fa
      scaffold_output: __TMPDIR__/abyss/abyss-scaffolds.fa
      default_args: k=55
+     insert_size_required: 0
+     downsample_reads: 1
+   - name: skesa
+     create_dir: 1
+     min_length: null
+     max_length: null
+     command_pe: skesa --fastq __FASTQ1__  __FASTQ2__ --use_paired_ends --contigs_out __TMPDIR__/contigs.fasta
+     command_se: skesa --fastq __FASTQ1__  __FASTQ2__ --force_single_ends --contigs_out  __TMPDIR__/contigs.fasta
+     contig_output: __TMPDIR__/contigs.fasta
+     scaffold_output: null
+     default_args: --cores __THREADS__ --memory __MEMORY__
      insert_size_required: 0
      downsample_reads: 1
    - name: spades
